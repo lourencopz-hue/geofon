@@ -1,0 +1,1438 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>GeoFon — Sistema de Geofonamento</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif}
+:root{
+  --blue:#185FA5;--blue-l:#E6F1FB;--blue-d:#0C447C;
+  --teal:#0F6E56;--teal-l:#E1F5EE;
+  --red:#A32D2D;--red-l:#FCEBEB;
+  --amber:#BA7517;--amber-l:#FAEEDA;
+  --green:#3B6D11;--green-l:#EAF3DE;
+  --gray:#5F5E5A;--gray-l:#F1EFE8;
+  --purple:#534AB7;--purple-l:#EEEDFE;
+  --text:#1a1a1a;--text2:#666;--text3:#999;
+  --bg:#ffffff;--bg2:#f8f8f6;--bg3:#f1f0ec;
+  --border:rgba(0,0,0,0.12);--border2:rgba(0,0,0,0.22);
+  --radius:8px;--radius-lg:12px;--radius-xl:16px;
+  --shadow:0 2px 8px rgba(0,0,0,0.08);
+}
+html,body{height:100%;overflow:hidden;background:var(--bg2)}
+#app{display:flex;flex-direction:column;height:100vh;max-height:100vh}
+
+/* TOPBAR */
+#topbar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--blue);color:#fff;flex-shrink:0;z-index:200}
+#topbar h1{font-size:15px;font-weight:600;flex:1;letter-spacing:.2px}
+.topbar-badge{font-size:10px;background:rgba(255,255,255,.2);padding:3px 9px;border-radius:20px;white-space:nowrap;font-weight:500}
+.topbar-btn{font-size:11px;padding:5px 10px;border-radius:var(--radius);border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:#fff;cursor:pointer;white-space:nowrap;font-weight:500}
+.topbar-btn:hover{background:rgba(255,255,255,.2)}
+
+/* TABS */
+.tabs{display:flex;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
+.tab{flex:1;padding:9px 4px 8px;text-align:center;font-size:11px;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:2.5px solid transparent;transition:all .15s;user-select:none;line-height:1.2}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tab i{display:block;font-size:19px;margin-bottom:2px}
+
+/* PANELS */
+#panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.panel{display:none;flex-direction:column;height:100%;overflow:hidden}
+.panel.active{display:flex}
+.panel-scroll{flex:1;overflow-y:auto;overflow-x:hidden}
+
+/* GPS BAR */
+.gps-bar{display:flex;align-items:center;gap:8px;padding:7px 14px;background:var(--teal-l);border-bottom:1px solid rgba(15,110,86,.15);font-size:11.5px;color:var(--teal);flex-shrink:0}
+.gps-dot{width:7px;height:7px;border-radius:50%;background:var(--teal);flex-shrink:0;animation:gpspulse 1.5s infinite}
+@keyframes gpspulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+
+/* MAP */
+.map-toolbar{display:flex;gap:6px;padding:8px 10px;flex-wrap:wrap;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
+#map-field-map,#map-pc-map{width:100%;height:100%}
+.map-wrap{flex:1;position:relative;min-height:0}
+.map-legend{position:absolute;bottom:20px;right:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:9px 12px;z-index:500;font-size:11px;box-shadow:var(--shadow)}
+.legend-item{display:flex;align-items:center;gap:6px;margin-bottom:3px;color:var(--text2)}
+.legend-item:last-child{margin-bottom:0}
+.legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+
+/* CARDS & SECTIONS */
+.section{padding:12px 14px}
+.section-title{font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px;margin-bottom:10px}
+.card:last-child{margin-bottom:0}
+
+/* BUTTONS */
+.btn{padding:7px 13px;font-size:12px;font-weight:500;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:background .12s;line-height:1}
+.btn:hover{background:var(--bg2)}
+.btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn.primary:hover{background:var(--blue-d)}
+.btn.danger{background:var(--red-l);color:var(--red);border-color:rgba(163,45,45,.25)}
+.btn.success{background:var(--green-l);color:var(--green);border-color:rgba(59,109,17,.25)}
+.btn.sm{padding:5px 9px;font-size:11px}
+.btn-block{width:100%;justify-content:center;margin-top:8px}
+
+/* FORMS */
+.field{margin-bottom:11px}
+.field:last-child{margin-bottom:0}
+.field label{display:block;font-size:11.5px;color:var(--text2);margin-bottom:4px;font-weight:500}
+.field input,.field select,.field textarea{width:100%;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);transition:border .12s}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(24,95,165,.1)}
+.field textarea{min-height:68px;resize:vertical;line-height:1.5}
+.field input[readonly]{background:var(--bg2);color:var(--text2)}
+
+/* TOGGLE BUTTONS */
+.toggle-group{display:flex;gap:5px;flex-wrap:wrap}
+.toggle-btn{padding:6px 13px;font-size:12px;border:1px solid var(--border);border-radius:20px;background:var(--bg);color:var(--text2);cursor:pointer;transition:all .12s;font-weight:500}
+.toggle-btn.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.toggle-btn.alta.active{background:var(--red);border-color:var(--red)}
+.toggle-btn.media.active{background:var(--amber);border-color:var(--amber)}
+.toggle-btn.baixa.active{background:var(--green);border-color:var(--green)}
+
+/* BADGES */
+.badge{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap}
+.badge.alta{background:var(--red-l);color:var(--red)}
+.badge.media{background:var(--amber-l);color:var(--amber)}
+.badge.baixa{background:var(--green-l);color:var(--green)}
+.badge.blue{background:var(--blue-l);color:var(--blue)}
+.badge.gray{background:var(--gray-l);color:var(--gray)}
+.badge.purple{background:var(--purple-l);color:var(--purple)}
+
+/* LEAK LIST */
+.leak-item{display:flex;align-items:flex-start;gap:10px;padding:11px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:7px;cursor:pointer;transition:background .12s}
+.leak-item:hover{background:var(--bg2)}
+.leak-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:3px}
+.leak-dot.alta{background:#E24B4A}
+.leak-dot.media{background:#EF9F27}
+.leak-dot.baixa{background:#639922}
+.leak-info{flex:1;min-width:0}
+.leak-info .lid{font-size:12px;font-weight:600;color:var(--blue);font-family:monospace;letter-spacing:.3px}
+.leak-info .ltype{font-size:12.5px;font-weight:500;margin-top:1px}
+.leak-info .lmeta{font-size:11px;color:var(--text2);margin-top:2px}
+
+/* PHOTO GRID */
+.photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.photo-thumb{aspect-ratio:1;border-radius:var(--radius);background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative}
+.photo-thumb img{width:100%;height:100%;object-fit:cover}
+.photo-thumb.add{border-style:dashed;flex-direction:column;gap:3px}
+.photo-thumb.add span{font-size:10px;color:var(--text3)}
+
+/* UPLOAD ZONE */
+.upload-zone{border:1.5px dashed var(--border2);border-radius:var(--radius-lg);padding:22px 14px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+.upload-zone:hover{border-color:var(--blue);background:var(--blue-l)}
+.upload-zone i{font-size:26px;color:var(--text2);display:block;margin-bottom:6px}
+.upload-zone strong{font-size:13px;color:var(--blue);display:block;margin-bottom:3px}
+.upload-zone p{font-size:11.5px;color:var(--text2)}
+
+/* WHATSAPP */
+.wa-btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 16px;background:#25D366;color:#fff;border-radius:var(--radius-lg);font-size:13px;font-weight:600;cursor:pointer;border:none;width:100%;transition:background .15s}
+.wa-btn:hover{background:#1ebe5d}
+
+/* STATS */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 14px}
+.stat-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px;text-align:center}
+.stat-card .num{font-size:24px;font-weight:700;display:block;line-height:1.1}
+.stat-card .lbl{font-size:10px;color:var(--text2);margin-top:3px;font-weight:500;text-transform:uppercase;letter-spacing:.3px}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:none;align-items:center;justify-content:center;padding:16px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:440px;max-height:88vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.modal-header h3{font-size:15px;font-weight:600;display:flex;align-items:center;gap:7px}
+.modal-close{width:28px;height:28px;border-radius:50%;border:1px solid var(--border);background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:15px;transition:background .12s}
+.modal-close:hover{background:var(--bg2)}
+
+/* ID BADGE */
+.id-badge{display:inline-flex;align-items:center;gap:6px;background:var(--purple-l);color:var(--purple);padding:6px 12px;border-radius:var(--radius);font-family:monospace;font-size:13px;font-weight:700;letter-spacing:.5px;border:1px solid rgba(83,74,183,.2)}
+
+/* FILTER BAR */
+.filter-bar{display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
+.filter-bar select{font-size:11.5px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);flex:1;min-width:80px}
+
+/* TABLE */
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{background:var(--bg2);padding:8px 10px;text-align:left;font-weight:600;font-size:10.5px;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap;text-transform:uppercase;letter-spacing:.3px}
+.data-table td{padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tr:hover td{background:var(--bg2)}
+.id-mono{font-family:monospace;font-weight:600;color:var(--blue);font-size:11px;white-space:nowrap}
+
+/* PC LAYOUT */
+.pc-split{display:flex;flex:1;min-height:0;overflow:hidden}
+.pc-sidebar{width:260px;border-left:1px solid var(--border);overflow-y:auto;background:var(--bg);flex-shrink:0}
+.pc-main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* LAYERS LIST */
+.layer-item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+.layer-item:last-child{border-bottom:none}
+.layer-color{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+
+/* TOAST */
+.toast-wrap{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
+.toast{background:#1a1a1a;color:#fff;padding:9px 18px;border-radius:var(--radius-lg);font-size:12.5px;font-weight:500;animation:toastIn .25s ease;box-shadow:0 4px 16px rgba(0,0,0,.25);white-space:nowrap}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* REPORT */
+.report-header{background:var(--blue);color:#fff;padding:16px 20px;border-radius:var(--radius-lg);margin-bottom:14px}
+.report-header h2{font-size:16px;font-weight:600;margin-bottom:2px}
+.report-header p{font-size:12px;opacity:.8}
+.report-section-title{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+
+/* RESPONSIVE */
+@media(min-width:600px){
+  .stats-row{grid-template-columns:repeat(4,1fr)}
+  .photo-grid{grid-template-columns:repeat(5,1fr)}
+}
+@media(max-width:480px){
+  .stats-row{grid-template-columns:repeat(2,1fr)}
+  .pc-sidebar{width:200px}
+}
+
+/* LEAFLET */
+.leaflet-container{font-family:'Segoe UI',Arial,sans-serif!important}
+.leaflet-popup-content-wrapper{border-radius:var(--radius-lg)!important;box-shadow:var(--shadow)!important}
+.leaflet-popup-content{font-size:12px;line-height:1.6}
+.leaflet-popup-content b{color:var(--blue);font-family:monospace}
+
+.hidden{display:none!important}
+hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <i class="ti ti-droplet-search" style="font-size:20px"></i>
+  <h1>GeoFon <span style="font-size:11px;opacity:.7;font-weight:400">v1.0</span></h1>
+  <span class="topbar-badge" id="mode-badge">Modo Campo</span>
+  <button class="topbar-btn" onclick="toggleMode()">
+    <i class="ti ti-arrows-exchange" style="font-size:12px"></i> Trocar modo
+  </button>
+</div>
+
+<!-- TABS CAMPO -->
+<div id="tabs-field" class="tabs">
+  <div class="tab active" onclick="switchTab('map-field','tabs-field')" data-tab="map-field">
+    <i class="ti ti-map-pin"></i>Mapa
+  </div>
+  <div class="tab" onclick="switchTab('register','tabs-field')" data-tab="register">
+    <i class="ti ti-plus-circle"></i>Registrar
+  </div>
+  <div class="tab" onclick="switchTab('list-field','tabs-field')" data-tab="list-field">
+    <i class="ti ti-list"></i>Lista
+  </div>
+  <div class="tab" onclick="switchTab('layers-field','tabs-field')" data-tab="layers-field">
+    <i class="ti ti-layers-intersect"></i>Camadas
+  </div>
+</div>
+
+<!-- TABS PC -->
+<div id="tabs-pc" class="tabs hidden">
+  <div class="tab active" onclick="switchTab('map-pc','tabs-pc')" data-tab="map-pc">
+    <i class="ti ti-map"></i>Mapa
+  </div>
+  <div class="tab" onclick="switchTab('manage','tabs-pc')" data-tab="manage">
+    <i class="ti ti-database"></i>Gestão
+  </div>
+  <div class="tab" onclick="switchTab('reports','tabs-pc')" data-tab="reports">
+    <i class="ti ti-chart-bar"></i>Relatórios
+  </div>
+  <div class="tab" onclick="switchTab('config','tabs-pc')" data-tab="config">
+    <i class="ti ti-settings"></i>Config
+  </div>
+</div>
+
+<!-- PANELS -->
+<div id="panels">
+
+  <!-- CAMPO: MAPA -->
+  <div class="panel active" id="map-field">
+    <div class="gps-bar">
+      <span class="gps-dot"></span>
+      <span id="gps-coords" style="flex:1">Obtendo localização GPS...</span>
+      <span id="gps-acc" style="font-size:10.5px;opacity:.8"></span>
+    </div>
+    <div class="map-toolbar">
+      <button class="btn primary" onclick="openRegisterQuick()"><i class="ti ti-map-pin-plus"></i>Novo ponto</button>
+      <button class="btn sm" onclick="toggleLayerVisibility('dmc')"><i class="ti ti-hexagon"></i>DMC</button>
+      <button class="btn sm" onclick="toggleLayerVisibility('redes')"><i class="ti ti-line-dashed"></i>Redes</button>
+      <button class="btn sm" onclick="centerMyPosition()"><i class="ti ti-gps"></i>Minha pos.</button>
+    </div>
+    <div class="map-wrap">
+      <div id="map-field-map"></div>
+      <div class="map-legend">
+        <div style="font-size:9.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Severidade</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#E24B4A"></div>Alta</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#EF9F27"></div>Média</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#639922"></div>Baixa</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CAMPO: REGISTRAR -->
+  <div class="panel" id="register">
+    <div class="gps-bar">
+      <span class="gps-dot"></span>
+      <span id="reg-gps-coords" style="flex:1">Aguardando GPS...</span>
+      <span id="reg-gps-acc" style="font-size:10.5px"></span>
+    </div>
+    <div class="panel-scroll">
+      <div class="section">
+        <div class="section-title">Identificação do ponto</div>
+        <div class="card">
+          <!-- ID PREVIEW -->
+          <div style="margin-bottom:14px">
+            <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">ID que será gerado:</div>
+            <div class="id-badge" id="id-preview">CIA-EQ1-VAZ001</div>
+          </div>
+          <div class="field">
+            <label>Cidade</label>
+            <select id="reg-cidade" onchange="onCidadeChange()">
+              <option value="">Selecione a cidade...</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Equipe</label>
+            <select id="reg-equipe" onchange="updateIdPreview()">
+              <option value="">Selecione a equipe...</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>DMC / Setor</label>
+            <select id="reg-dmc">
+              <option value="">Selecione o DMC...</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section-title" style="margin-top:14px">Dados do vazamento</div>
+        <div class="card">
+          <div class="field">
+            <label>Tipo de vazamento</label>
+            <select id="reg-tipo">
+              <option>Ramal predial</option>
+              <option>Rede de distribuição</option>
+              <option>Adutora</option>
+              <option>Sub-adutora</option>
+              <option>Ponto de conexão</option>
+              <option>Hidrante</option>
+              <option>Válvula</option>
+              <option>Cavalete / Medidor</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Severidade</label>
+            <div class="toggle-group" id="sev-group">
+              <button class="toggle-btn baixa" onclick="setSev(this,'baixa')">Baixa</button>
+              <button class="toggle-btn media active" onclick="setSev(this,'media')">Média</button>
+              <button class="toggle-btn alta" onclick="setSev(this,'alta')">Alta</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Diâmetro estimado (mm)</label>
+            <input type="number" id="reg-diam" placeholder="Ex: 50 mm">
+          </div>
+          <div class="field">
+            <label>Observações / Descrição</label>
+            <textarea id="reg-obs" placeholder="Descreva o vazamento, condições do local, acesso ao ponto..."></textarea>
+          </div>
+        </div>
+
+        <div class="section-title" style="margin-top:14px">Fotos do local</div>
+        <div class="card">
+          <div class="photo-grid" id="photo-grid">
+            <div class="photo-thumb add" onclick="document.getElementById('photo-input').click()">
+              <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
+              <span>Adicionar foto</span>
+            </div>
+          </div>
+          <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
+        </div>
+
+        <div class="section-title" style="margin-top:14px">Enviar e salvar</div>
+        <div class="card">
+          <div id="contatos-preview" style="font-size:11.5px;color:var(--text2);margin-bottom:10px;padding:8px;background:var(--bg2);border-radius:var(--radius)">
+            Selecione cidade e equipe para ver os contatos de envio.
+          </div>
+          <button class="wa-btn" onclick="enviarWhatsApp()">
+            <i class="ti ti-brand-whatsapp" style="font-size:18px"></i>
+            Enviar por WhatsApp
+          </button>
+          <button class="btn primary btn-block" onclick="salvarPonto()" style="margin-top:8px">
+            <i class="ti ti-device-floppy"></i> Salvar ponto localmente
+          </button>
+        </div>
+        <div style="height:20px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CAMPO: LISTA -->
+  <div class="panel" id="list-field">
+    <div class="filter-bar">
+      <select id="fl-cidade" onchange="renderLeakList()">
+        <option value="">Todas as cidades</option>
+      </select>
+      <select id="fl-sev" onchange="renderLeakList()">
+        <option value="">Todas severidades</option>
+        <option value="alta">Alta</option>
+        <option value="media">Média</option>
+        <option value="baixa">Baixa</option>
+      </select>
+      <select id="fl-equipe" onchange="renderLeakList()">
+        <option value="">Todas equipes</option>
+      </select>
+    </div>
+    <div class="panel-scroll">
+      <div class="section" id="leak-list-wrap"></div>
+    </div>
+  </div>
+
+  <!-- CAMPO: CAMADAS -->
+  <div class="panel" id="layers-field">
+    <div class="panel-scroll">
+      <div class="section">
+        <div class="section-title">Carregar áreas DMC</div>
+        <div class="card">
+          <div class="upload-zone" onclick="document.getElementById('up-dmc').click()">
+            <i class="ti ti-file-upload"></i>
+            <strong>Áreas DMC</strong>
+            <p>KML ou GeoJSON com os polígonos dos DMCs</p>
+          </div>
+          <input type="file" id="up-dmc" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'dmc')">
+          <div id="dmc-layer-list" style="margin-top:10px"></div>
+        </div>
+        <div class="section-title" style="margin-top:14px">Carregar redes do município</div>
+        <div class="card">
+          <div class="upload-zone" onclick="document.getElementById('up-redes').click()">
+            <i class="ti ti-file-upload"></i>
+            <strong>Redes de distribuição</strong>
+            <p>KML ou GeoJSON (arquivos DWG devem ser convertidos antes)</p>
+          </div>
+          <input type="file" id="up-redes" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
+          <div id="redes-layer-list" style="margin-top:10px"></div>
+        </div>
+        <div class="section-title" style="margin-top:14px">Como converter DWG para KML</div>
+        <div class="card" style="background:var(--blue-l)">
+          <p style="font-size:12px;color:var(--blue-d);line-height:1.6">
+            <strong>Opção gratuita:</strong> Acesse <strong>mygeodata.cloud/converter</strong>, faça upload do .DWG e baixe como .GeoJSON. Depois carregue aqui.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC: MAPA -->
+  <div class="panel" id="map-pc">
+    <div class="map-toolbar" style="flex-wrap:wrap;gap:6px">
+      <div class="toggle-group" id="pc-view-toggle">
+        <button class="toggle-btn active" onclick="setPCView(this,'pontos')">Pontos</button>
+        <button class="toggle-btn" onclick="setPCView(this,'calor')">Mapa de calor</button>
+        <button class="toggle-btn" onclick="setPCView(this,'ambos')">Ambos</button>
+      </div>
+      <select style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="pc-fc" onchange="refreshPCMap()">
+        <option value="">Todas as cidades</option>
+      </select>
+      <select style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="pc-fs" onchange="refreshPCMap()">
+        <option value="">Todas severidades</option>
+        <option value="alta">Alta</option>
+        <option value="media">Média</option>
+        <option value="baixa">Baixa</option>
+      </select>
+      <button class="btn sm primary" onclick="refreshPCMap()"><i class="ti ti-refresh"></i>Atualizar</button>
+    </div>
+    <div class="pc-split">
+      <div class="pc-main">
+        <div class="map-wrap">
+          <div id="map-pc-map"></div>
+          <div class="map-legend">
+            <div style="font-size:9.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Severidade</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#E24B4A"></div>Alta</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#EF9F27"></div>Média</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#639922"></div>Baixa</div>
+          </div>
+        </div>
+      </div>
+      <div class="pc-sidebar">
+        <div class="stats-row" style="grid-template-columns:1fr 1fr">
+          <div class="stat-card"><span class="num" id="pc-total">0</span><div class="lbl">Total</div></div>
+          <div class="stat-card"><span class="num alta" id="pc-alta" style="color:#E24B4A">0</span><div class="lbl">Alta</div></div>
+          <div class="stat-card"><span class="num" id="pc-media" style="color:#EF9F27">0</span><div class="lbl">Média</div></div>
+          <div class="stat-card"><span class="num" id="pc-baixa" style="color:#639922">0</span><div class="lbl">Baixa</div></div>
+        </div>
+        <div style="padding:0 12px 12px">
+          <div class="section-title">Últimos registros</div>
+          <div id="pc-recent"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC: GESTÃO -->
+  <div class="panel" id="manage">
+    <div class="pc-split" style="overflow:hidden">
+      <div style="flex:1;overflow-y:auto;padding:14px;border-right:1px solid var(--border)">
+        <div class="section-title">Cidades cadastradas</div>
+        <div id="manage-cidades"></div>
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px" onclick="openModal('modal-cidade')">
+          <i class="ti ti-plus"></i> Adicionar cidade
+        </button>
+        <hr class="section-divider" style="margin:16px 0">
+        <div class="section-title">Carregar arquivos KML / GeoJSON</div>
+        <div class="upload-zone" onclick="document.getElementById('up-pc').click()">
+          <i class="ti ti-map-2"></i>
+          <strong>Subir camada geográfica</strong>
+          <p>DMC, redes ou limites municipais</p>
+        </div>
+        <input type="file" id="up-pc" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'manage')">
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:14px">
+        <div class="section-title">Todos os pontos registrados</div>
+        <div id="manage-table"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC: RELATÓRIOS -->
+  <div class="panel" id="reports">
+    <div style="padding:12px 14px;display:flex;gap:8px;flex-wrap:wrap;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0">
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-cidade">
+        <option value="">Todas as cidades</option>
+      </select>
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-equipe">
+        <option value="">Todas as equipes</option>
+      </select>
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-sev">
+        <option value="">Todas severidades</option>
+        <option value="alta">Alta</option>
+        <option value="media">Média</option>
+        <option value="baixa">Baixa</option>
+      </select>
+      <button class="btn sm primary" onclick="gerarRelatorio()"><i class="ti ti-chart-bar"></i>Gerar</button>
+      <button class="btn sm success" onclick="exportarCSV()"><i class="ti ti-table-export"></i>CSV</button>
+      <button class="btn sm" onclick="window.print()"><i class="ti ti-printer"></i>Imprimir / PDF</button>
+    </div>
+    <div class="panel-scroll" style="padding:14px" id="report-content">
+      <div style="text-align:center;padding:50px 20px;color:var(--text2)">
+        <i class="ti ti-chart-bar" style="font-size:44px;display:block;margin-bottom:12px;opacity:.4"></i>
+        <p style="font-size:13px">Selecione os filtros acima e clique em "Gerar"</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC: CONFIG -->
+  <div class="panel" id="config">
+    <div class="panel-scroll">
+      <div class="section">
+        <div class="section-title">Cidades e prefixos</div>
+        <div id="config-cidades"></div>
+        <button class="btn primary" style="margin-top:8px" onclick="openModal('modal-cidade')">
+          <i class="ti ti-plus"></i> Adicionar cidade
+        </button>
+      </div>
+      <div class="section">
+        <div class="section-title">Equipes de campo</div>
+        <div id="config-equipes"></div>
+        <button class="btn primary" style="margin-top:8px" onclick="openModal('modal-equipe')">
+          <i class="ti ti-plus"></i> Adicionar equipe
+        </button>
+      </div>
+      <div class="section">
+        <div class="section-title">Configurações gerais</div>
+        <div class="card">
+          <div class="field">
+            <label>Nome da organização / empresa</label>
+            <input type="text" id="cfg-org" placeholder="Ex: SAMAE Criciúma">
+          </div>
+          <div class="field">
+            <label>Precisão GPS mínima aceitável (metros)</label>
+            <input type="number" id="cfg-gps" value="20">
+          </div>
+          <button class="btn primary" onclick="salvarConfig()"><i class="ti ti-device-floppy"></i> Salvar configurações</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /panels -->
+</div><!-- /app -->
+
+<!-- ===== MODAIS ===== -->
+
+<!-- Modal: Adicionar/Editar Cidade -->
+<div class="modal-overlay" id="modal-cidade">
+  <div class="modal">
+    <div class="modal-header">
+      <h3><i class="ti ti-building-community" style="color:var(--blue)"></i> Cadastrar cidade</h3>
+      <button class="modal-close" onclick="closeModal('modal-cidade')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="field">
+      <label>Nome da cidade</label>
+      <input type="text" id="nc-nome" placeholder="Ex: Criciúma">
+    </div>
+    <div class="field">
+      <label>Prefixo da cidade (3 letras)</label>
+      <input type="text" id="nc-prefixo" placeholder="Ex: CIA" maxlength="5" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+    </div>
+    <div class="field">
+      <label>DMCs desta cidade (um por linha)</label>
+      <textarea id="nc-dmcs" placeholder="DMC-01 Centro&#10;DMC-02 Leste&#10;DMC-03 Norte"></textarea>
+    </div>
+    <div class="field">
+      <label>Números WhatsApp para notificação (com DDI+DDD, separados por vírgula)</label>
+      <input type="text" id="nc-wa" placeholder="5548999990001,5548999990002">
+    </div>
+    <div class="field">
+      <label>Centro do mapa (latitude, longitude)</label>
+      <input type="text" id="nc-coords" placeholder="-28.6775, -49.3680">
+    </div>
+    <button class="btn primary btn-block" onclick="salvarCidade()">
+      <i class="ti ti-check"></i> Salvar cidade
+    </button>
+  </div>
+</div>
+
+<!-- Modal: Adicionar Equipe -->
+<div class="modal-overlay" id="modal-equipe">
+  <div class="modal">
+    <div class="modal-header">
+      <h3><i class="ti ti-users" style="color:var(--teal)"></i> Cadastrar equipe</h3>
+      <button class="modal-close" onclick="closeModal('modal-equipe')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="field">
+      <label>Nome da equipe</label>
+      <input type="text" id="ne-nome" placeholder="Ex: Equipe 1 - Turno Manhã">
+    </div>
+    <div class="field">
+      <label>Código da equipe (2-4 letras/números)</label>
+      <input type="text" id="ne-codigo" placeholder="Ex: EQ1" maxlength="6" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+    </div>
+    <div class="field">
+      <label>Cidade desta equipe</label>
+      <select id="ne-cidade">
+        <option value="">Selecione a cidade...</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Número WhatsApp do responsável (com DDI+DDD)</label>
+      <input type="text" id="ne-wa" placeholder="5548999990001">
+    </div>
+    <button class="btn primary btn-block" onclick="salvarEquipe()">
+      <i class="ti ti-check"></i> Salvar equipe
+    </button>
+  </div>
+</div>
+
+<!-- Modal: Registro rápido no mapa -->
+<div class="modal-overlay" id="modal-quick">
+  <div class="modal">
+    <div class="modal-header">
+      <h3><i class="ti ti-map-pin-plus" style="color:var(--red)"></i> Registro rápido</h3>
+      <button class="modal-close" onclick="closeModal('modal-quick')"><i class="ti ti-x"></i></button>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:5px">Coordenadas capturadas:</div>
+      <div class="id-badge" id="quick-coords" style="font-size:11px">—</div>
+    </div>
+    <div class="field">
+      <label>Cidade</label>
+      <select id="quick-cidade" onchange="quickCidadeChange()">
+        <option value="">Selecione...</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Equipe</label>
+      <select id="quick-equipe" onchange="updateIdPreviewQuick()">
+        <option value="">Selecione...</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Severidade</label>
+      <div class="toggle-group" id="quick-sev-group">
+        <button class="toggle-btn baixa" onclick="setQuickSev(this,'baixa')">Baixa</button>
+        <button class="toggle-btn media active" onclick="setQuickSev(this,'media')">Média</button>
+        <button class="toggle-btn alta" onclick="setQuickSev(this,'alta')">Alta</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Descrição rápida</label>
+      <textarea id="quick-desc" placeholder="Descreva brevemente o vazamento..." style="min-height:56px"></textarea>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">ID que será gerado:</div>
+      <div class="id-badge" id="quick-id-preview">—</div>
+    </div>
+    <button class="btn primary btn-block" onclick="confirmarQuick()">
+      <i class="ti ti-map-pin"></i> Registrar no mapa
+    </button>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script>
+// ================================================================
+// ESTADO GLOBAL
+// ================================================================
+const S = {
+  mode: 'field',
+  pos: null,
+  sevAtual: 'media',
+  sevQuick: 'media',
+  leaks: [],
+  cidades: [],
+  equipes: [],
+  layers: { dmc: [], redes: [] },
+  photos: [],
+  nextSeq: {},
+  pcView: 'pontos',
+  config: { org: 'GeoFon', gps: 20 }
+};
+
+let mapField = null, mapPC = null;
+let fMarkers = [], pcMarkers = [], heatLayer = null;
+
+// ================================================================
+// DADOS INICIAIS
+// ================================================================
+function initDados() {
+  S.cidades = [
+    { id: 'CIA', nome: 'Criciúma',     prefixo: 'CIA', dmcs: ['DMC-01 Centro','DMC-02 Leste','DMC-03 Norte','DMC-04 Sul','DMC-05 Oeste'], wa: ['5548999990001','5548999990002'], coords: [-28.6775,-49.3680] },
+    { id: 'ICA', nome: 'Içara',        prefixo: 'ICA', dmcs: ['DMC-01','DMC-02','DMC-03'], wa: ['5548999990003'], coords: [-28.7130,-49.3050] },
+    { id: 'FQA', nome: 'Forquilhinha', prefixo: 'FQA', dmcs: ['DMC-01 Sede','DMC-02 Vila'], wa: ['5548999990004'], coords: [-28.7430,-49.4660] },
+    { id: 'SID', nome: 'Siderópolis', prefixo: 'SID', dmcs: ['DMC-01','DMC-02'], wa: ['5548999990005'], coords: [-28.5960,-49.4260] }
+  ];
+  S.equipes = [
+    { id:'EQ1', nome:'Equipe 1 - Manhã',  codigo:'EQ1', cidade:'CIA', wa:'5548999991001' },
+    { id:'EQ2', nome:'Equipe 2 - Tarde',  codigo:'EQ2', cidade:'CIA', wa:'5548999991002' },
+    { id:'EQ3', nome:'Equipe 3 - Içara',  codigo:'EQ3', cidade:'ICA', wa:'5548999991003' },
+    { id:'EQ4', nome:'Equipe 4 - FQA',    codigo:'EQ4', cidade:'FQA', wa:'5548999991004' }
+  ];
+  S.nextSeq = { CIA:1, ICA:1, FQA:1, SID:1 };
+
+  // Dados demo
+  const demo = [
+    { cidade:'CIA', equipe:'EQ1', dmc:'DMC-01 Centro', tipo:'Ramal predial',      sev:'alta',  lat:-28.6775, lng:-49.3680, desc:'Vazamento visível na calçada',       diam:25  },
+    { cidade:'CIA', equipe:'EQ2', dmc:'DMC-02 Leste',  tipo:'Rede de distribuição',sev:'media', lat:-28.6820, lng:-49.3710, desc:'Umidade no pavimento pavimentado',   diam:50  },
+    { cidade:'ICA', equipe:'EQ3', dmc:'DMC-01',        tipo:'Adutora',             sev:'alta',  lat:-28.7130, lng:-49.3050, desc:'Vazamento grande, intervenção urgente',diam:100 },
+    { cidade:'CIA', equipe:'EQ1', dmc:'DMC-03 Norte',  tipo:'Hidrante',            sev:'baixa', lat:-28.6700, lng:-49.3750, desc:'Hidrante com pequeno gotejamento',   diam:75  },
+    { cidade:'FQA', equipe:'EQ4', dmc:'DMC-01 Sede',   tipo:'Ramal predial',       sev:'media', lat:-28.7430, lng:-49.4660, desc:'Medidor com vazamento interno',      diam:15  },
+    { cidade:'SID', equipe:'EQ1', dmc:'DMC-01',        tipo:'Válvula',             sev:'baixa', lat:-28.5960, lng:-49.4260, desc:'Válvula de registro com fuga',       diam:50  }
+  ];
+  const datas = ['10/06/2025 09:23','11/06/2025 14:05','12/06/2025 08:10','12/06/2025 16:30','13/06/2025 10:00','13/06/2025 15:45'];
+  demo.forEach((d, i) => {
+    const c = S.cidades.find(c => c.id === d.cidade);
+    const e = S.equipes.find(e => e.id === d.equipe);
+    const seq = String(S.nextSeq[d.cidade]++).padStart(3,'0');
+    S.leaks.push({ ...d, id:`${d.cidade}-${d.equipe}-VAZ${seq}`, data:datas[i], photos:i%2, severidade:d.sev });
+  });
+}
+
+// ================================================================
+// INIT
+// ================================================================
+window.addEventListener('load', () => {
+  initDados();
+  populateSelects();
+  renderLeakList();
+  renderConfigCidades();
+  renderConfigEquipes();
+  renderManage();
+  initFieldMap();
+  startGPS();
+});
+
+// ================================================================
+// GPS
+// ================================================================
+function startGPS() {
+  if (!navigator.geolocation) { setGPSText('GPS não disponível'); return; }
+  navigator.geolocation.watchPosition(
+    p => {
+      S.pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
+      const txt = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`;
+      setGPSText(txt, `±${S.pos.acc}m`);
+    },
+    () => {
+      S.pos = { lat: -28.6775, lng: -49.3680, acc: 5 };
+      setGPSText('-28.677500, -49.368000 (demo)', '±5m');
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+  );
+}
+function setGPSText(txt, acc) {
+  ['gps-coords','reg-gps-coords'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = txt; });
+  ['gps-acc','reg-gps-acc'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = acc||''; });
+}
+function centerMyPosition() {
+  if (S.pos && mapField) mapField.setView([S.pos.lat, S.pos.lng], 17);
+}
+
+// ================================================================
+// MAPAS
+// ================================================================
+function initFieldMap() {
+  if (mapField) return;
+  mapField = L.map('map-field-map', { zoomControl: true }).setView([-28.6775,-49.3680], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapField);
+  addFieldMarkers();
+  setTimeout(() => mapField.invalidateSize(), 300);
+}
+
+function initPCMap() {
+  if (mapPC) return;
+  mapPC = L.map('map-pc-map', { zoomControl: true }).setView([-28.6775,-49.3680], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapPC);
+  refreshPCMap();
+  setTimeout(() => mapPC.invalidateSize(), 300);
+}
+
+function addFieldMarkers() {
+  if (!mapField) return;
+  fMarkers.forEach(m => m.remove()); fMarkers = [];
+  S.leaks.forEach(l => {
+    const m = makeMarker(l);
+    m.addTo(mapField).bindPopup(popupHtml(l));
+    fMarkers.push(m);
+  });
+}
+
+function refreshPCMap() {
+  if (!mapPC) return;
+  pcMarkers.forEach(m => m.remove()); pcMarkers = [];
+  if (heatLayer) { mapPC.removeLayer(heatLayer); heatLayer = null; }
+  const fc = document.getElementById('pc-fc').value;
+  const fs = document.getElementById('pc-fs').value;
+  const filtered = S.leaks.filter(l => (!fc || l.cidade === fc) && (!fs || l.severidade === fs));
+  if (S.pcView !== 'calor') {
+    filtered.forEach(l => { const m = makeMarker(l, 16); m.addTo(mapPC).bindPopup(popupHtml(l)); pcMarkers.push(m); });
+  }
+  if (S.pcView !== 'pontos') {
+    const pts = filtered.map(l => [l.lat, l.lng, l.severidade==='alta'?1:l.severidade==='media'?.6:.3]);
+    if (pts.length) heatLayer = L.heatLayer(pts, { radius:30, blur:22, maxZoom:17 }).addTo(mapPC);
+  }
+  updatePCSidebar(filtered);
+}
+
+function makeMarker(l, size=13) {
+  const c = sevColor(l.severidade);
+  const icon = L.divIcon({
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${c};border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4)"></div>`,
+    className:'', iconSize:[size,size], iconAnchor:[size/2,size/2]
+  });
+  return L.marker([l.lat, l.lng], { icon });
+}
+
+function popupHtml(l) {
+  const c = sevColor(l.severidade);
+  return `<b>${l.id}</b><br>${l.tipo}<br><span style="color:${c};font-weight:600">${l.severidade.toUpperCase()}</span><br><small>${l.dmc} · ${l.data}</small>`;
+}
+
+function sevColor(s) { return s==='alta'?'#E24B4A':s==='media'?'#EF9F27':'#639922'; }
+
+function updatePCSidebar(filtered) {
+  document.getElementById('pc-total').textContent = filtered.length;
+  document.getElementById('pc-alta').textContent = filtered.filter(l=>l.severidade==='alta').length;
+  document.getElementById('pc-media').textContent = filtered.filter(l=>l.severidade==='media').length;
+  document.getElementById('pc-baixa').textContent = filtered.filter(l=>l.severidade==='baixa').length;
+  document.getElementById('pc-recent').innerHTML = [...filtered].reverse().slice(0,6).map(l => `
+    <div class="leak-item" style="padding:8px;margin-bottom:5px" onclick="">
+      <div class="leak-dot ${l.severidade}"></div>
+      <div class="leak-info">
+        <div class="lid">${l.id}</div>
+        <div class="lmeta">${l.dmc}</div>
+      </div>
+    </div>`).join('');
+}
+
+function setPCView(btn, view) {
+  document.querySelectorAll('#pc-view-toggle .toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  S.pcView = view;
+  refreshPCMap();
+}
+
+function toggleLayerVisibility(tipo) { toast(`Camada ${tipo.toUpperCase()} alternada`); }
+
+// ================================================================
+// ID GENERATION
+// ================================================================
+function gerarId(cidadeId, equipeId) {
+  if (!cidadeId || !equipeId) return '—';
+  if (!S.nextSeq[cidadeId]) S.nextSeq[cidadeId] = 1;
+  const seq = String(S.nextSeq[cidadeId]).padStart(3,'0');
+  return `${cidadeId}-${equipeId}-VAZ${seq}`;
+}
+
+function updateIdPreview() {
+  const c = document.getElementById('reg-cidade').value;
+  const e = document.getElementById('reg-equipe').value;
+  const eq = S.equipes.find(eq => eq.id === e);
+  document.getElementById('id-preview').textContent = gerarId(c, eq ? eq.codigo : '');
+}
+
+function updateIdPreviewQuick() {
+  const c = document.getElementById('quick-cidade').value;
+  const e = document.getElementById('quick-equipe').value;
+  const eq = S.equipes.find(eq => eq.id === e);
+  document.getElementById('quick-id-preview').textContent = gerarId(c, eq ? eq.codigo : '');
+}
+
+// ================================================================
+// SELECTS / POPULATE
+// ================================================================
+function populateSelects() {
+  const cidadeIds = ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade','nc-prefixo'];
+  ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    while (el.options.length > 1) el.remove(1);
+    S.cidades.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = c.nome;
+      el.appendChild(o);
+    });
+    el.value = cur;
+  });
+  // Equipes no filtro
+  const flEq = document.getElementById('fl-equipe');
+  if (flEq) {
+    while (flEq.options.length > 1) flEq.remove(1);
+    S.equipes.forEach(e => {
+      const o = document.createElement('option');
+      o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`;
+      flEq.appendChild(o);
+    });
+  }
+  // Equipes relatório
+  const repEq = document.getElementById('rep-equipe');
+  if (repEq) {
+    while (repEq.options.length > 1) repEq.remove(1);
+    S.equipes.forEach(e => {
+      const o = document.createElement('option');
+      o.value = e.id; o.textContent = e.nome;
+      repEq.appendChild(o);
+    });
+  }
+}
+
+function onCidadeChange() {
+  const cid = document.getElementById('reg-cidade').value;
+  const c = S.cidades.find(c => c.id === cid);
+  // DMC
+  const dmc = document.getElementById('reg-dmc');
+  while (dmc.options.length > 0) dmc.remove(0);
+  if (c) {
+    c.dmcs.forEach(d => { const o = document.createElement('option'); o.textContent = d; dmc.appendChild(o); });
+  } else {
+    const o = document.createElement('option'); o.textContent = 'Selecione a cidade primeiro'; dmc.appendChild(o);
+  }
+  // Equipes
+  const eqSel = document.getElementById('reg-equipe');
+  while (eqSel.options.length > 0) eqSel.remove(0);
+  const eqDef = document.createElement('option'); eqDef.textContent = 'Selecione...'; eqSel.appendChild(eqDef);
+  S.equipes.filter(e => !cid || e.cidade === cid).forEach(e => {
+    const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`; eqSel.appendChild(o);
+  });
+  updateIdPreview();
+  updateContatosPreview(c);
+}
+
+function quickCidadeChange() {
+  const cid = document.getElementById('quick-cidade').value;
+  const eqSel = document.getElementById('quick-equipe');
+  while (eqSel.options.length > 0) eqSel.remove(0);
+  const def = document.createElement('option'); def.textContent = 'Selecione...'; eqSel.appendChild(def);
+  S.equipes.filter(e => !cid || e.cidade === cid).forEach(e => {
+    const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`; eqSel.appendChild(o);
+  });
+  updateIdPreviewQuick();
+}
+
+function updateContatosPreview(c) {
+  const el = document.getElementById('contatos-preview');
+  if (!c) { el.textContent = 'Selecione cidade e equipe para ver os contatos de envio.'; return; }
+  el.innerHTML = `<strong style="font-size:11px;color:var(--text2)">Contatos da cidade ${c.nome}:</strong><br>` +
+    c.wa.map(w => `<span style="font-family:monospace;font-size:12px">+${w}</span>`).join('<br>');
+}
+
+// ================================================================
+// SEVERIDADE
+// ================================================================
+function setSev(btn, val) {
+  document.querySelectorAll('#sev-group .toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  S.sevAtual = val;
+}
+function setQuickSev(btn, val) {
+  document.querySelectorAll('#quick-sev-group .toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  S.sevQuick = val;
+}
+
+// ================================================================
+// SALVAR PONTO
+// ================================================================
+function salvarPonto() {
+  const cid = document.getElementById('reg-cidade').value;
+  const eqId = document.getElementById('reg-equipe').value;
+  const dmc = document.getElementById('reg-dmc').value;
+  const tipo = document.getElementById('reg-tipo').value;
+  const obs = document.getElementById('reg-obs').value;
+  const diam = document.getElementById('reg-diam').value;
+  if (!cid) { toast('Selecione a cidade'); return; }
+  if (!eqId) { toast('Selecione a equipe'); return; }
+  if (!S.pos) { toast('Aguardando GPS...'); return; }
+  const eq = S.equipes.find(e => e.id === eqId);
+  if (!S.nextSeq[cid]) S.nextSeq[cid] = 1;
+  const id = `${cid}-${eq.codigo}-VAZ${String(S.nextSeq[cid]++).padStart(3,'0')}`;
+  const now = new Date();
+  const leak = {
+    id, cidade:cid, equipe:eqId, dmc, tipo, severidade:S.sevAtual,
+    lat:S.pos.lat, lng:S.pos.lng,
+    desc:obs, diam:diam||null,
+    data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
+    photos:S.photos.length
+  };
+  S.leaks.push(leak);
+  addFieldMarkers();
+  renderLeakList();
+  renderManage();
+  toast(`✓ Ponto ${id} salvo!`);
+  // Reset
+  document.getElementById('reg-obs').value='';
+  document.getElementById('reg-diam').value='';
+  S.photos=[];
+  renderPhotos();
+  switchTab('map-field','tabs-field');
+}
+
+// ================================================================
+// REGISTRO RÁPIDO (MAPA)
+// ================================================================
+function openRegisterQuick() {
+  if (S.pos) document.getElementById('quick-coords').textContent = `${S.pos.lat.toFixed(6)}, ${S.pos.lng.toFixed(6)}`;
+  // Popular selects do modal
+  const qc = document.getElementById('quick-cidade');
+  while (qc.options.length > 1) qc.remove(1);
+  S.cidades.forEach(c => { const o=document.createElement('option'); o.value=c.id; o.textContent=c.nome; qc.appendChild(o); });
+  document.getElementById('quick-desc').value='';
+  document.getElementById('quick-id-preview').textContent='—';
+  openModal('modal-quick');
+}
+
+function confirmarQuick() {
+  const cid = document.getElementById('quick-cidade').value;
+  const eqId = document.getElementById('quick-equipe').value;
+  const desc = document.getElementById('quick-desc').value;
+  if (!cid) { toast('Selecione a cidade'); return; }
+  if (!eqId) { toast('Selecione a equipe'); return; }
+  if (!S.pos) { toast('Aguardando GPS...'); return; }
+  const eq = S.equipes.find(e => e.id === eqId);
+  if (!S.nextSeq[cid]) S.nextSeq[cid]=1;
+  const id=`${cid}-${eq.codigo}-VAZ${String(S.nextSeq[cid]++).padStart(3,'0')}`;
+  const now=new Date();
+  const c=S.cidades.find(c=>c.id===cid);
+  const leak={
+    id, cidade:cid, equipe:eqId, dmc:c?.dmcs[0]||'-', tipo:'Não categorizado', severidade:S.sevQuick,
+    lat:S.pos.lat, lng:S.pos.lng, desc, diam:null,
+    data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
+    photos:0
+  };
+  S.leaks.push(leak);
+  addFieldMarkers();
+  renderLeakList();
+  renderManage();
+  closeModal('modal-quick');
+  toast(`✓ Ponto ${id} registrado!`);
+}
+
+// ================================================================
+// FOTOS
+// ================================================================
+function handlePhotos(input) {
+  Array.from(input.files).forEach(f => S.photos.push(URL.createObjectURL(f)));
+  renderPhotos();
+}
+function renderPhotos() {
+  const g = document.getElementById('photo-grid');
+  g.innerHTML = S.photos.map(u => `
+    <div class="photo-thumb"><img src="${u}" alt="foto"></div>`).join('') +
+    `<div class="photo-thumb add" onclick="document.getElementById('photo-input').click()">
+      <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
+      <span>Adicionar foto</span>
+    </div>`;
+}
+
+// ================================================================
+// WHATSAPP
+// ================================================================
+function enviarWhatsApp() {
+  const cid = document.getElementById('reg-cidade').value;
+  const c = S.cidades.find(c => c.id === cid);
+  if (!c) { toast('Selecione a cidade'); return; }
+  if (!S.pos) { toast('Aguardando GPS...'); return; }
+  const tipo = document.getElementById('reg-tipo').value;
+  const dmc  = document.getElementById('reg-dmc').value;
+  const obs  = document.getElementById('reg-obs').value;
+  const diam = document.getElementById('reg-diam').value;
+  const eqId = document.getElementById('reg-equipe').value;
+  const eq = S.equipes.find(e=>e.id===eqId);
+  const id = gerarId(cid, eq?eq.codigo:'');
+  const maps = `https://maps.google.com/?q=${S.pos.lat},${S.pos.lng}`;
+  const msg = encodeURIComponent(
+    `🚨 *VAZAMENTO DETECTADO — GeoFon*\n\n` +
+    `🆔 *ID:* ${id}\n` +
+    `🏙️ *Cidade:* ${c.nome}\n` +
+    `🗂️ *DMC:* ${dmc}\n` +
+    `🔧 *Tipo:* ${tipo}\n` +
+    (diam?`📏 *Diâmetro est.:* ${diam}mm\n`:'') +
+    `⚠️ *Severidade:* ${S.sevAtual.toUpperCase()}\n` +
+    `👥 *Equipe:* ${eq?eq.nome:'—'}\n` +
+    `📝 *Obs:* ${obs||'—'}\n\n` +
+    `📍 *Localização:* ${maps}\n` +
+    `🕐 *Data/Hora:* ${new Date().toLocaleString('pt-BR')}\n\n` +
+    `_Enviado via GeoFon_`
+  );
+  window.open(`https://wa.me/${c.wa[0]}?text=${msg}`, '_blank');
+}
+
+// ================================================================
+// LEAK LIST
+// ================================================================
+function renderLeakList() {
+  const fc = document.getElementById('fl-cidade')?.value||'';
+  const fs = document.getElementById('fl-sev')?.value||'';
+  const fe = document.getElementById('fl-equipe')?.value||'';
+  const filtered = S.leaks.filter(l=>
+    (!fc||l.cidade===fc)&&
+    (!fs||l.severidade===fs)&&
+    (!fe||l.equipe===fe)
+  ).slice().reverse();
+  const wrap = document.getElementById('leak-list-wrap');
+  if (!wrap) return;
+  if (!filtered.length) {
+    wrap.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:30px">Nenhum ponto encontrado.</p>';
+    return;
+  }
+  wrap.innerHTML = filtered.map(l => {
+    const c=S.cidades.find(c=>c.id===l.cidade);
+    return `<div class="leak-item" onclick="zoomLeak(${l.lat},${l.lng})">
+      <div class="leak-dot ${l.severidade}"></div>
+      <div class="leak-info">
+        <div class="lid">${l.id}</div>
+        <div class="ltype">${l.tipo}</div>
+        <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
+        ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
+      </div>
+      <span class="badge ${l.severidade}">${l.severidade}</span>
+    </div>`;
+  }).join('');
+}
+
+function zoomLeak(lat, lng) {
+  if (mapField) { mapField.setView([lat,lng],17); switchTab('map-field','tabs-field'); }
+}
+
+// ================================================================
+// LAYERS
+// ================================================================
+function handleLayerUpload(input, tipo) {
+  Array.from(input.files).forEach(f => {
+    (S.layers[tipo]||(S.layers[tipo]=[])).push({ nome:f.name });
+    toast(`Camada "${f.name}" carregada`);
+    renderLayerLists();
+    // Em produção: parsear GeoJSON/KML e adicionar ao mapa
+  });
+}
+function renderLayerLists() {
+  ['dmc','redes'].forEach(t => {
+    const el=document.getElementById(`${t}-layer-list`);
+    if(!el) return;
+    el.innerHTML=(S.layers[t]||[]).map(l=>`
+      <div class="layer-item">
+        <div class="layer-color" style="background:${t==='dmc'?'#185FA5':'#0F6E56'}"></div>
+        <span style="flex:1;font-size:12px">${l.nome}</span>
+        <span class="badge blue" style="font-size:9.5px">Ativa</span>
+      </div>`).join('');
+  });
+}
+
+// ================================================================
+// GESTÃO
+// ================================================================
+function renderManage() {
+  // Cidades
+  const mc = document.getElementById('manage-cidades');
+  if (mc) {
+    mc.innerHTML = S.cidades.map(c => `
+      <div class="card" style="margin-bottom:8px;padding:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge purple">${c.prefixo}</span>
+          <span style="font-size:13px;font-weight:600">${c.nome}</span>
+          <span style="font-size:11px;color:var(--text2);margin-left:auto">${S.leaks.filter(l=>l.cidade===c.id).length} vazamentos</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2);margin-top:5px">DMCs: ${c.dmcs.join(', ')}</div>
+      </div>`).join('');
+  }
+  // Tabela
+  const mt = document.getElementById('manage-table');
+  if (mt) {
+    if (!S.leaks.length) { mt.innerHTML='<p style="font-size:12px;color:var(--text2)">Nenhum ponto registrado ainda.</p>'; return; }
+    mt.innerHTML=`<div style="overflow-x:auto"><table class="data-table">
+      <thead><tr><th>ID</th><th>Cidade</th><th>DMC</th><th>Tipo</th><th>Sev.</th><th>Equipe</th><th>Data</th></tr></thead>
+      <tbody>${S.leaks.map(l=>{
+        const cor=l.severidade==='alta'?'var(--red)':l.severidade==='media'?'var(--amber)':'var(--green)';
+        const eq=S.equipes.find(e=>e.id===l.equipe);
+        const cid=S.cidades.find(c=>c.id===l.cidade);
+        return `<tr>
+          <td><span class="id-mono">${l.id}</span></td>
+          <td>${cid?cid.nome:l.cidade}</td>
+          <td>${l.dmc}</td>
+          <td>${l.tipo}</td>
+          <td><span class="badge ${l.severidade}">${l.severidade}</span></td>
+          <td>${eq?eq.codigo:l.equipe}</td>
+          <td style="white-space:nowrap">${l.data}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  }
+}
+
+// ================================================================
+// CONFIG
+// ================================================================
+function renderConfigCidades() {
+  const el=document.getElementById('config-cidades');
+  if(!el) return;
+  el.innerHTML=S.cidades.map((c,i)=>`
+    <div class="card" style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="badge purple">${c.prefixo}</span>
+        <strong style="font-size:13px">${c.nome}</strong>
+        <button class="btn danger sm" style="margin-left:auto" onclick="removerCidade(${i})"><i class="ti ti-trash"></i></button>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">DMCs: ${c.dmcs.join(', ')}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:3px">WhatsApp: ${c.wa.map(w=>'+'+w).join(', ')}</div>
+    </div>`).join('');
+}
+
+function renderConfigEquipes() {
+  const el=document.getElementById('config-equipes');
+  if(!el) return;
+  el.innerHTML=S.equipes.map((e,i)=>{
+    const c=S.cidades.find(c=>c.id===e.cidade);
+    return `<div class="card" style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="badge blue">${e.codigo}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:500">${e.nome}</div>
+          <div style="font-size:11px;color:var(--text2)">${c?c.nome:'—'} · +${e.wa}</div>
+        </div>
+        <button class="btn danger sm" onclick="removerEquipe(${i})"><i class="ti ti-trash"></i></button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function salvarCidade() {
+  const nome=document.getElementById('nc-nome').value.trim();
+  const pref=document.getElementById('nc-prefixo').value.trim().toUpperCase();
+  const dmcsRaw=document.getElementById('nc-dmcs').value.trim();
+  const wa=document.getElementById('nc-wa').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
+  const coordsRaw=document.getElementById('nc-coords').value.trim();
+  if(!nome||!pref){toast('Nome e prefixo são obrigatórios');return;}
+  const dmcs=dmcsRaw?dmcsRaw.split('\n').map(s=>s.trim()).filter(Boolean):['DMC-01'];
+  let coords=[-28.6775,-49.3680];
+  if(coordsRaw){const p=coordsRaw.split(',').map(s=>parseFloat(s.trim()));if(p.length===2&&!isNaN(p[0]))coords=p;}
+  S.cidades.push({id:pref,nome,prefixo:pref,dmcs,wa:wa.length?wa:['5548000000000'],coords});
+  S.nextSeq[pref]=1;
+  populateSelects();
+  renderConfigCidades();
+  renderManage();
+  closeModal('modal-cidade');
+  toast(`Cidade "${nome}" (${pref}) adicionada!`);
+  ['nc-nome','nc-prefixo','nc-dmcs','nc-wa','nc-coords'].forEach(id=>document.getElementById(id).value='');
+}
+
+function salvarEquipe() {
+  const nome=document.getElementById('ne-nome').value.trim();
+  const cod=document.getElementById('ne-codigo').value.trim().toUpperCase();
+  const cid=document.getElementById('ne-cidade').value;
+  const wa=document.getElementById('ne-wa').value.trim();
+  if(!nome||!cod||!cid){toast('Preencha todos os campos');return;}
+  S.equipes.push({id:cod,nome,codigo:cod,cidade:cid,wa});
+  populateSelects();
+  renderConfigEquipes();
+  closeModal('modal-equipe');
+  toast(`Equipe "${cod}" adicionada!`);
+  ['ne-nome','ne-codigo','ne-wa'].forEach(id=>document.getElementById(id).value='');
+}
+
+function removerCidade(i){S.cidades.splice(i,1);renderConfigCidades();renderManage();populateSelects();toast('Cidade removida');}
+function removerEquipe(i){S.equipes.splice(i,1);renderConfigEquipes();populateSelects();toast('Equipe removida');}
+
+function salvarConfig(){
+  S.config.org=document.getElementById('cfg-org').value;
+  S.config.gps=parseInt(document.getElementById('cfg-gps').value)||20;
+  toast('Configurações salvas!');
+}
+
+// ================================================================
+// RELATÓRIOS
+// ================================================================
+function gerarRelatorio() {
+  const fc=document.getElementById('rep-cidade').value;
+  const fe=document.getElementById('rep-equipe').value;
+  const fs=document.getElementById('rep-sev').value;
+  const filtered=S.leaks.filter(l=>(!fc||l.cidade===fc)&&(!fe||l.equipe===fe)&&(!fs||l.severidade===fs));
+  const alta=filtered.filter(l=>l.severidade==='alta').length;
+  const media=filtered.filter(l=>l.severidade==='media').length;
+  const baixa=filtered.filter(l=>l.severidade==='baixa').length;
+
+  // Por cidade
+  const porCidade={};
+  filtered.forEach(l=>{const c=S.cidades.find(c=>c.id===l.cidade);const nome=c?c.nome:l.cidade;porCidade[nome]=(porCidade[nome]||0)+1;});
+  // Por tipo
+  const porTipo={};
+  filtered.forEach(l=>{porTipo[l.tipo]=(porTipo[l.tipo]||0)+1;});
+  // Por equipe
+  const porEquipe={};
+  filtered.forEach(l=>{const e=S.equipes.find(e=>e.id===l.equipe);const nome=e?e.nome:l.equipe;porEquipe[nome]=(porEquipe[nome]||0)+1;});
+
+  const tableRows = filtered.map(l=>{
+    const cor=l.severidade==='alta'?'var(--red)':l.severidade==='media'?'var(--amber)':'var(--green)';
+    const c=S.cidades.find(c=>c.id===l.cidade);
+    const e=S.equipes.find(e=>e.id===l.equipe);
+    return `<tr>
+      <td><span class="id-mono">${l.id}</span></td>
+      <td>${c?c.nome:l.cidade}</td><td>${l.dmc}</td><td>${l.tipo}</td>
+      <td style="color:${cor};font-weight:600">${l.severidade.toUpperCase()}</td>
+      <td>${e?e.codigo:'—'}</td>
+      <td style="font-size:10px;font-family:monospace">${l.lat.toFixed(5)},${l.lng.toFixed(5)}</td>
+      <td style="white-space:nowrap">${l.data}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('report-content').innerHTML=`
+    <div class="report-header">
+      <h2>Relatório de Vazamentos — GeoFon</h2>
+      <p>${fc?(S.cidades.find(c=>c.id===fc)?.nome||fc):'Todas as cidades'} · Gerado em ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+      <div class="stat-card"><span class="num">${filtered.length}</span><div class="lbl">Total</div></div>
+      <div class="stat-card"><span class="num" style="color:#E24B4A">${alta}</span><div class="lbl">Alta</div></div>
+      <div class="stat-card"><span class="num" style="color:#EF9F27">${media}</span><div class="lbl">Média</div></div>
+      <div class="stat-card"><span class="num" style="color:#639922">${baixa}</span><div class="lbl">Baixa</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+      <div>
+        <div class="report-section-title">Por cidade</div>
+        <table class="data-table">${Object.entries(porCidade).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td><td style="color:var(--text2);text-align:right">${Math.round(v/filtered.length*100)}%</td></tr>`).join('')}</table>
+      </div>
+      <div>
+        <div class="report-section-title">Por tipo</div>
+        <table class="data-table">${Object.entries(porTipo).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td></tr>`).join('')}</table>
+      </div>
+      <div>
+        <div class="report-section-title">Por equipe</div>
+        <table class="data-table">${Object.entries(porEquipe).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td></tr>`).join('')}</table>
+      </div>
+    </div>
+    <div class="report-section-title">Todos os pontos</div>
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>ID</th><th>Cidade</th><th>DMC</th><th>Tipo</th><th>Severidade</th><th>Equipe</th><th>Coordenadas</th><th>Data</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+}
+
+function exportarCSV() {
+  const rows=[['ID','Cidade','DMC','Tipo','Severidade','Equipe','Latitude','Longitude','Diâmetro(mm)','Data','Descrição']];
+  S.leaks.forEach(l=>{
+    const c=S.cidades.find(c=>c.id===l.cidade);
+    const e=S.equipes.find(e=>e.id===l.equipe);
+    rows.push([l.id,c?c.nome:l.cidade,l.dmc,l.tipo,l.severidade,e?e.codigo:'—',l.lat,l.lng,l.diam||'',l.data,l.desc||'']);
+  });
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`geofon_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+  toast('CSV exportado!');
+}
+
+// ================================================================
+// TABS & MODE
+// ================================================================
+function switchTab(tabId, tabsId) {
+  document.querySelectorAll('.panel').forEach(p=>{p.style.display='';p.classList.remove('active')});
+  document.querySelectorAll(`#${tabsId} .tab`).forEach(t=>t.classList.remove('active'));
+  const panel=document.getElementById(tabId);
+  if(panel){panel.style.display='flex';panel.classList.add('active');}
+  const tab=document.querySelector(`[data-tab="${tabId}"]`);
+  if(tab) tab.classList.add('active');
+  if(tabId==='map-field') setTimeout(()=>{if(mapField)mapField.invalidateSize();},100);
+  if(tabId==='map-pc'){initPCMap();setTimeout(()=>{if(mapPC)mapPC.invalidateSize();},100);}
+  if(tabId==='manage') renderManage();
+}
+
+function toggleMode() {
+  S.mode=S.mode==='field'?'pc':'field';
+  const badge=document.getElementById('mode-badge');
+  const ft=document.getElementById('tabs-field');
+  const pt=document.getElementById('tabs-pc');
+  document.querySelectorAll('.panel').forEach(p=>{p.style.display='';p.classList.remove('active')});
+  if(S.mode==='pc'){
+    badge.textContent='Modo Desktop';
+    ft.classList.add('hidden');
+    pt.classList.remove('hidden');
+    populateSelects();
+    switchTab('map-pc','tabs-pc');
+  } else {
+    badge.textContent='Modo Campo';
+    ft.classList.remove('hidden');
+    pt.classList.add('hidden');
+    switchTab('map-field','tabs-field');
+  }
+}
+
+// ================================================================
+// MODAIS
+// ================================================================
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.addEventListener('click', e=>{
+  if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
+});
+
+// Modal equipe: popular cidades
+document.getElementById('modal-equipe').addEventListener('click', ()=>{
+  const sel=document.getElementById('ne-cidade');
+  while(sel.options.length>1) sel.remove(1);
+  S.cidades.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.nome;sel.appendChild(o);});
+});
+
+// ================================================================
+// TOAST
+// ================================================================
+function toast(msg) {
+  const wrap=document.getElementById('toast-wrap');
+  const t=document.createElement('div');
+  t.className='toast'; t.textContent=msg;
+  wrap.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},2200);
+}
+</script>
+</body>
+</html>

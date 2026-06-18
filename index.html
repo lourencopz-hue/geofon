@@ -765,12 +765,123 @@ let fMarkers = [], pcMarkers = [], heatLayer = null;
 // ================================================================
 // DADOS INICIAIS
 // ================================================================
+// ================================================================
+// PERSISTÊNCIA localStorage
+// ================================================================
+const LS_KEY = 'geofon_v1';
+
+function salvarEstado() {
+  try {
+    const layersDMC   = (S.leafletLayers.dmc||[]).map(l => ({ nome:l.nome, cidade:l.cidade, visible:l.visible, geojson:l._geojson||null }));
+    const layersRedes = (S.leafletLayers.redes||[]).map(l => ({ nome:l.nome, cidade:l.cidade, visible:l.visible, geojson:l._geojson||null }));
+    const dados = { cidades:S.cidades, equipes:S.equipes, leaks:S.leaks, nextSeq:S.nextSeq, config:S.config, layersDMC, layersRedes };
+    // Tentar salvar; se estourar cota, salvar sem geojson
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(dados));
+    } catch(quota) {
+      dados.layersDMC   = layersDMC.map(l=>({...l, geojson:null}));
+      dados.layersRedes = layersRedes.map(l=>({...l, geojson:null}));
+      localStorage.setItem(LS_KEY, JSON.stringify(dados));
+      console.warn('KMLs muito grandes para localStorage — salvos sem geometria');
+    }
+  } catch(e) { console.warn('Erro localStorage:', e); }
+}
+
+function carregarEstado() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const dados = JSON.parse(raw);
+    if (dados.cidades)  S.cidades  = dados.cidades;
+    if (dados.equipes)  S.equipes  = dados.equipes;
+    if (dados.leaks)    S.leaks    = dados.leaks;
+    if (dados.nextSeq)  S.nextSeq  = dados.nextSeq;
+    if (dados.config)   S.config   = dados.config;
+    S._pendingLayersDMC   = dados.layersDMC  || [];
+    S._pendingLayersRedes = dados.layersRedes || [];
+    return true;
+  } catch(e) { console.warn('Erro ao carregar estado:', e); return false; }
+}
+
+function restaurarCamadasSalvas() {
+  // Restaurar DMC
+  (S._pendingLayersDMC||[]).forEach(l => {
+    if (!l.geojson) return;
+    const style = LAYER_STYLE.dmc;
+    const lg = L.geoJSON(l.geojson, {
+      style: () => style,
+      pointToLayer: (ft, ll) => L.circleMarker(ll, { radius:5, ...style }),
+      onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||l.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
+    });
+    if (l.visible !== false) { if(mapField) lg.addTo(mapField); if(mapPC) lg.addTo(mapPC); }
+    lg._geojson = l.geojson;
+    if (!S.leafletLayers.dmc) S.leafletLayers.dmc = [];
+    S.leafletLayers.dmc.push({ nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:l.geojson });
+    // Sincronizar DMCs da cidade
+    sincronizarDMCsCidade(l.geojson, l.cidade);
+  });
+  // Restaurar Redes
+  (S._pendingLayersRedes||[]).forEach(l => {
+    if (!l.geojson) return;
+    const style = LAYER_STYLE.redes;
+    const lg = L.geoJSON(l.geojson, {
+      style: () => style,
+      pointToLayer: (ft, ll) => L.circleMarker(ll, { radius:5, ...style }),
+      onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||l.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
+    });
+    if (l.visible !== false) { if(mapField) lg.addTo(mapField); if(mapPC) lg.addTo(mapPC); }
+    lg._geojson = l.geojson;
+    if (!S.leafletLayers.redes) S.leafletLayers.redes = [];
+    S.leafletLayers.redes.push({ nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:l.geojson });
+  });
+  S._pendingLayersDMC = [];
+  S._pendingLayersRedes = [];
+  renderDMCPanel();
+  renderRedesPanel();
+  renderLayerLists();
+}
+
+// Extrair nomes de DMC do GeoJSON e adicionar à cidade correta
+function sincronizarDMCsCidade(geojson, cidadeId) {
+  if (!geojson || !geojson.features) return;
+  const novos = new Set();
+  geojson.features.forEach(ft => {
+    const p = ft.properties || {};
+    // Tentar várias propriedades comuns em KMLs brasileiros
+    const candidatos = [p.name,p.Name,p.Nome,p.nome,p.DMC,p.dmc,p.NOME,p.Descricao,p.descricao,p.Label,p.label];
+    candidatos.forEach(v => {
+      if (v && typeof v === 'string' && v.trim().length > 1 && v.trim().length < 80) novos.add(v.trim());
+    });
+  });
+  if (!novos.size) return;
+  const lista = [...novos];
+  const cidadesAlvo = cidadeId
+    ? S.cidades.filter(c => c.id === cidadeId)
+    : S.cidades; // sem cidade definida: adiciona em todas
+  cidadesAlvo.forEach(c => {
+    lista.forEach(n => { if (!c.dmcs.includes(n)) c.dmcs.push(n); });
+  });
+  // Atualizar dropdown se estiver aberto
+  const regCid = document.getElementById('reg-cidade');
+  if (regCid && regCid.value) onCidadeChange();
+  salvarEstado();
+  renderConfigCidades();
+  toast('✓ ' + lista.length + ' DMC(s) adicionados à lista de seleção!');
+}
+
+// ================================================================
+// DADOS PADRÃO (só usados na 1ª vez, sem localStorage)
+// ================================================================
 function initDados() {
+  const temSalvo = carregarEstado();
+  if (temSalvo) return; // Usa dados do localStorage
+
+  // Primeira execução — dados padrão
   S.cidades = [
     { id: 'CIA', nome: 'Criciúma',     prefixo: 'CIA', dmcs: ['DMC-01 Centro','DMC-02 Leste','DMC-03 Norte','DMC-04 Sul','DMC-05 Oeste'], wa: ['5548999990001','5548999990002'], coords: [-28.6775,-49.3680] },
     { id: 'ICA', nome: 'Içara',        prefixo: 'ICA', dmcs: ['DMC-01','DMC-02','DMC-03'], wa: ['5548999990003'], coords: [-28.7130,-49.3050] },
     { id: 'FQA', nome: 'Forquilhinha', prefixo: 'FQA', dmcs: ['DMC-01 Sede','DMC-02 Vila'], wa: ['5548999990004'], coords: [-28.7430,-49.4660] },
-    { id: 'SID', nome: 'Siderópolis', prefixo: 'SID', dmcs: ['DMC-01','DMC-02'], wa: ['5548999990005'], coords: [-28.5960,-49.4260] }
+    { id: 'SID', nome: 'Siderópolis',  prefixo: 'SID', dmcs: ['DMC-01','DMC-02'], wa: ['5548999990005'], coords: [-28.5960,-49.4260] }
   ];
   S.equipes = [
     { id:'EQ1', nome:'Equipe 1 - Manhã',  codigo:'EQ1', cidade:'CIA', wa:'5548999991001' },
@@ -779,23 +890,7 @@ function initDados() {
     { id:'EQ4', nome:'Equipe 4 - FQA',    codigo:'EQ4', cidade:'FQA', wa:'5548999991004' }
   ];
   S.nextSeq = { CIA:1, ICA:1, FQA:1, SID:1 };
-
-  // Dados demo
-  const demo = [
-    { cidade:'CIA', equipe:'EQ1', dmc:'DMC-01 Centro', tipo:'Ramal predial',      sev:'alta',  lat:-28.6775, lng:-49.3680, desc:'Vazamento visível na calçada',       diam:25  },
-    { cidade:'CIA', equipe:'EQ2', dmc:'DMC-02 Leste',  tipo:'Rede de distribuição',sev:'media', lat:-28.6820, lng:-49.3710, desc:'Umidade no pavimento pavimentado',   diam:50  },
-    { cidade:'ICA', equipe:'EQ3', dmc:'DMC-01',        tipo:'Adutora',             sev:'alta',  lat:-28.7130, lng:-49.3050, desc:'Vazamento grande, intervenção urgente',diam:100 },
-    { cidade:'CIA', equipe:'EQ1', dmc:'DMC-03 Norte',  tipo:'Hidrante',            sev:'baixa', lat:-28.6700, lng:-49.3750, desc:'Hidrante com pequeno gotejamento',   diam:75  },
-    { cidade:'FQA', equipe:'EQ4', dmc:'DMC-01 Sede',   tipo:'Ramal predial',       sev:'media', lat:-28.7430, lng:-49.4660, desc:'Medidor com vazamento interno',      diam:15  },
-    { cidade:'SID', equipe:'EQ1', dmc:'DMC-01',        tipo:'Válvula',             sev:'baixa', lat:-28.5960, lng:-49.4260, desc:'Válvula de registro com fuga',       diam:50  }
-  ];
-  const datas = ['10/06/2025 09:23','11/06/2025 14:05','12/06/2025 08:10','12/06/2025 16:30','13/06/2025 10:00','13/06/2025 15:45'];
-  demo.forEach((d, i) => {
-    const c = S.cidades.find(c => c.id === d.cidade);
-    const e = S.equipes.find(e => e.id === d.equipe);
-    const seq = String(S.nextSeq[d.cidade]++).padStart(3,'0');
-    S.leaks.push({ ...d, id:`${d.cidade}-${d.equipe}-VAZ${seq}`, data:datas[i], photos:i%2, severidade:d.sev });
-  });
+  S.leaks = [];
 }
 
 // ================================================================
@@ -810,6 +905,22 @@ window.addEventListener('load', () => {
   renderManage();
   initFieldMap();
   startGPS();
+  // Restaurar camadas após mapa inicializado
+  setTimeout(() => restaurarCamadasSalvas(), 400);
+});
+
+// ================================================================
+// SINCRONIZAÇÃO Campo <-> PC (mesmo navegador, abas diferentes)
+// ================================================================
+window.addEventListener('storage', ev => {
+  if (ev.key !== LS_KEY || !ev.newValue) return;
+  try {
+    const dados = JSON.parse(ev.newValue);
+    if (dados.leaks)   { S.leaks   = dados.leaks;   addFieldMarkers(); renderLeakList(); renderManage(); refreshPCMap(); }
+    if (dados.cidades) { S.cidades = dados.cidades;  populateSelects(); renderConfigCidades(); }
+    if (dados.equipes) { S.equipes = dados.equipes;  renderConfigEquipes(); populateSelects(); }
+    toast('🔄 Dados atualizados por outro dispositivo');
+  } catch(e){}
 });
 
 // ================================================================
@@ -1063,17 +1174,19 @@ function salvarPonto() {
     lat:S.pos.lat, lng:S.pos.lng,
     desc:obs, diam:diam||null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
-    photos:S.photos.length
+    photos:S.photos.length,
+    photoData: S.photosBase64.slice(0,3) // guardar até 3 fotos em base64
   };
   S.leaks.push(leak);
   addFieldMarkers();
   renderLeakList();
   renderManage();
+  salvarEstado();
   toast(`✓ Ponto ${id} salvo!`);
   // Reset
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
-  S.photos=[];
+  S.photos=[]; S.photosBase64=[];
   renderPhotos();
   switchTab('map-field','tabs-field');
 }
@@ -1122,7 +1235,17 @@ function confirmarQuick() {
 // FOTOS
 // ================================================================
 function handlePhotos(input) {
-  Array.from(input.files).forEach(f => S.photos.push(URL.createObjectURL(f)));
+  Array.from(input.files).forEach(f => {
+    const url = URL.createObjectURL(f);
+    S.photos.push(url);
+    // Converter para base64 para poder enviar/salvar
+    const reader = new FileReader();
+    reader.onload = ev => {
+      S.photosBase64 = S.photosBase64 || [];
+      S.photosBase64.push(ev.target.result); // data:image/jpeg;base64,...
+    };
+    reader.readAsDataURL(f);
+  });
   renderPhotos();
 }
 function renderPhotos() {
@@ -1150,22 +1273,49 @@ function enviarWhatsApp() {
   const eqId = document.getElementById('reg-equipe').value;
   const eq = S.equipes.find(e=>e.id===eqId);
   const id = gerarId(cid, eq?eq.codigo:'');
-  const maps = `https://maps.google.com/?q=${S.pos.lat},${S.pos.lng}`;
-  const msg = encodeURIComponent(
-    `🚨 *VAZAMENTO DETECTADO — GeoFon*\n\n` +
-    `🆔 *ID:* ${id}\n` +
-    `🏙️ *Cidade:* ${c.nome}\n` +
-    `🗂️ *DMC:* ${dmc}\n` +
-    `🔧 *Tipo:* ${tipo}\n` +
-    (diam?`📏 *Diâmetro est.:* ${diam}mm\n`:'') +
-    `⚠️ *Severidade:* ${S.sevAtual.toUpperCase()}\n` +
-    `👥 *Equipe:* ${eq?eq.nome:'—'}\n` +
-    `📝 *Obs:* ${obs||'—'}\n\n` +
-    `📍 *Localização:* ${maps}\n` +
-    `🕐 *Data/Hora:* ${new Date().toLocaleString('pt-BR')}\n\n` +
-    `_Enviado via GeoFon_`
-  );
-  window.open(`https://wa.me/${c.wa[0]}?text=${msg}`, '_blank');
+  const maps = 'https://maps.google.com/?q=' + S.pos.lat + ',' + S.pos.lng;
+  const temFotos = S.photos && S.photos.length > 0;
+
+  const texto =
+    '🚨 *VAZAMENTO DETECTADO — GeoFon*\n\n' +
+    '🆔 *ID:* ' + id + '\n' +
+    '🏙️ *Cidade:* ' + c.nome + '\n' +
+    '🗂️ *DMC:* ' + dmc + '\n' +
+    '🔧 *Tipo:* ' + tipo + '\n' +
+    (diam ? '📏 *Diâmetro est.:* ' + diam + 'mm\n' : '') +
+    '⚠️ *Severidade:* ' + S.sevAtual.toUpperCase() + '\n' +
+    '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' +
+    '📝 *Obs:* ' + (obs||'—') + '\n\n' +
+    '📍 *Localização:* ' + maps + '\n' +
+    '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') + '\n' +
+    (temFotos ? '📸 *Fotos:* ' + S.photos.length + ' foto(s) — envie as imagens nesta conversa após esta mensagem\n' : '') +
+    '\n_Enviado via GeoFon_';
+
+  const msg = encodeURIComponent(texto);
+
+  // Se tiver foto, abrir compartilhamento nativo (Web Share API) para a 1ª foto
+  if (temFotos && navigator.share && S.photosBase64 && S.photosBase64.length > 0) {
+    // Converter base64 para Blob para compartilhar
+    const b64 = S.photosBase64[0];
+    const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
+    const byteStr = atob(b64.split(',')[1]);
+    const arr = new Uint8Array(byteStr.length);
+    for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
+    const blob = new Blob([arr], {type:mime});
+    const file = new File([blob], 'vazamento_' + id + '.jpg', {type:mime});
+    navigator.share({ title:'Vazamento ' + id, text:texto.replace(/\n/g,'\n'), files:[file] })
+      .catch(() => {
+        // Fallback: abrir WhatsApp só com texto
+        c.wa.forEach((num, i) => { setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800); });
+      });
+  } else {
+    // Abrir WhatsApp para cada número cadastrado (com delay entre eles)
+    if (!c.wa || !c.wa.length) { toast('Nenhum número WA cadastrado para esta cidade'); return; }
+    c.wa.forEach((num, i) => {
+      setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800);
+    });
+    if (temFotos) toast('💡 Envie as ' + S.photos.length + ' foto(s) manualmente na conversa do WhatsApp!');
+  }
 }
 
 // ================================================================
@@ -1213,6 +1363,7 @@ const LAYER_STYLE = {
   redes: { color:'#0F6E56', fillColor:'#0F6E56', fillOpacity:0.05, weight:2, dashArray:'6,4' }
 };
 S.layerVisible  = { dmc:true, redes:true };
+S.photosBase64  = [];
 S.leafletLayers = { dmc:[], redes:[] }; // cada item: { nome, cidade, visible, lg }
 S.dmcCidadeFiltro = '';
 
@@ -1258,13 +1409,16 @@ function adicionarCamadaNoMapa(geojson, tipo, nome, cidadeId) {
     onEachFeature: (ft, layer) => {
       const p = ft.properties || {};
       const lbl = p.name||p.Nome||p.nome||p.DMC||p.dmc||nome;
-      if (lbl) layer.bindPopup('<b>' + lbl + '</b>');
+      if (lbl) layer.bindPopup('<b>' + lbl + '</b><br><small style="color:#666">' + tipo.toUpperCase() + '</small>');
     }
   });
   if (mapField) lg.addTo(mapField);
   if (mapPC)    lg.addTo(mapPC);
   if (!S.leafletLayers[tipo]) S.leafletLayers[tipo] = [];
-  S.leafletLayers[tipo].push({ nome, cidade: cidadeId||'', visible:true, lg });
+  // _geojson guardado para persistência no localStorage
+  S.leafletLayers[tipo].push({ nome, cidade:cidadeId||'', visible:true, lg, _geojson:geojson });
+  // Se for DMC, sincronizar nomes dos Placemarks com a lista de DMCs da cidade
+  if (tipo === 'dmc') sincronizarDMCsCidade(geojson, cidadeId);
   try {
     const b = lg.getBounds();
     if (b.isValid()) {
@@ -1272,6 +1426,7 @@ function adicionarCamadaNoMapa(geojson, tipo, nome, cidadeId) {
       if (mapPC)    mapPC.fitBounds(b, {padding:[20,20]});
     }
   } catch(e){}
+  salvarEstado();
 }
 
 function toggleCamadaIndividual(tipo, idx) {
@@ -1524,7 +1679,7 @@ function renderConfigCidades() {
 }
 
 function editarWACidade(cidIdx, waIdx, valor) {
-  if (S.cidades[cidIdx]) S.cidades[cidIdx].wa[waIdx] = valor.trim();
+  if (S.cidades[cidIdx]) { S.cidades[cidIdx].wa[waIdx] = valor.trim(); salvarEstado(); }
 }
 function removerWACidade(cidIdx, waIdx) {
   if (S.cidades[cidIdx] && S.cidades[cidIdx].wa.length > 1) {
@@ -1533,7 +1688,7 @@ function removerWACidade(cidIdx, waIdx) {
   } else { toast('A cidade precisa ter ao menos um contato'); }
 }
 function adicionarWACidade(cidIdx) {
-  if (S.cidades[cidIdx]) { S.cidades[cidIdx].wa.push(''); renderConfigCidades(); }
+  if (S.cidades[cidIdx]) { S.cidades[cidIdx].wa.push(''); renderConfigCidades(); salvarEstado(); }
 }
 
 function renderConfigEquipes() {
@@ -1590,9 +1745,11 @@ function salvarCidade() {
   populateSelects();
   renderConfigCidades();
   renderManage();
+  salvarEstado();
   closeModal('modal-cidade');
-  toast(`Cidade "${nome}" (${pref}) adicionada!`);
-  ['nc-nome','nc-prefixo','nc-dmcs','nc-wa','nc-coords'].forEach(id=>document.getElementById(id).value='');
+  toast('Cidade "' + nome + '" (' + pref + ') adicionada!');
+  ['nc-nome','nc-prefixo','nc-dmcs','nc-coords'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  const waList=document.getElementById('nc-wa-list'); if(waList) waList.innerHTML='';
 }
 
 function salvarEquipe() {
@@ -1604,17 +1761,19 @@ function salvarEquipe() {
   S.equipes.push({id:cod,nome,codigo:cod,cidade:cid,wa});
   populateSelects();
   renderConfigEquipes();
+  salvarEstado();
   closeModal('modal-equipe');
-  toast(`Equipe "${cod}" adicionada!`);
+  toast('Equipe "' + cod + '" adicionada!');
   ['ne-nome','ne-codigo','ne-wa'].forEach(id=>document.getElementById(id).value='');
 }
 
-function removerCidade(i){S.cidades.splice(i,1);renderConfigCidades();renderManage();populateSelects();toast('Cidade removida');}
-function removerEquipe(i){S.equipes.splice(i,1);renderConfigEquipes();populateSelects();toast('Equipe removida');}
+function removerCidade(i){S.cidades.splice(i,1);renderConfigCidades();renderManage();populateSelects();salvarEstado();toast('Cidade removida');}
+function removerEquipe(i){S.equipes.splice(i,1);renderConfigEquipes();populateSelects();salvarEstado();toast('Equipe removida');}
 
 function salvarConfig(){
   S.config.org=document.getElementById('cfg-org').value;
   S.config.gps=parseInt(document.getElementById('cfg-gps').value)||20;
+  salvarEstado();
   toast('Configurações salvas!');
 }
 

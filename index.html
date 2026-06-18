@@ -262,8 +262,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="map-toolbar">
       <button class="btn primary" onclick="openRegisterQuick()"><i class="ti ti-map-pin-plus"></i>Novo ponto</button>
-      <button class="btn sm" onclick="toggleLayerVisibility('dmc')"><i class="ti ti-hexagon"></i>DMC</button>
-      <button class="btn sm" onclick="toggleLayerVisibility('redes')"><i class="ti ti-line-dashed"></i>Redes</button>
+      <button class="btn sm" onclick="openDMCPanel()"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC</button>
+      <button class="btn sm" onclick="openRedesPanel()"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
       <button class="btn sm" onclick="centerMyPosition()"><i class="ti ti-gps"></i>Minha pos.</button>
     </div>
     <div class="map-wrap">
@@ -449,12 +449,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </select>
       <button class="btn sm primary" onclick="refreshPCMap()"><i class="ti ti-refresh"></i>Atualizar</button>
       <div style="width:1px;background:var(--border);margin:0 2px"></div>
-      <button class="btn sm" onclick="document.getElementById('up-dmc-pc').click()" title="Carregar área DMC"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC</button>
-      <input type="file" id="up-dmc-pc" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'dmc')">
-      <button class="btn sm" onclick="document.getElementById('up-redes-pc').click()" title="Carregar redes"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
-      <input type="file" id="up-redes-pc" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
-      <button class="btn sm" id="btn-toggle-dmc" onclick="toggleLayerVisibility('dmc')" title="Mostrar/ocultar DMC"><i class="ti ti-eye"></i>Ver DMC</button>
-      <button class="btn sm" id="btn-toggle-redes" onclick="toggleLayerVisibility('redes')" title="Mostrar/ocultar redes"><i class="ti ti-eye"></i>Ver Redes</button>
+      <button class="btn sm" onclick="openDMCPanel()"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC</button>
+      <button class="btn sm" onclick="openRedesPanel()"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
     </div>
     <div class="pc-split">
       <div class="pc-main">
@@ -489,7 +485,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div style="flex:1;overflow-y:auto;padding:14px;border-right:1px solid var(--border)">
         <div class="section-title">Cidades cadastradas</div>
         <div id="manage-cidades"></div>
-        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px" onclick="openModal('modal-cidade')">
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px" onclick="openModalCidade()">
           <i class="ti ti-plus"></i> Adicionar cidade
         </button>
         <hr class="section-divider" style="margin:16px 0">
@@ -541,7 +537,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="section">
         <div class="section-title">Cidades e prefixos</div>
         <div id="config-cidades"></div>
-        <button class="btn primary" style="margin-top:8px" onclick="openModal('modal-cidade')">
+        <button class="btn primary" style="margin-top:8px" onclick="openModalCidade()">
           <i class="ti ti-plus"></i> Adicionar cidade
         </button>
       </div>
@@ -594,8 +590,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <textarea id="nc-dmcs" placeholder="DMC-01 Centro&#10;DMC-02 Leste&#10;DMC-03 Norte"></textarea>
     </div>
     <div class="field">
-      <label>Números WhatsApp para notificação (com DDI+DDD, separados por vírgula)</label>
-      <input type="text" id="nc-wa" placeholder="5548999990001,5548999990002">
+      <label>Contatos WhatsApp <span style="color:var(--text3);font-weight:400">(com DDI+DDD, ex: 5548999990001)</span></label>
+      <div id="nc-wa-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
+      <button class="btn sm" onclick="addWAField()" style="width:100%;justify-content:center">
+        <i class="ti ti-plus"></i> Adicionar contato
+      </button>
     </div>
     <div class="field">
       <label>Centro do mapa (latitude, longitude)</label>
@@ -685,6 +684,61 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
 <!-- Toast container -->
 <div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- Painel DMC deslizante (campo e PC) -->
+<div id="dmc-panel-overlay" style="display:none;position:fixed;inset:0;z-index:800;background:rgba(0,0,0,.35)" onclick="closeDMCPanel()"></div>
+<div id="dmc-panel" style="display:none;position:fixed;top:0;right:0;bottom:0;width:300px;max-width:92vw;background:var(--bg);z-index:900;box-shadow:-4px 0 24px rgba(0,0,0,.18);flex-direction:column;overflow:hidden">
+  <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--blue);color:#fff;flex-shrink:0">
+    <i class="ti ti-hexagon" style="font-size:18px"></i>
+    <span style="font-weight:600;font-size:14px;flex:1">Gerenciar camadas DMC</span>
+    <button onclick="closeDMCPanel()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px;padding:2px"><i class="ti ti-x"></i></button>
+  </div>
+  <!-- Filtro por cidade -->
+  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap" id="dmc-city-filter"></div>
+  </div>
+  <!-- Upload -->
+  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <button class="btn sm primary" style="width:100%;justify-content:center" onclick="document.getElementById('up-dmc-panel').click()">
+      <i class="ti ti-upload"></i> Carregar KML / GeoJSON
+    </button>
+    <input type="file" id="up-dmc-panel" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'dmc')">
+    <div style="font-size:10px;color:var(--text3);margin-top:5px;text-align:center">O arquivo ficará disponível para todos os usuários</div>
+  </div>
+  <!-- Lista de camadas -->
+  <div style="flex:1;overflow-y:auto;padding:10px 14px" id="dmc-panel-list">
+    <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.</p>
+  </div>
+  <!-- Controles globais -->
+  <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0">
+    <button class="btn sm" style="flex:1;justify-content:center" onclick="toggleAllDMC(true)"><i class="ti ti-eye"></i>Mostrar todos</button>
+    <button class="btn sm" style="flex:1;justify-content:center" onclick="toggleAllDMC(false)"><i class="ti ti-eye-off"></i>Ocultar todos</button>
+  </div>
+</div>
+
+<!-- Painel Redes deslizante -->
+<div id="redes-panel-overlay" style="display:none;position:fixed;inset:0;z-index:800;background:rgba(0,0,0,.35)" onclick="closeRedesPanel()"></div>
+<div id="redes-panel" style="display:none;position:fixed;top:0;right:0;bottom:0;width:300px;max-width:92vw;background:var(--bg);z-index:900;box-shadow:-4px 0 24px rgba(0,0,0,.18);flex-direction:column;overflow:hidden">
+  <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--teal);color:#fff;flex-shrink:0">
+    <i class="ti ti-line-dashed" style="font-size:18px"></i>
+    <span style="font-weight:600;font-size:14px;flex:1">Gerenciar Redes</span>
+    <button onclick="closeRedesPanel()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px;padding:2px"><i class="ti ti-x"></i></button>
+  </div>
+  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <button class="btn sm success" style="width:100%;justify-content:center" onclick="document.getElementById('up-redes-panel').click()">
+      <i class="ti ti-upload"></i> Carregar KML / GeoJSON de redes
+    </button>
+    <input type="file" id="up-redes-panel" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:10px 14px" id="redes-panel-list">
+    <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.</p>
+  </div>
+  <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0">
+    <button class="btn sm" style="flex:1;justify-content:center" onclick="toggleAllRedes(true)"><i class="ti ti-eye"></i>Mostrar todas</button>
+    <button class="btn sm" style="flex:1;justify-content:center" onclick="toggleAllRedes(false)"><i class="ti ti-eye-off"></i>Ocultar todas</button>
+  </div>
+</div>
 
 <script>
 // ================================================================
@@ -1159,7 +1213,8 @@ const LAYER_STYLE = {
   redes: { color:'#0F6E56', fillColor:'#0F6E56', fillOpacity:0.05, weight:2, dashArray:'6,4' }
 };
 S.layerVisible  = { dmc:true, redes:true };
-S.leafletLayers = { dmc:[], redes:[] };
+S.leafletLayers = { dmc:[], redes:[] }; // cada item: { nome, cidade, visible, lg }
+S.dmcCidadeFiltro = '';
 
 function handleLayerUpload(input, tipo) {
   Array.from(input.files).forEach(f => {
@@ -1171,10 +1226,13 @@ function handleLayerUpload(input, tipo) {
           ? kmlToGeoJSON(content)
           : JSON.parse(content);
         if (!geojson || !geojson.features) throw new Error('Sem geometrias encontradas');
-        adicionarCamadaNoMapa(geojson, tipo, f.name);
-        (S.layers[tipo]||(S.layers[tipo]=[])).push({ nome:f.name, geojson });
+        const cidadeId = detectCidadeFromName(f.name);
+        adicionarCamadaNoMapa(geojson, tipo, f.name, cidadeId);
+        (S.layers[tipo]||(S.layers[tipo]=[])).push({ nome:f.name, geojson, cidade:cidadeId });
         renderLayerLists();
-        toast(`✓ "${f.name}" carregada no mapa!`);
+        renderDMCPanel();
+        renderRedesPanel();
+        toast('✓ "' + f.name + '" carregada no mapa!');
       } catch(err) {
         toast('Erro ao ler arquivo: ' + (err.message||err));
       }
@@ -1184,7 +1242,15 @@ function handleLayerUpload(input, tipo) {
   input.value = '';
 }
 
-function adicionarCamadaNoMapa(geojson, tipo, nome) {
+function detectCidadeFromName(nome) {
+  const n = nome.toLowerCase();
+  for (const c of S.cidades) {
+    if (n.includes(c.prefixo.toLowerCase()) || n.includes(c.nome.toLowerCase().split(' ')[0])) return c.id;
+  }
+  return '';
+}
+
+function adicionarCamadaNoMapa(geojson, tipo, nome, cidadeId) {
   const style = LAYER_STYLE[tipo] || LAYER_STYLE.dmc;
   const lg = L.geoJSON(geojson, {
     style: () => style,
@@ -1192,56 +1258,162 @@ function adicionarCamadaNoMapa(geojson, tipo, nome) {
     onEachFeature: (ft, layer) => {
       const p = ft.properties || {};
       const lbl = p.name||p.Nome||p.nome||p.DMC||p.dmc||nome;
-      if (lbl) layer.bindPopup(`<b>${lbl}</b>`);
+      if (lbl) layer.bindPopup('<b>' + lbl + '</b>');
     }
   });
   if (mapField) lg.addTo(mapField);
   if (mapPC)    lg.addTo(mapPC);
   if (!S.leafletLayers[tipo]) S.leafletLayers[tipo] = [];
-  S.leafletLayers[tipo].push(lg);
+  S.leafletLayers[tipo].push({ nome, cidade: cidadeId||'', visible:true, lg });
   try {
     const b = lg.getBounds();
     if (b.isValid()) {
       if (mapField) mapField.fitBounds(b, {padding:[20,20]});
-      if (mapPC)    mapPC.fitBounds(b,    {padding:[20,20]});
+      if (mapPC)    mapPC.fitBounds(b, {padding:[20,20]});
     }
   } catch(e){}
 }
 
-function toggleLayerVisibility(tipo) {
-  S.layerVisible[tipo] = !S.layerVisible[tipo];
-  const vis = S.layerVisible[tipo];
-  const maps = [mapField, mapPC].filter(Boolean);
-  (S.leafletLayers[tipo]||[]).forEach(lg => {
-    maps.forEach(m => { vis ? (!m.hasLayer(lg) && lg.addTo(m)) : (m.hasLayer(lg) && m.removeLayer(lg)); });
+function toggleCamadaIndividual(tipo, idx) {
+  const item = (S.leafletLayers[tipo]||[])[idx];
+  if (!item) return;
+  item.visible = !item.visible;
+  [mapField, mapPC].filter(Boolean).forEach(m => {
+    item.visible ? (!m.hasLayer(item.lg) && item.lg.addTo(m)) : (m.hasLayer(item.lg) && m.removeLayer(item.lg));
   });
-  const tipoNome = tipo==='dmc'?'DMC':'Redes';
-  const btn = document.getElementById(`btn-toggle-${tipo}`);
-  if (btn) btn.innerHTML = `<i class="ti ${vis?'ti-eye':'ti-eye-off'}"></i>${vis?'Ocultar':'Ver'} ${tipoNome}`;
-  toast(`${tipoNome} ${vis?'visível':'oculto'}`);
+  renderDMCPanel();
+  renderRedesPanel();
 }
+
+function toggleAllDMC(vis) {
+  (S.leafletLayers.dmc||[]).forEach(item => {
+    if (item.visible !== vis) {
+      item.visible = vis;
+      [mapField,mapPC].filter(Boolean).forEach(m => { vis?(!m.hasLayer(item.lg)&&item.lg.addTo(m)):(m.hasLayer(item.lg)&&m.removeLayer(item.lg)); });
+    }
+  });
+  renderDMCPanel();
+}
+function toggleAllRedes(vis) {
+  (S.leafletLayers.redes||[]).forEach(item => {
+    if (item.visible !== vis) {
+      item.visible = vis;
+      [mapField,mapPC].filter(Boolean).forEach(m => { vis?(!m.hasLayer(item.lg)&&item.lg.addTo(m)):(m.hasLayer(item.lg)&&m.removeLayer(item.lg)); });
+    }
+  });
+  renderRedesPanel();
+}
+
+function openDMCPanel() {
+  renderDMCPanelCityFilter();
+  renderDMCPanel();
+  document.getElementById('dmc-panel-overlay').style.display='block';
+  document.getElementById('dmc-panel').style.display='flex';
+}
+function closeDMCPanel() {
+  document.getElementById('dmc-panel-overlay').style.display='none';
+  document.getElementById('dmc-panel').style.display='none';
+}
+function openRedesPanel() {
+  renderRedesPanel();
+  document.getElementById('redes-panel-overlay').style.display='block';
+  document.getElementById('redes-panel').style.display='flex';
+}
+function closeRedesPanel() {
+  document.getElementById('redes-panel-overlay').style.display='none';
+  document.getElementById('redes-panel').style.display='none';
+}
+
+function renderDMCPanelCityFilter() {
+  const el = document.getElementById('dmc-city-filter');
+  if (!el) return;
+  el.innerHTML = '<button class="toggle-btn' + (S.dmcCidadeFiltro===''?' active':'') + '" onclick="setDMCFiltro(\'\')">Todas</button>' +
+    S.cidades.map(c => '<button class="toggle-btn' + (S.dmcCidadeFiltro===c.id?' active':'') + '" onclick="setDMCFiltro(\'' + c.id + '\')">' + c.prefixo + '</button>').join('');
+}
+function setDMCFiltro(cid) {
+  S.dmcCidadeFiltro = cid;
+  renderDMCPanelCityFilter();
+  renderDMCPanel();
+}
+
+function renderDMCPanel() {
+  const el = document.getElementById('dmc-panel-list');
+  if (!el) return;
+  const allLayers = S.leafletLayers.dmc || [];
+  const layers = allLayers.filter(l => !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro || l.cidade === '');
+  if (!allLayers.length) {
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
+    return;
+  }
+  if (!layers.length) {
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:16px">Nenhuma camada para esta cidade.</p>';
+    return;
+  }
+  el.innerHTML = layers.map(item => {
+    const idx = allLayers.indexOf(item);
+    const c = S.cidades.find(c => c.id === item.cidade);
+    return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+      '<div style="width:10px;height:10px;border-radius:3px;background:#185FA5;flex-shrink:0"></div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' +
+        (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
+      '</div>' +
+      '<button onclick="toggleCamadaIndividual(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--blue)':'var(--text2)') + '">' +
+        '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
+      '</button>' +
+      '<button onclick="removerCamada(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
+        '<i class="ti ti-trash"></i>' +
+      '</button>' +
+    '</div>';
+  }).join('');
+}
+
+function renderRedesPanel() {
+  const el = document.getElementById('redes-panel-list');
+  if (!el) return;
+  const layers = S.leafletLayers.redes || [];
+  if (!layers.length) {
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
+    return;
+  }
+  el.innerHTML = layers.map((item, idx) =>
+    '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+      '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div></div>' +
+      '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--teal)':'var(--text2)') + '">' +
+        '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
+      '</button>' +
+      '<button onclick="removerCamada(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
+        '<i class="ti ti-trash"></i>' +
+      '</button>' +
+    '</div>'
+  ).join('');
+}
+
+function toggleLayerVisibility(tipo) { tipo==='dmc' ? openDMCPanel() : openRedesPanel(); }
 
 function renderLayerLists() {
   ['dmc','redes'].forEach(t => {
-    const el = document.getElementById(`${t}-layer-list`);
+    const el = document.getElementById(t + '-layer-list');
     if (!el) return;
-    el.innerHTML = (S.layers[t]||[]).map((l,i) => `
-      <div class="layer-item">
-        <div class="layer-color" style="background:${t==='dmc'?'#185FA5':'#0F6E56'}"></div>
-        <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.nome}</span>
-        <button class="btn sm" style="padding:3px 7px" onclick="removerCamada('${t}',${i})">
-          <i class="ti ti-trash" style="font-size:12px"></i>
-        </button>
-      </div>`).join('');
+    el.innerHTML = (S.leafletLayers[t]||[]).map((item, i) =>
+      '<div class="layer-item">' +
+        '<div class="layer-color" style="background:' + (t==='dmc'?'#185FA5':'#0F6E56') + '"></div>' +
+        '<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</span>' +
+        '<button class="btn sm" style="padding:3px 7px" onclick="removerCamada(\'' + t + '\',' + i + ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' +
+      '</div>'
+    ).join('');
   });
 }
 
 function removerCamada(tipo, idx) {
-  const lg = (S.leafletLayers[tipo]||[])[idx];
-  if (lg) [mapField,mapPC].filter(Boolean).forEach(m=>m.hasLayer(lg)&&m.removeLayer(lg));
+  const item = (S.leafletLayers[tipo]||[])[idx];
+  if (item) [mapField,mapPC].filter(Boolean).forEach(m => m.hasLayer(item.lg) && m.removeLayer(item.lg));
   if (S.leafletLayers[tipo]) S.leafletLayers[tipo].splice(idx,1);
-  S.layers[tipo].splice(idx,1);
+  if (S.layers[tipo]) S.layers[tipo].splice(idx,1);
   renderLayerLists();
+  renderDMCPanel();
+  renderRedesPanel();
   toast('Camada removida');
 }
 
@@ -1329,14 +1501,39 @@ function renderConfigCidades() {
   if(!el) return;
   el.innerHTML=S.cidades.map((c,i)=>`
     <div class="card" style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span class="badge purple">${c.prefixo}</span>
         <strong style="font-size:13px">${c.nome}</strong>
         <button class="btn danger sm" style="margin-left:auto" onclick="removerCidade(${i})"><i class="ti ti-trash"></i></button>
       </div>
-      <div style="font-size:11px;color:var(--text2)">DMCs: ${c.dmcs.join(', ')}</div>
-      <div style="font-size:11px;color:var(--text2);margin-top:3px">WhatsApp: ${c.wa.map(w=>'+'+w).join(', ')}</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">DMCs: ${c.dmcs.join(', ')}</div>
+      <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">WhatsApp</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${c.wa.map((w,wi)=>`
+          <div style="display:flex;align-items:center;gap:6px">
+            <i class="ti ti-brand-whatsapp" style="color:#25D366;font-size:14px"></i>
+            <input type="text" value="${w}" onchange="editarWACidade(${i},${wi},this.value)"
+              style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+            <button onclick="removerWACidade(${i},${wi})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 7px;cursor:pointer;color:var(--red)"><i class="ti ti-x" style="font-size:11px"></i></button>
+          </div>`).join('')}
+      </div>
+      <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarWACidade(${i})">
+        <i class="ti ti-plus"></i> Adicionar contato
+      </button>
     </div>`).join('');
+}
+
+function editarWACidade(cidIdx, waIdx, valor) {
+  if (S.cidades[cidIdx]) S.cidades[cidIdx].wa[waIdx] = valor.trim();
+}
+function removerWACidade(cidIdx, waIdx) {
+  if (S.cidades[cidIdx] && S.cidades[cidIdx].wa.length > 1) {
+    S.cidades[cidIdx].wa.splice(waIdx, 1);
+    renderConfigCidades();
+  } else { toast('A cidade precisa ter ao menos um contato'); }
+}
+function adicionarWACidade(cidIdx) {
+  if (S.cidades[cidIdx]) { S.cidades[cidIdx].wa.push(''); renderConfigCidades(); }
 }
 
 function renderConfigEquipes() {
@@ -1357,17 +1554,38 @@ function renderConfigEquipes() {
   }).join('');
 }
 
+function addWAField(value) {
+  const list = document.getElementById('nc-wa-list');
+  if (!list) return;
+  const idx = list.children.length;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:6px;align-items:center';
+  div.innerHTML = '<input type="text" class="nc-wa-item" placeholder="5548999990001" style="flex:1;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" value="' + (value||'') + '">' +
+    '<button onclick="this.parentElement.remove()" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red);flex-shrink:0"><i class="ti ti-x"></i></button>';
+  list.appendChild(div);
+}
+
+// Inicializar campos WA ao abrir modal
+function openModalCidade() {
+  const list = document.getElementById('nc-wa-list');
+  if (list) { list.innerHTML = ''; addWAField(); addWAField(); }
+  ['nc-nome','nc-prefixo','nc-dmcs','nc-coords'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  openModal('modal-cidade');
+}
+
 function salvarCidade() {
   const nome=document.getElementById('nc-nome').value.trim();
   const pref=document.getElementById('nc-prefixo').value.trim().toUpperCase();
   const dmcsRaw=document.getElementById('nc-dmcs').value.trim();
-  const wa=document.getElementById('nc-wa').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
+  const waInputs = document.querySelectorAll('.nc-wa-item');
+  const wa = [...waInputs].map(i=>i.value.trim()).filter(Boolean);
   const coordsRaw=document.getElementById('nc-coords').value.trim();
   if(!nome||!pref){toast('Nome e prefixo são obrigatórios');return;}
+  if(!wa.length){toast('Adicione pelo menos um número WhatsApp');return;}
   const dmcs=dmcsRaw?dmcsRaw.split('\n').map(s=>s.trim()).filter(Boolean):['DMC-01'];
   let coords=[-28.6775,-49.3680];
   if(coordsRaw){const p=coordsRaw.split(',').map(s=>parseFloat(s.trim()));if(p.length===2&&!isNaN(p[0]))coords=p;}
-  S.cidades.push({id:pref,nome,prefixo:pref,dmcs,wa:wa.length?wa:['5548000000000'],coords});
+  S.cidades.push({id:pref,nome,prefixo:pref,dmcs,wa,coords});
   S.nextSeq[pref]=1;
   populateSelects();
   renderConfigCidades();

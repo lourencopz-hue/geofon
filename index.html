@@ -448,6 +448,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <option value="baixa">Baixa</option>
       </select>
       <button class="btn sm primary" onclick="refreshPCMap()"><i class="ti ti-refresh"></i>Atualizar</button>
+      <div style="width:1px;background:var(--border);margin:0 2px"></div>
+      <button class="btn sm" onclick="document.getElementById('up-dmc-pc').click()" title="Carregar área DMC"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC</button>
+      <input type="file" id="up-dmc-pc" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'dmc')">
+      <button class="btn sm" onclick="document.getElementById('up-redes-pc').click()" title="Carregar redes"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
+      <input type="file" id="up-redes-pc" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
+      <button class="btn sm" id="btn-toggle-dmc" onclick="toggleLayerVisibility('dmc')" title="Mostrar/ocultar DMC"><i class="ti ti-eye"></i>Ver DMC</button>
+      <button class="btn sm" id="btn-toggle-redes" onclick="toggleLayerVisibility('redes')" title="Mostrar/ocultar redes"><i class="ti ti-eye"></i>Ver Redes</button>
     </div>
     <div class="pc-split">
       <div class="pc-main">
@@ -1145,27 +1152,132 @@ function zoomLeak(lat, lng) {
 }
 
 // ================================================================
-// LAYERS
+// LAYERS — KML e GeoJSON reais no mapa
 // ================================================================
+const LAYER_STYLE = {
+  dmc:   { color:'#185FA5', fillColor:'#185FA5', fillOpacity:0.08, weight:2 },
+  redes: { color:'#0F6E56', fillColor:'#0F6E56', fillOpacity:0.05, weight:2, dashArray:'6,4' }
+};
+S.layerVisible  = { dmc:true, redes:true };
+S.leafletLayers = { dmc:[], redes:[] };
+
 function handleLayerUpload(input, tipo) {
   Array.from(input.files).forEach(f => {
-    (S.layers[tipo]||(S.layers[tipo]=[])).push({ nome:f.name });
-    toast(`Camada "${f.name}" carregada`);
-    renderLayerLists();
-    // Em produção: parsear GeoJSON/KML e adicionar ao mapa
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const content = ev.target.result;
+        const geojson = f.name.toLowerCase().endsWith('.kml')
+          ? kmlToGeoJSON(content)
+          : JSON.parse(content);
+        if (!geojson || !geojson.features) throw new Error('Sem geometrias encontradas');
+        adicionarCamadaNoMapa(geojson, tipo, f.name);
+        (S.layers[tipo]||(S.layers[tipo]=[])).push({ nome:f.name, geojson });
+        renderLayerLists();
+        toast(`✓ "${f.name}" carregada no mapa!`);
+      } catch(err) {
+        toast('Erro ao ler arquivo: ' + (err.message||err));
+      }
+    };
+    reader.readAsText(f);
   });
+  input.value = '';
 }
+
+function adicionarCamadaNoMapa(geojson, tipo, nome) {
+  const style = LAYER_STYLE[tipo] || LAYER_STYLE.dmc;
+  const lg = L.geoJSON(geojson, {
+    style: () => style,
+    pointToLayer: (ft, ll) => L.circleMarker(ll, { radius:5, ...style }),
+    onEachFeature: (ft, layer) => {
+      const p = ft.properties || {};
+      const lbl = p.name||p.Nome||p.nome||p.DMC||p.dmc||nome;
+      if (lbl) layer.bindPopup(`<b>${lbl}</b>`);
+    }
+  });
+  if (mapField) lg.addTo(mapField);
+  if (mapPC)    lg.addTo(mapPC);
+  if (!S.leafletLayers[tipo]) S.leafletLayers[tipo] = [];
+  S.leafletLayers[tipo].push(lg);
+  try {
+    const b = lg.getBounds();
+    if (b.isValid()) {
+      if (mapField) mapField.fitBounds(b, {padding:[20,20]});
+      if (mapPC)    mapPC.fitBounds(b,    {padding:[20,20]});
+    }
+  } catch(e){}
+}
+
+function toggleLayerVisibility(tipo) {
+  S.layerVisible[tipo] = !S.layerVisible[tipo];
+  const vis = S.layerVisible[tipo];
+  const maps = [mapField, mapPC].filter(Boolean);
+  (S.leafletLayers[tipo]||[]).forEach(lg => {
+    maps.forEach(m => { vis ? (!m.hasLayer(lg) && lg.addTo(m)) : (m.hasLayer(lg) && m.removeLayer(lg)); });
+  });
+  const tipoNome = tipo==='dmc'?'DMC':'Redes';
+  const btn = document.getElementById(`btn-toggle-${tipo}`);
+  if (btn) btn.innerHTML = `<i class="ti ${vis?'ti-eye':'ti-eye-off'}"></i>${vis?'Ocultar':'Ver'} ${tipoNome}`;
+  toast(`${tipoNome} ${vis?'visível':'oculto'}`);
+}
+
 function renderLayerLists() {
   ['dmc','redes'].forEach(t => {
-    const el=document.getElementById(`${t}-layer-list`);
-    if(!el) return;
-    el.innerHTML=(S.layers[t]||[]).map(l=>`
+    const el = document.getElementById(`${t}-layer-list`);
+    if (!el) return;
+    el.innerHTML = (S.layers[t]||[]).map((l,i) => `
       <div class="layer-item">
         <div class="layer-color" style="background:${t==='dmc'?'#185FA5':'#0F6E56'}"></div>
-        <span style="flex:1;font-size:12px">${l.nome}</span>
-        <span class="badge blue" style="font-size:9.5px">Ativa</span>
+        <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.nome}</span>
+        <button class="btn sm" style="padding:3px 7px" onclick="removerCamada('${t}',${i})">
+          <i class="ti ti-trash" style="font-size:12px"></i>
+        </button>
       </div>`).join('');
   });
+}
+
+function removerCamada(tipo, idx) {
+  const lg = (S.leafletLayers[tipo]||[])[idx];
+  if (lg) [mapField,mapPC].filter(Boolean).forEach(m=>m.hasLayer(lg)&&m.removeLayer(lg));
+  if (S.leafletLayers[tipo]) S.leafletLayers[tipo].splice(idx,1);
+  S.layers[tipo].splice(idx,1);
+  renderLayerLists();
+  toast('Camada removida');
+}
+
+// Parser KML → GeoJSON
+function kmlToGeoJSON(kmlText) {
+  const doc = new DOMParser().parseFromString(kmlText,'text/xml');
+  if (doc.querySelector('parsererror')) throw new Error('KML inválido');
+  const features = [];
+  doc.querySelectorAll('Placemark').forEach(pm => {
+    const props = { name: pm.querySelector('name')?.textContent||'' };
+    pm.querySelectorAll('SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
+    // Polygon
+    pm.querySelectorAll('Polygon').forEach(poly => {
+      const outer = kmlCoords(poly.querySelector('outerBoundaryIs coordinates'));
+      if (!outer) return;
+      const holes = [...poly.querySelectorAll('innerBoundaryIs coordinates')].map(kmlCoords).filter(Boolean);
+      features.push({type:'Feature',properties:props,geometry:{type:'Polygon',coordinates:[outer,...holes]}});
+    });
+    // LineString
+    pm.querySelectorAll('LineString coordinates').forEach(el => {
+      const c = kmlCoords(el);
+      if (c) features.push({type:'Feature',properties:props,geometry:{type:'LineString',coordinates:c}});
+    });
+    // Point
+    const pt = pm.querySelector('Point coordinates');
+    if (pt) {
+      const p = pt.textContent.trim().split(',').map(Number);
+      if (p.length>=2) features.push({type:'Feature',properties:props,geometry:{type:'Point',coordinates:[p[0],p[1]]}});
+    }
+  });
+  return {type:'FeatureCollection',features};
+}
+function kmlCoords(el) {
+  if (!el) return null;
+  const c = el.textContent.trim().split(/\s+/).map(t=>{const p=t.split(',').map(Number);return p.length>=2?[p[0],p[1]]:null;}).filter(Boolean);
+  return c.length ? c : null;
 }
 
 // ================================================================

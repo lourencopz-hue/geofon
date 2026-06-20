@@ -426,18 +426,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
         </div>
 
-        <div class="section-title" style="margin-top:14px">Enviar e salvar</div>
+        <div class="section-title" style="margin-top:14px">Salvar</div>
         <div class="card">
           <div id="contatos-preview" style="font-size:11.5px;color:var(--text2);margin-bottom:10px;padding:8px;background:var(--bg2);border-radius:var(--radius)">
             Selecione cidade e equipe para ver os contatos de envio.
           </div>
-          <button class="wa-btn" onclick="enviarWhatsApp()">
-            <i class="ti ti-brand-whatsapp" style="font-size:18px"></i>
-            Enviar por WhatsApp
+          <button class="btn primary btn-block" onclick="salvarPonto()" style="margin-top:0">
+            <i class="ti ti-device-floppy"></i> Salvar ponto
           </button>
-          <button class="btn primary btn-block" onclick="salvarPonto()" style="margin-top:8px">
-            <i class="ti ti-device-floppy"></i> Salvar ponto localmente
-          </button>
+          <p style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center">
+            Depois de salvar, você poderá escolher se quer notificar a cidade por WhatsApp.
+          </p>
         </div>
         <div style="height:20px"></div>
       </div>
@@ -760,6 +759,52 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
 </div>
 
+<!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<div class="modal-overlay" id="modal-wa-confirm">
+  <div class="modal" style="max-width:380px;text-align:center">
+    <div style="width:52px;height:52px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;margin:0 auto 14px">
+      <i class="ti ti-brand-whatsapp" style="font-size:26px;color:#fff"></i>
+    </div>
+    <h3 style="font-size:16px;font-weight:600;margin-bottom:6px">Ponto salvo!</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:4px">
+      <span class="id-badge" id="wa-confirm-id" style="font-size:12px">—</span>
+    </p>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:18px">
+      Deseja notificar a equipe de <strong id="wa-confirm-cidade">—</strong> agora por WhatsApp?
+    </p>
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="flex:1;justify-content:center" onclick="pularNotificacaoWhatsApp()">
+        Agora não
+      </button>
+      <button class="wa-btn" style="flex:1" onclick="confirmarNotificacaoWhatsApp()">
+        <i class="ti ti-brand-whatsapp" style="font-size:16px"></i> Notificar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Perguntar cidade quando o nome do arquivo não permite identificar automaticamente -->
+<div class="modal-overlay" id="modal-camada-cidade">
+  <div class="modal">
+    <div class="modal-header">
+      <h3><i class="ti ti-map-question" style="color:var(--blue)"></i> De qual cidade é este DMC?</h3>
+      <button class="modal-close" onclick="closeModal('modal-camada-cidade')"><i class="ti ti-x"></i></button>
+    </div>
+    <p style="font-size:12.5px;color:var(--text2);margin-bottom:12px">
+      Não conseguimos identificar a cidade pelo nome do arquivo "<strong id="camada-cidade-nome">—</strong>". Selecione abaixo para que este DMC apareça corretamente no registro de vazamentos.
+    </p>
+    <div class="field">
+      <label>Cidade</label>
+      <select id="camada-cidade-select">
+        <option value="">Selecione a cidade...</option>
+      </select>
+    </div>
+    <button class="btn primary btn-block" onclick="confirmarCidadeCamada()">
+      <i class="ti ti-check"></i> Confirmar e salvar
+    </button>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div class="toast-wrap" id="toast-wrap"></div>
 
@@ -830,6 +875,9 @@ import {
   getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
   serverTimestamp, query, orderBy
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {
+  getStorage, ref, uploadString, getDownloadURL, deleteObject
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBzgro9gBM2-FhJL-jvMpJn5cffQxKulfY",
@@ -843,13 +891,15 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
+const storage = getStorage(fbApp);
 const provider = new GoogleAuthProvider();
 
 // Expor no escopo global para o script principal (não-módulo) usar
 window.FB = {
-  auth, db, provider,
+  auth, db, provider, storage,
   signInWithPopup, signOut, onAuthStateChanged,
-  doc, getDoc, setDoc, collection, onSnapshot, serverTimestamp, query, orderBy
+  doc, getDoc, setDoc, collection, onSnapshot, serverTimestamp, query, orderBy,
+  ref, uploadString, getDownloadURL, deleteObject
 };
 
 // Disparar evento quando Firebase estiver pronto
@@ -1174,6 +1224,9 @@ function iniciarSincronizacaoCamadas() {
 
 function sincronizarDMCsCidade(geojson, cidadeId) {
   if (!geojson || !geojson.features) return;
+  // Sem cidade definida: não sabemos a quem associar o DMC, então não fazemos nada
+  // (evita o bug de "vazar" o DMC para todas as cidades).
+  if (!cidadeId) return;
   const novos = new Set();
   geojson.features.forEach(ft => {
     const p = ft.properties || {};
@@ -1182,12 +1235,11 @@ function sincronizarDMCsCidade(geojson, cidadeId) {
   });
   if (!novos.size) return;
   const lista = [...novos];
-  const cidadesAlvo = cidadeId ? S.cidades.filter(c => c.id === cidadeId) : S.cidades;
-  cidadesAlvo.forEach(c => {
-    let mudou = false;
-    lista.forEach(n => { if (!c.dmcs.includes(n)) { c.dmcs.push(n); mudou = true; } });
-    if (mudou) salvarCidadeFirestore(c);
-  });
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  let mudou = false;
+  lista.forEach(n => { if (!c.dmcs.includes(n)) { c.dmcs.push(n); mudou = true; } });
+  if (mudou) salvarCidadeFirestore(c);
   const regCid = document.getElementById('reg-cidade');
   if (regCid && regCid.value) onCidadeChange();
   renderConfigCidades();
@@ -1493,23 +1545,60 @@ async function salvarPonto() {
   const eq = S.equipes.find(e => e.id === eqId);
   const id = await proximoIdSequencial(cid, eq.codigo);
   const now = new Date();
+  const temFotos = S.photosBase64 && S.photosBase64.length > 0;
+
   const leak = {
     id, cidade:cid, equipe:eqId, dmc, tipo, severidade:S.sevAtual,
     lat:S.pos.lat, lng:S.pos.lng,
     desc:obs, diam:diam||null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
-    photos:S.photos.length,
-    photoData: (S.photosBase64||[]).slice(0,3),
+    photos: S.photos.length,
+    fotosUrls: [], // preenchido depois do upload ao Storage
     criadoEm: window.FB.serverTimestamp(),
     criadoPor: S.user?.uid || ''
   };
+
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
   toast(`✓ Ponto ${id} salvo!`);
+
+  // Sobe as fotos comprimidas para o Storage SEM travar a tela —
+  // o técnico já pode seguir; quando terminar, atualiza o documento com as URLs.
+  const fotosParaWhatsapp = (S.photosBase64||[]).slice();
+  if (temFotos) {
+    enviarFotosParaStorage(id).then(urls => {
+      window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls:urls }, { merge:true });
+    });
+  }
+
+  // Guarda os dados desse ponto para a pergunta de WhatsApp (modal de confirmação)
+  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc, tipo, severidade:S.sevAtual, obs, diam, lat:S.pos.lat, lng:S.pos.lng, fotosBase64:fotosParaWhatsapp };
+
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
   S.photos=[]; S.photosBase64=[];
   renderPhotos();
   switchTab('map-field','tabs-field');
+
+  abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
+}
+
+// Pergunta se deseja notificar por WhatsApp DEPOIS de já ter salvo o ponto
+function abrirPerguntaWhatsApp(pontoSalvo) {
+  const c = S.cidades.find(c => c.id === pontoSalvo.cidade);
+  document.getElementById('wa-confirm-id').textContent = pontoSalvo.id;
+  document.getElementById('wa-confirm-cidade').textContent = c ? c.nome : pontoSalvo.cidade;
+  openModal('modal-wa-confirm');
+}
+
+function pularNotificacaoWhatsApp() {
+  closeModal('modal-wa-confirm');
+  S._ultimoPontoSalvo = null;
+}
+
+function confirmarNotificacaoWhatsApp() {
+  closeModal('modal-wa-confirm');
+  if (S._ultimoPontoSalvo) enviarWhatsAppDoponto(S._ultimoPontoSalvo);
+  S._ultimoPontoSalvo = null;
 }
 
 // Gera o próximo ID sequencial de forma segura usando um contador no Firestore
@@ -1549,8 +1638,9 @@ async function confirmarQuick() {
   const id = await proximoIdSequencial(cid, eq.codigo);
   const now=new Date();
   const c=S.cidades.find(c=>c.id===cid);
+  const dmcPadrao = c?.dmcs[0]||'-';
   const leak={
-    id, cidade:cid, equipe:eqId, dmc:c?.dmcs[0]||'-', tipo:'Não categorizado', severidade:S.sevQuick,
+    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:'Não categorizado', severidade:S.sevQuick,
     lat:S.pos.lat, lng:S.pos.lng, desc, diam:null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos:0,
@@ -1560,24 +1650,64 @@ async function confirmarQuick() {
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
   closeModal('modal-quick');
   toast(`✓ Ponto ${id} registrado!`);
+
+  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc:dmcPadrao, tipo:'Não categorizado', severidade:S.sevQuick, obs:desc, diam:null, lat:S.pos.lat, lng:S.pos.lng, fotosBase64:[] };
+  abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
 }
 
 // ================================================================
 // FOTOS
 // ================================================================
-function handlePhotos(input) {
-  Array.from(input.files).forEach(f => {
-    const url = URL.createObjectURL(f);
-    S.photos.push(url);
-    // Converter para base64 para poder enviar/salvar
+// ================================================================
+// FOTOS — compressão automática antes de salvar/enviar
+// ================================================================
+// A foto original (alta resolução) nunca saiu do celular: aqui só geramos
+// uma versão reduzida (máx. 1280px, qualidade 75%) para guardar na nuvem.
+const FOTO_MAX_DIMENSAO = 1280;
+const FOTO_QUALIDADE = 0.75;
+
+function comprimirImagem(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = ev => {
-      S.photosBase64 = S.photosBase64 || [];
-      S.photosBase64.push(ev.target.result); // data:image/jpeg;base64,...
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > FOTO_MAX_DIMENSAO) {
+          height = Math.round(height * (FOTO_MAX_DIMENSAO / width));
+          width = FOTO_MAX_DIMENSAO;
+        } else if (height > FOTO_MAX_DIMENSAO) {
+          width = Math.round(width * (FOTO_MAX_DIMENSAO / height));
+          height = FOTO_MAX_DIMENSAO;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', FOTO_QUALIDADE);
+        resolve(dataUrl);
+      };
+      img.onerror = reject;
+      img.src = ev.target.result;
     };
-    reader.readAsDataURL(f);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
-  renderPhotos();
+}
+
+function handlePhotos(input) {
+  Array.from(input.files).forEach(async f => {
+    try {
+      const dataUrlComprimida = await comprimirImagem(f);
+      S.photos.push(dataUrlComprimida); // já usamos a versão comprimida pra preview também
+      S.photosBase64 = S.photosBase64 || [];
+      S.photosBase64.push(dataUrlComprimida);
+      renderPhotos();
+    } catch(err) {
+      toast('Erro ao processar foto: ' + (err.message||err));
+    }
+  });
+  input.value = '';
 }
 function renderPhotos() {
   const g = document.getElementById('photo-grid');
@@ -1589,63 +1719,72 @@ function renderPhotos() {
     </div>`;
 }
 
+// Envia as fotos comprimidas (base64) para o Firebase Storage e retorna as URLs públicas
+async function enviarFotosParaStorage(leakId) {
+  if (!S.photosBase64 || !S.photosBase64.length) return [];
+  const { storage, ref, uploadString, getDownloadURL } = window.FB;
+  const urls = [];
+  for (let i = 0; i < S.photosBase64.length; i++) {
+    try {
+      const caminho = `vazamentos/${leakId}/foto_${i+1}.jpg`;
+      const fileRef = ref(storage, caminho);
+      await uploadString(fileRef, S.photosBase64[i], 'data_url');
+      const url = await getDownloadURL(fileRef);
+      urls.push(url);
+    } catch(err) {
+      console.warn('Erro ao enviar foto ' + i + ':', err);
+    }
+  }
+  return urls;
+}
+
 // ================================================================
 // WHATSAPP
 // ================================================================
-function enviarWhatsApp() {
-  const cid = document.getElementById('reg-cidade').value;
-  const c = S.cidades.find(c => c.id === cid);
-  if (!c) { toast('Selecione a cidade'); return; }
-  if (!S.pos) { toast('Aguardando GPS...'); return; }
-  const tipo = document.getElementById('reg-tipo').value;
-  const dmc  = document.getElementById('reg-dmc').value;
-  const obs  = document.getElementById('reg-obs').value;
-  const diam = document.getElementById('reg-diam').value;
-  const eqId = document.getElementById('reg-equipe').value;
-  const eq = S.equipes.find(e=>e.id===eqId);
-  const id = gerarId(cid, eq?eq.codigo:'');
-  const maps = 'https://maps.google.com/?q=' + S.pos.lat + ',' + S.pos.lng;
-  const temFotos = S.photos && S.photos.length > 0;
+// Envia notificação de WhatsApp para um ponto que JÁ foi salvo no mapa.
+// Recebe o objeto retornado por salvarPonto() (id, cidade, dados, fotosBase64).
+function enviarWhatsAppDoponto(ponto) {
+  const c = S.cidades.find(c => c.id === ponto.cidade);
+  if (!c) { toast('Cidade não encontrada'); return; }
+  const eq = S.equipes.find(e => e.id === ponto.equipeId);
+  const maps = 'https://maps.google.com/?q=' + ponto.lat + ',' + ponto.lng;
+  const temFotos = ponto.fotosBase64 && ponto.fotosBase64.length > 0;
 
   const texto =
     '🚨 *VAZAMENTO DETECTADO — GeoFon*\n\n' +
-    '🆔 *ID:* ' + id + '\n' +
+    '🆔 *ID:* ' + ponto.id + '\n' +
     '🏙️ *Cidade:* ' + c.nome + '\n' +
-    '🗂️ *DMC:* ' + dmc + '\n' +
-    '🔧 *Tipo:* ' + tipo + '\n' +
-    (diam ? '📏 *Diâmetro est.:* ' + diam + 'mm\n' : '') +
-    '⚠️ *Severidade:* ' + S.sevAtual.toUpperCase() + '\n' +
+    '🗂️ *DMC:* ' + ponto.dmc + '\n' +
+    '🔧 *Tipo:* ' + ponto.tipo + '\n' +
+    (ponto.diam ? '📏 *Diâmetro est.:* ' + ponto.diam + 'mm\n' : '') +
+    '⚠️ *Severidade:* ' + ponto.severidade.toUpperCase() + '\n' +
     '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' +
-    '📝 *Obs:* ' + (obs||'—') + '\n\n' +
+    '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' +
     '📍 *Localização:* ' + maps + '\n' +
     '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') + '\n' +
-    (temFotos ? '📸 *Fotos:* ' + S.photos.length + ' foto(s) — envie as imagens nesta conversa após esta mensagem\n' : '') +
+    (temFotos ? '📸 *Fotos:* ' + ponto.fotosBase64.length + ' foto(s) — envie as imagens nesta conversa após esta mensagem\n' : '') +
     '\n_Enviado via GeoFon_';
 
   const msg = encodeURIComponent(texto);
 
-  // Se tiver foto, abrir compartilhamento nativo (Web Share API) para a 1ª foto
-  if (temFotos && navigator.share && S.photosBase64 && S.photosBase64.length > 0) {
-    // Converter base64 para Blob para compartilhar
-    const b64 = S.photosBase64[0];
+  if (temFotos && navigator.share) {
+    const b64 = ponto.fotosBase64[0];
     const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
     const byteStr = atob(b64.split(',')[1]);
     const arr = new Uint8Array(byteStr.length);
     for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
     const blob = new Blob([arr], {type:mime});
-    const file = new File([blob], 'vazamento_' + id + '.jpg', {type:mime});
-    navigator.share({ title:'Vazamento ' + id, text:texto.replace(/\n/g,'\n'), files:[file] })
+    const file = new File([blob], 'vazamento_' + ponto.id + '.jpg', {type:mime});
+    navigator.share({ title:'Vazamento ' + ponto.id, text:texto, files:[file] })
       .catch(() => {
-        // Fallback: abrir WhatsApp só com texto
         c.wa.forEach((num, i) => { setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800); });
       });
   } else {
-    // Abrir WhatsApp para cada número cadastrado (com delay entre eles)
     if (!c.wa || !c.wa.length) { toast('Nenhum número WA cadastrado para esta cidade'); return; }
     c.wa.forEach((num, i) => {
       setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800);
     });
-    if (temFotos) toast('💡 Envie as ' + S.photos.length + ' foto(s) manualmente na conversa do WhatsApp!');
+    if (temFotos) toast('💡 Envie as ' + ponto.fotosBase64.length + ' foto(s) manualmente na conversa do WhatsApp!');
   }
 }
 
@@ -1709,10 +1848,15 @@ function handleLayerUpload(input, tipo) {
           : JSON.parse(content);
         if (!geojson || !geojson.features) throw new Error('Sem geometrias encontradas');
         const cidadeId = detectCidadeFromName(f.name);
-        await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
-        toast('✓ "' + f.name + '" carregada e disponível para todos!');
-        // Centralizar mapa na camada recém-criada
-        centralizarEmGeoJSON(geojson);
+        if (!cidadeId && tipo === 'dmc') {
+          // Não foi possível identificar a cidade pelo nome do arquivo — perguntar explicitamente.
+          // Isso evita que o DMC seja adicionado por engano em todas as cidades.
+          abrirPerguntaCidadeCamada(geojson, tipo, f.name);
+        } else {
+          await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
+          toast('✓ "' + f.name + '" carregada e disponível para todos!');
+          centralizarEmGeoJSON(geojson);
+        }
       } catch(err) {
         toast('Erro ao ler arquivo: ' + (err.message||err));
       }
@@ -1720,6 +1864,30 @@ function handleLayerUpload(input, tipo) {
     reader.readAsText(f);
   });
   input.value = '';
+}
+
+// Quando o nome do arquivo não deixa claro a cidade, perguntamos antes de salvar —
+// evita que o DMC seja erroneamente associado a todas as cidades.
+S._camadaPendenteUpload = null;
+function abrirPerguntaCidadeCamada(geojson, tipo, nome) {
+  S._camadaPendenteUpload = { geojson, tipo, nome };
+  const sel = document.getElementById('camada-cidade-select');
+  sel.innerHTML = '<option value="">Selecione a cidade...</option>' +
+    S.cidades.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  document.getElementById('camada-cidade-nome').textContent = nome;
+  openModal('modal-camada-cidade');
+}
+
+async function confirmarCidadeCamada() {
+  const cidadeId = document.getElementById('camada-cidade-select').value;
+  if (!cidadeId) { toast('Selecione uma cidade'); return; }
+  const pend = S._camadaPendenteUpload;
+  if (!pend) return;
+  await salvarCamadaFirestore(pend.geojson, pend.tipo, pend.nome, cidadeId);
+  toast('✓ "' + pend.nome + '" carregada e disponível para todos!');
+  centralizarEmGeoJSON(pend.geojson);
+  S._camadaPendenteUpload = null;
+  closeModal('modal-camada-cidade');
 }
 
 function detectCidadeFromName(nome) {
@@ -1968,12 +2136,19 @@ function renderManage() {
   if (mc) {
     mc.innerHTML = S.cidades.map(c => `
       <div class="card" style="margin-bottom:8px;padding:10px">
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleEditarDMCs('${c.id}')">
           <span class="badge purple">${c.prefixo}</span>
           <span style="font-size:13px;font-weight:600">${c.nome}</span>
           <span style="font-size:11px;color:var(--text2);margin-left:auto">${S.leaks.filter(l=>l.cidade===c.id).length} vazamentos</span>
+          <i class="ti ti-chevron-down" id="chev-${c.id}" style="font-size:14px;color:var(--text2)"></i>
         </div>
-        <div style="font-size:11px;color:var(--text2);margin-top:5px">DMCs: ${c.dmcs.join(', ')}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:5px" id="dmcs-resumo-${c.id}">DMCs: ${c.dmcs.join(', ')}</div>
+        <div id="dmcs-edit-${c.id}" class="hidden" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+          <div style="display:flex;flex-direction:column;gap:5px" id="dmcs-list-${c.id}"></div>
+          <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarDMCManual('${c.id}')">
+            <i class="ti ti-plus"></i> Adicionar DMC manualmente
+          </button>
+        </div>
       </div>`).join('');
   }
   // Tabela
@@ -1998,6 +2173,71 @@ function renderManage() {
       }).join('')}</tbody>
     </table></div>`;
   }
+}
+
+// Edição de DMCs existentes (aba Gestão)
+function toggleEditarDMCs(cidadeId) {
+  const div = document.getElementById('dmcs-edit-' + cidadeId);
+  const chev = document.getElementById('chev-' + cidadeId);
+  const abrindo = div.classList.contains('hidden');
+  div.classList.toggle('hidden');
+  chev.style.transform = abrindo ? 'rotate(180deg)' : 'rotate(0deg)';
+  if (abrindo) renderDMCsEditaveis(cidadeId);
+}
+
+function renderDMCsEditaveis(cidadeId) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  const el = document.getElementById('dmcs-list-' + cidadeId);
+  if (!c || !el) return;
+  el.innerHTML = c.dmcs.map((d, i) => `
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" value="${d}" onchange="editarDMCNome('${cidadeId}',${i},this.value)"
+        style="flex:1;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+      <button onclick="removerDMC('${cidadeId}',${i})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
+        <i class="ti ti-trash" style="font-size:12px"></i>
+      </button>
+    </div>`).join('');
+}
+
+async function editarDMCNome(cidadeId, idx, novoNome) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  const nomeAntigo = c.dmcs[idx];
+  novoNome = novoNome.trim();
+  if (!novoNome) { renderDMCsEditaveis(cidadeId); return; }
+  c.dmcs[idx] = novoNome;
+  await salvarCidadeFirestore(c);
+  // Atualiza também os vazamentos já registrados com o DMC antigo (mantém histórico consistente)
+  const leaksParaAtualizar = S.leaks.filter(l => l.cidade === cidadeId && l.dmc === nomeAntigo);
+  for (const l of leaksParaAtualizar) {
+    await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',l.id), { dmc:novoNome }, { merge:true });
+  }
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = 'DMCs: ' + c.dmcs.join(', ');
+  toast('DMC atualizado' + (leaksParaAtualizar.length ? ' (' + leaksParaAtualizar.length + ' vazamento(s) também atualizados)' : ''));
+}
+
+async function removerDMC(cidadeId, idx) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  if (c.dmcs.length <= 1) { toast('A cidade precisa ter ao menos 1 DMC'); return; }
+  if (!confirm('Remover "' + c.dmcs[idx] + '" da lista? Vazamentos já registrados com esse DMC não serão alterados.')) return;
+  c.dmcs.splice(idx, 1);
+  await salvarCidadeFirestore(c);
+  renderDMCsEditaveis(cidadeId);
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = 'DMCs: ' + c.dmcs.join(', ');
+  toast('DMC removido da lista');
+}
+
+async function adicionarDMCManual(cidadeId) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  const nome = prompt('Nome do novo DMC:');
+  if (!nome || !nome.trim()) return;
+  c.dmcs.push(nome.trim());
+  await salvarCidadeFirestore(c);
+  renderDMCsEditaveis(cidadeId);
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = 'DMCs: ' + c.dmcs.join(', ');
+  toast('DMC adicionado');
 }
 
 // ================================================================

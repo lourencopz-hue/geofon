@@ -203,18 +203,87 @@ html,body{height:100%;overflow:hidden;background:var(--bg2)}
 
 .hidden{display:none!important}
 hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
+
+/* LOGIN SCREEN */
+#login-screen{position:fixed;inset:0;background:var(--bg2);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px}
+#login-screen.hidden{display:none}
+.login-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-xl);padding:36px 28px;max-width:380px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+.login-card .logo{width:56px;height:56px;border-radius:16px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;color:#fff;font-size:28px}
+.login-card h1{font-size:20px;font-weight:600;margin-bottom:4px}
+.login-card p{font-size:13px;color:var(--text2);margin-bottom:24px}
+.btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px 16px;border:1px solid var(--border2);border-radius:var(--radius-lg);background:var(--bg);color:var(--text);font-size:14px;font-weight:500;cursor:pointer;transition:background .15s}
+.btn-google:hover{background:var(--bg2)}
+.login-status{margin-top:16px;font-size:12px;color:var(--text2);min-height:18px}
+.role-badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px}
+.role-badge.admin{background:var(--purple-l);color:var(--purple)}
+.role-badge.supervisor{background:var(--teal-l);color:var(--teal)}
+.role-badge.tecnico{background:var(--amber-l);color:var(--amber)}
+.role-badge.pendente{background:var(--gray-l);color:var(--gray)}
+
+/* PENDING APPROVAL */
+.pending-card{background:var(--amber-l);border:1px solid rgba(186,117,23,.25);border-radius:var(--radius-lg);padding:18px;font-size:13px;color:var(--amber);text-align:left;line-height:1.6}
+
+/* USER MENU */
+#user-menu-btn{display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 8px;border-radius:var(--radius);background:rgba(255,255,255,.1)}
+#user-avatar{width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;overflow:hidden}
+#user-avatar img{width:100%;height:100%;object-fit:cover}
+
 </style>
 </head>
 <body>
+<!-- LOGIN SCREEN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="logo"><i class="ti ti-droplet-search"></i></div>
+    <h1>GeoFon</h1>
+    <p>Sistema de geofonamento — entre com sua conta Google</p>
+    <button class="btn-google" id="btn-google-login" onclick="fazerLoginGoogle()">
+      <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.13-.85 2.09-1.81 2.73v2.26h2.92c1.7-1.57 2.69-3.88 2.69-6.63z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.81 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33C2.44 15.98 5.48 18 9 18z"/><path fill="#FBBC05" d="M3.97 10.71c-.18-.54-.28-1.11-.28-1.71s.1-1.17.28-1.71V4.96H.96A8.997 8.997 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+      Entrar com Google
+    </button>
+    <div class="login-status" id="login-status"></div>
+  </div>
+</div>
+
+<!-- PENDING APPROVAL SCREEN -->
+<div id="pending-screen" class="hidden" style="position:fixed;inset:0;background:var(--bg2);z-index:1900;display:flex;align-items:center;justify-content:center;padding:20px">
+  <div class="login-card">
+    <div class="logo" style="background:var(--amber)"><i class="ti ti-clock-hour-4"></i></div>
+    <h1>Acesso pendente</h1>
+    <p>Sua conta foi registrada, mas ainda não tem permissão liberada.</p>
+    <div class="pending-card">
+      <strong>O que fazer:</strong><br>
+      Avise o administrador do sistema para liberar seu acesso e definir seu nível (Administrador, Supervisor ou Técnico de campo).
+    </div>
+    <button class="btn sm" style="width:100%;justify-content:center;margin-top:14px" onclick="fazerLogout()">
+      <i class="ti ti-logout"></i> Sair
+    </button>
+  </div>
+</div>
+
 <div id="app">
 
 <!-- TOPBAR -->
 <div id="topbar">
   <i class="ti ti-droplet-search" style="font-size:20px"></i>
-  <h1>GeoFon <span style="font-size:11px;opacity:.7;font-weight:400">v1.0</span></h1>
+  <h1>GeoFon <span style="font-size:11px;opacity:.7;font-weight:400">v2.0</span></h1>
   <span class="topbar-badge" id="mode-badge">Modo Campo</span>
-  <button class="topbar-btn" onclick="toggleMode()">
+  <button class="topbar-btn hidden" id="btn-switch-mode" onclick="toggleMode()">
     <i class="ti ti-arrows-exchange" style="font-size:12px"></i> Trocar modo
+  </button>
+  <div id="user-menu-btn" onclick="toggleUserMenu()">
+    <div id="user-avatar">?</div>
+  </div>
+</div>
+
+<!-- USER MENU DROPDOWN -->
+<div id="user-menu" class="hidden" style="position:fixed;top:48px;right:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:1500;min-width:220px;padding:12px">
+  <div style="font-size:13px;font-weight:600" id="user-menu-name">—</div>
+  <div style="font-size:11px;color:var(--text2);margin-bottom:8px" id="user-menu-email">—</div>
+  <span class="role-badge" id="user-menu-role">—</span>
+  <hr class="section-divider">
+  <button class="btn sm" style="width:100%;justify-content:center" onclick="fazerLogout()">
+    <i class="ti ti-logout"></i> Sair da conta
   </button>
 </div>
 
@@ -549,6 +618,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         </button>
       </div>
       <div class="section">
+        <div class="section-title">Usuários e permissões</div>
+        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+            Toda pessoa que entrar pela primeira vez aparece aqui como <strong>Pendente</strong>. Defina o nível de acesso e, se for Técnico, a cidade/equipe dela.
+          </p>
+        </div>
+        <div id="usuarios-list"></div>
+      </div>
+      <div class="section">
         <div class="section-title">Configurações gerais</div>
         <div class="card">
           <div class="field">
@@ -740,6 +818,44 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
 </div>
 
+<script type="module">
+// ================================================================
+// FIREBASE — configuração e inicialização
+// ================================================================
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
+  serverTimestamp, query, orderBy
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBzgro9gBM2-FhJL-jvMpJn5cffQxKulfY",
+  authDomain: "geofon-teste.firebaseapp.com",
+  projectId: "geofon-teste",
+  storageBucket: "geofon-teste.firebasestorage.app",
+  messagingSenderId: "256164601899",
+  appId: "1:256164601899:web:b946e401f9d03c33474a6e"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+const provider = new GoogleAuthProvider();
+
+// Expor no escopo global para o script principal (não-módulo) usar
+window.FB = {
+  auth, db, provider,
+  signInWithPopup, signOut, onAuthStateChanged,
+  doc, getDoc, setDoc, collection, onSnapshot, serverTimestamp, query, orderBy
+};
+
+// Disparar evento quando Firebase estiver pronto
+window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
 <script>
 // ================================================================
 // ESTADO GLOBAL
@@ -756,33 +872,255 @@ const S = {
   photos: [],
   nextSeq: {},
   pcView: 'pontos',
-  config: { org: 'GeoFon', gps: 20 }
+  config: { org: 'GeoFon', gps: 20 },
+  user: null,        // { uid, nome, email, foto }
+  userDoc: null,      // { role: 'admin'|'supervisor'|'tecnico'|'pendente', cidade, equipe }
+  usuarios: [],       // lista de usuários (só admin carrega)
 };
+
 
 let mapField = null, mapPC = null;
 let fMarkers = [], pcMarkers = [], heatLayer = null;
 
 // ================================================================
-// DADOS INICIAIS
+// FIREBASE — AUTENTICAÇÃO E HIERARQUIA DE USUÁRIOS
 // ================================================================
-// ================================================================
-// PERSISTÊNCIA localStorage
-// ================================================================
-const LS_KEY = 'geofon_v1';
+// Papéis possíveis: 'admin' | 'supervisor' | 'tecnico' | 'pendente'
+// admin      -> acesso total (cadastra cidades, equipes, usuários)
+// supervisor -> vê tudo (mapas, relatórios, calor) mas não edita cadastros
+// tecnico    -> só registra vazamentos da própria cidade/equipe
+// pendente   -> aguardando aprovação do admin
 
+let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null;
+
+function fazerLoginGoogle() {
+  const statusEl = document.getElementById('login-status');
+  statusEl.textContent = 'Conectando...';
+  window.FB.signInWithPopup(window.FB.auth, window.FB.provider)
+    .catch(err => {
+      console.error(err);
+      statusEl.textContent = 'Erro ao entrar: ' + (err.code||err.message);
+    });
+}
+
+function fazerLogout() {
+  window.FB.signOut(window.FB.auth).then(() => {
+    location.reload();
+  });
+}
+
+function toggleUserMenu() {
+  const menu = document.getElementById('user-menu');
+  menu.classList.toggle('hidden');
+}
+document.addEventListener('click', e => {
+  const menu = document.getElementById('user-menu');
+  const btn = document.getElementById('user-menu-btn');
+  if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
+    menu.classList.add('hidden');
+  }
+});
+
+// Observa o estado de login
+window.addEventListener('firebase-ready', () => {
+  window.FB.onAuthStateChanged(window.FB.auth, async (user) => {
+    if (!user) {
+      document.getElementById('login-screen').classList.remove('hidden');
+      document.getElementById('pending-screen').classList.add('hidden');
+      document.getElementById('app').style.display = 'none';
+      return;
+    }
+    S.user = { uid:user.uid, nome:user.displayName||user.email, email:user.email, foto:user.photoURL };
+    document.getElementById('login-screen').classList.add('hidden');
+
+    // Buscar (ou criar) documento do usuário em /usuarios/{uid}
+    const userRef = window.FB.doc(window.FB.db, 'usuarios', user.uid);
+    let snap = await window.FB.getDoc(userRef);
+    if (!snap.exists()) {
+      // Primeiro login: cria como pendente (ou admin se for o primeiro usuário do sistema)
+      const usuariosSnap = await window.FB.getDoc(window.FB.doc(window.FB.db, 'meta', 'contadores'));
+      const ehPrimeiro = !usuariosSnap.exists();
+      const novoDoc = {
+        nome:user.displayName||'', email:user.email, foto:user.photoURL||'',
+        role: ehPrimeiro ? 'admin' : 'pendente',
+        cidade:'', equipe:'', criadoEm: window.FB.serverTimestamp()
+      };
+      await window.FB.setDoc(userRef, novoDoc);
+      if (ehPrimeiro) await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','contadores'), { inicializado:true });
+      snap = await window.FB.getDoc(userRef);
+    }
+    S.userDoc = snap.data();
+
+    if (S.userDoc.role === 'pendente') {
+      document.getElementById('pending-screen').classList.remove('hidden');
+      document.getElementById('app').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('pending-screen').classList.add('hidden');
+    document.getElementById('app').style.display = '';
+    aplicarPermissoesUI();
+    atualizarUserMenu();
+    iniciarSincronizacaoFirestore();
+  });
+});
+
+function aplicarPermissoesUI() {
+  const role = S.userDoc?.role || 'tecnico';
+  const btnSwitch = document.getElementById('btn-switch-mode');
+  const tabConfig = document.querySelector('[data-tab="config"]');
+  const tabManage = document.querySelector('[data-tab="manage"]');
+
+  if (role === 'tecnico') {
+    // Técnico: só modo campo, sem acesso a Gestão/Config
+    btnSwitch.classList.add('hidden');
+    S.mode = 'field';
+  } else {
+    btnSwitch.classList.remove('hidden');
+  }
+  // Apenas admin vê a aba de Configurações (cadastros e usuários)
+  if (tabConfig) tabConfig.classList.toggle('hidden', role !== 'admin');
+  // Supervisor e admin podem ver Gestão; técnico não usa modo PC mesmo
+  if (tabManage) tabManage.classList.toggle('hidden', role === 'tecnico');
+}
+
+// Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
+function aplicarRestricaoTecnico() {
+  const role = S.userDoc?.role;
+  if (role !== 'tecnico') return;
+  const minhaCidade = S.userDoc?.cidade;
+  const minhaEquipe = S.userDoc?.equipe;
+  if (!minhaCidade) return;
+  ['reg-cidade','quick-cidade'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.value = minhaCidade; el.disabled = true; el.style.opacity = '0.7'; }
+  });
+  if (document.getElementById('reg-cidade')) onCidadeChange();
+  if (minhaEquipe) {
+    setTimeout(() => {
+      ['reg-equipe','quick-equipe'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.value = minhaEquipe; el.disabled = true; el.style.opacity = '0.7'; }
+      });
+    }, 150);
+  }
+}
+
+function atualizarUserMenu() {
+  const u = S.user, d = S.userDoc;
+  const avatar = document.getElementById('user-avatar');
+  avatar.innerHTML = u.foto ? `<img src="${u.foto}" alt="${u.nome}">` : (u.nome||'?').charAt(0).toUpperCase();
+  document.getElementById('user-menu-name').textContent = u.nome;
+  document.getElementById('user-menu-email').textContent = u.email;
+  const roleLabels = { admin:'Administrador', supervisor:'Supervisor', tecnico:'Técnico de campo', pendente:'Pendente' };
+  const roleEl = document.getElementById('user-menu-role');
+  roleEl.textContent = roleLabels[d.role] || d.role;
+  roleEl.className = 'role-badge ' + (d.role||'tecnico');
+}
+
+// ================================================================
+// SINCRONIZAÇÃO EM TEMPO REAL COM FIRESTORE
+// ================================================================
+function iniciarSincronizacaoFirestore() {
+  const { db, collection, onSnapshot, query, orderBy } = window.FB;
+
+  // Cidades
+  if (unsubCidades) unsubCidades();
+  unsubCidades = onSnapshot(collection(db, 'cidades'), snap => {
+    const todas = snap.docs.map(d => d.data());
+    const ativas = todas.filter(c => !c.removida);
+    if (!todas.length && S.userDoc.role === 'admin') {
+      criarDadosIniciais();
+    } else {
+      S.cidades = ativas;
+    }
+    populateSelects();
+    renderConfigCidades();
+    renderManage();
+  });
+
+  // Equipes
+  if (unsubEquipes) unsubEquipes();
+  unsubEquipes = onSnapshot(collection(db, 'equipes'), snap => {
+    S.equipes = snap.docs.map(d => d.data()).filter(e => !e.removida);
+    populateSelects();
+    renderConfigEquipes();
+  });
+
+  // Vazamentos (leaks)
+  if (unsubLeaks) unsubLeaks();
+  unsubLeaks = onSnapshot(query(collection(db, 'leaks'), orderBy('criadoEm','asc')), snap => {
+    S.leaks = snap.docs.map(d => d.data());
+    addFieldMarkers();
+    renderLeakList();
+    renderManage();
+    if (mapPC) refreshPCMap();
+  });
+
+  // Usuários (só admin precisa, para a tela de gestão de usuários)
+  if (S.userDoc.role === 'admin') {
+    if (unsubUsers) unsubUsers();
+    unsubUsers = onSnapshot(collection(db, 'usuarios'), snap => {
+      S.usuarios = snap.docs.map(d => ({ uid:d.id, ...d.data() }));
+      renderUsuariosPanel();
+    });
+  }
+
+  initFieldMap();
+  startGPS();
+  setTimeout(() => restaurarCamadasSalvas(), 600);
+}
+
+// Dados iniciais — só roda se o admin logar e o banco estiver vazio
+async function criarDadosIniciais() {
+  const { db, doc, setDoc } = window.FB;
+  const cidadesIniciais = [
+    { id: 'CIA', nome: 'Criciúma',     prefixo: 'CIA', dmcs: ['DMC-01 Centro','DMC-02 Leste','DMC-03 Norte','DMC-04 Sul','DMC-05 Oeste'], wa: ['5548999990001','5548999990002'], coords: [-28.6775,-49.3680] },
+    { id: 'ICA', nome: 'Içara',        prefixo: 'ICA', dmcs: ['DMC-01','DMC-02','DMC-03'], wa: ['5548999990003'], coords: [-28.7130,-49.3050] },
+    { id: 'FQA', nome: 'Forquilhinha', prefixo: 'FQA', dmcs: ['DMC-01 Sede','DMC-02 Vila'], wa: ['5548999990004'], coords: [-28.7430,-49.4660] },
+    { id: 'SID', nome: 'Siderópolis',  prefixo: 'SID', dmcs: ['DMC-01','DMC-02'], wa: ['5548999990005'], coords: [-28.5960,-49.4260] }
+  ];
+  const equipesIniciais = [
+    { id:'EQ1', nome:'Equipe 1 - Manhã',  codigo:'EQ1', cidade:'CIA', wa:'5548999991001' },
+    { id:'EQ2', nome:'Equipe 2 - Tarde',  codigo:'EQ2', cidade:'CIA', wa:'5548999991002' },
+    { id:'EQ3', nome:'Equipe 3 - Içara',  codigo:'EQ3', cidade:'ICA', wa:'5548999991003' },
+    { id:'EQ4', nome:'Equipe 4 - FQA',    codigo:'EQ4', cidade:'FQA', wa:'5548999991004' }
+  ];
+  for (const c of cidadesIniciais) await setDoc(doc(db,'cidades',c.id), c);
+  for (const e of equipesIniciais) await setDoc(doc(db,'equipes',e.id), e);
+  S.nextSeq = { CIA:1, ICA:1, FQA:1, SID:1 };
+  await setDoc(doc(db,'meta','sequencias'), S.nextSeq);
+}
+
+// Grava qualquer alteração de cidade/equipe diretamente no Firestore
+async function salvarCidadeFirestore(cidade) {
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db, 'cidades', cidade.id), cidade);
+}
+async function salvarEquipeFirestore(equipe) {
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db, 'equipes', equipe.id), equipe);
+}
+async function removerCidadeFirestore(cidadeId) {
+  const { db, doc, deleteDoc } = window.FB;
+  // deleteDoc não foi importado por padrão — fallback: marca como removida
+  await setDoc(doc(db, 'cidades', cidadeId), { removida:true }, { merge:true });
+}
+
+// salvarEstado agora só persiste config local + camadas (que ficam no localStorage,
+// pois GeoJSONs grandes não cabem bem no Firestore gratuito sem custo extra)
+const LS_KEY = 'geofon_v1_layers';
 function salvarEstado() {
   try {
     const layersDMC   = (S.leafletLayers.dmc||[]).map(l => ({ nome:l.nome, cidade:l.cidade, visible:l.visible, geojson:l._geojson||null }));
     const layersRedes = (S.leafletLayers.redes||[]).map(l => ({ nome:l.nome, cidade:l.cidade, visible:l.visible, geojson:l._geojson||null }));
-    const dados = { cidades:S.cidades, equipes:S.equipes, leaks:S.leaks, nextSeq:S.nextSeq, config:S.config, layersDMC, layersRedes };
-    // Tentar salvar; se estourar cota, salvar sem geojson
+    const dados = { layersDMC, layersRedes, config:S.config };
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(dados));
     } catch(quota) {
       dados.layersDMC   = layersDMC.map(l=>({...l, geojson:null}));
       dados.layersRedes = layersRedes.map(l=>({...l, geojson:null}));
       localStorage.setItem(LS_KEY, JSON.stringify(dados));
-      console.warn('KMLs muito grandes para localStorage — salvos sem geometria');
     }
   } catch(e) { console.warn('Erro localStorage:', e); }
 }
@@ -792,19 +1130,15 @@ function carregarEstado() {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return false;
     const dados = JSON.parse(raw);
-    if (dados.cidades)  S.cidades  = dados.cidades;
-    if (dados.equipes)  S.equipes  = dados.equipes;
-    if (dados.leaks)    S.leaks    = dados.leaks;
-    if (dados.nextSeq)  S.nextSeq  = dados.nextSeq;
-    if (dados.config)   S.config   = dados.config;
+    if (dados.config) S.config = dados.config;
     S._pendingLayersDMC   = dados.layersDMC  || [];
     S._pendingLayersRedes = dados.layersRedes || [];
     return true;
-  } catch(e) { console.warn('Erro ao carregar estado:', e); return false; }
+  } catch(e) { return false; }
 }
 
 function restaurarCamadasSalvas() {
-  // Restaurar DMC
+  carregarEstado();
   (S._pendingLayersDMC||[]).forEach(l => {
     if (!l.geojson) return;
     const style = LAYER_STYLE.dmc;
@@ -817,10 +1151,8 @@ function restaurarCamadasSalvas() {
     lg._geojson = l.geojson;
     if (!S.leafletLayers.dmc) S.leafletLayers.dmc = [];
     S.leafletLayers.dmc.push({ nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:l.geojson });
-    // Sincronizar DMCs da cidade
     sincronizarDMCsCidade(l.geojson, l.cidade);
   });
-  // Restaurar Redes
   (S._pendingLayersRedes||[]).forEach(l => {
     if (!l.geojson) return;
     const style = LAYER_STYLE.redes;
@@ -841,87 +1173,81 @@ function restaurarCamadasSalvas() {
   renderLayerLists();
 }
 
-// Extrair nomes de DMC do GeoJSON e adicionar à cidade correta
 function sincronizarDMCsCidade(geojson, cidadeId) {
   if (!geojson || !geojson.features) return;
   const novos = new Set();
   geojson.features.forEach(ft => {
     const p = ft.properties || {};
-    // Tentar várias propriedades comuns em KMLs brasileiros
     const candidatos = [p.name,p.Name,p.Nome,p.nome,p.DMC,p.dmc,p.NOME,p.Descricao,p.descricao,p.Label,p.label];
-    candidatos.forEach(v => {
-      if (v && typeof v === 'string' && v.trim().length > 1 && v.trim().length < 80) novos.add(v.trim());
-    });
+    candidatos.forEach(v => { if (v && typeof v === 'string' && v.trim().length > 1 && v.trim().length < 80) novos.add(v.trim()); });
   });
   if (!novos.size) return;
   const lista = [...novos];
-  const cidadesAlvo = cidadeId
-    ? S.cidades.filter(c => c.id === cidadeId)
-    : S.cidades; // sem cidade definida: adiciona em todas
+  const cidadesAlvo = cidadeId ? S.cidades.filter(c => c.id === cidadeId) : S.cidades;
   cidadesAlvo.forEach(c => {
-    lista.forEach(n => { if (!c.dmcs.includes(n)) c.dmcs.push(n); });
+    let mudou = false;
+    lista.forEach(n => { if (!c.dmcs.includes(n)) { c.dmcs.push(n); mudou = true; } });
+    if (mudou) salvarCidadeFirestore(c);
   });
-  // Atualizar dropdown se estiver aberto
   const regCid = document.getElementById('reg-cidade');
   if (regCid && regCid.value) onCidadeChange();
-  salvarEstado();
   renderConfigCidades();
   toast('✓ ' + lista.length + ' DMC(s) adicionados à lista de seleção!');
 }
 
-// ================================================================
-// DADOS PADRÃO (só usados na 1ª vez, sem localStorage)
-// ================================================================
-function initDados() {
-  const temSalvo = carregarEstado();
-  if (temSalvo) return; // Usa dados do localStorage
-
-  // Primeira execução — dados padrão
-  S.cidades = [
-    { id: 'CIA', nome: 'Criciúma',     prefixo: 'CIA', dmcs: ['DMC-01 Centro','DMC-02 Leste','DMC-03 Norte','DMC-04 Sul','DMC-05 Oeste'], wa: ['5548999990001','5548999990002'], coords: [-28.6775,-49.3680] },
-    { id: 'ICA', nome: 'Içara',        prefixo: 'ICA', dmcs: ['DMC-01','DMC-02','DMC-03'], wa: ['5548999990003'], coords: [-28.7130,-49.3050] },
-    { id: 'FQA', nome: 'Forquilhinha', prefixo: 'FQA', dmcs: ['DMC-01 Sede','DMC-02 Vila'], wa: ['5548999990004'], coords: [-28.7430,-49.4660] },
-    { id: 'SID', nome: 'Siderópolis',  prefixo: 'SID', dmcs: ['DMC-01','DMC-02'], wa: ['5548999990005'], coords: [-28.5960,-49.4260] }
-  ];
-  S.equipes = [
-    { id:'EQ1', nome:'Equipe 1 - Manhã',  codigo:'EQ1', cidade:'CIA', wa:'5548999991001' },
-    { id:'EQ2', nome:'Equipe 2 - Tarde',  codigo:'EQ2', cidade:'CIA', wa:'5548999991002' },
-    { id:'EQ3', nome:'Equipe 3 - Içara',  codigo:'EQ3', cidade:'ICA', wa:'5548999991003' },
-    { id:'EQ4', nome:'Equipe 4 - FQA',    codigo:'EQ4', cidade:'FQA', wa:'5548999991004' }
-  ];
-  S.nextSeq = { CIA:1, ICA:1, FQA:1, SID:1 };
-  S.leaks = [];
+function renderUsuariosPanel() {
+  const el = document.getElementById('usuarios-list');
+  if (!el) return;
+  const roleLabels = { admin:'Administrador', supervisor:'Supervisor', tecnico:'Técnico de campo', pendente:'Pendente' };
+  el.innerHTML = (S.usuarios||[]).map(u => {
+    const cidadeNome = S.cidades.find(c=>c.id===u.cidade)?.nome || '';
+    const equipeNome = S.equipes.find(e=>e.id===u.equipe)?.codigo || '';
+    return `<div class="card" style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--blue-l);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+          ${u.foto?`<img src="${u.foto}" style="width:100%;height:100%;object-fit:cover">`:`<span style="font-size:13px;font-weight:600;color:var(--blue)">${(u.nome||'?').charAt(0).toUpperCase()}</span>`}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.nome||u.email}</div>
+          <div style="font-size:11px;color:var(--text2)">${u.email}</div>
+        </div>
+        <span class="role-badge ${u.role}">${roleLabels[u.role]||u.role}</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        <select onchange="alterarRoleUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <option value="pendente" ${u.role==='pendente'?'selected':''}>Pendente</option>
+          <option value="tecnico" ${u.role==='tecnico'?'selected':''}>Técnico de campo</option>
+          <option value="supervisor" ${u.role==='supervisor'?'selected':''}>Supervisor</option>
+          <option value="admin" ${u.role==='admin'?'selected':''}>Administrador</option>
+        </select>
+        <select onchange="alterarCidadeUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <option value="">Sem cidade</option>
+          ${S.cidades.map(c=>`<option value="${c.id}" ${u.cidade===c.id?'selected':''}>${c.nome}</option>`).join('')}
+        </select>
+        <select onchange="alterarEquipeUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <option value="">Sem equipe</option>
+          ${S.equipes.filter(e=>!u.cidade||e.cidade===u.cidade).map(e=>`<option value="${e.id}" ${u.equipe===e.id?'selected':''}>${e.codigo}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+  }).join('') || '<p style="font-size:12px;color:var(--text2)">Nenhum usuário cadastrado ainda.</p>';
 }
 
-// ================================================================
-// INIT
-// ================================================================
-window.addEventListener('load', () => {
-  initDados();
-  populateSelects();
-  renderLeakList();
-  renderConfigCidades();
-  renderConfigEquipes();
-  renderManage();
-  initFieldMap();
-  startGPS();
-  // Restaurar camadas após mapa inicializado
-  setTimeout(() => restaurarCamadasSalvas(), 400);
-});
-
-// ================================================================
-// SINCRONIZAÇÃO Campo <-> PC (mesmo navegador, abas diferentes)
-// ================================================================
-window.addEventListener('storage', ev => {
-  if (ev.key !== LS_KEY || !ev.newValue) return;
-  try {
-    const dados = JSON.parse(ev.newValue);
-    if (dados.leaks)   { S.leaks   = dados.leaks;   addFieldMarkers(); renderLeakList(); renderManage(); refreshPCMap(); }
-    if (dados.cidades) { S.cidades = dados.cidades;  populateSelects(); renderConfigCidades(); }
-    if (dados.equipes) { S.equipes = dados.equipes;  renderConfigEquipes(); populateSelects(); }
-    toast('🔄 Dados atualizados por outro dispositivo');
-  } catch(e){}
-});
+async function alterarRoleUsuario(uid, role) {
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db,'usuarios',uid), { role }, { merge:true });
+  toast('Permissão atualizada');
+}
+async function alterarCidadeUsuario(uid, cidade) {
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db,'usuarios',uid), { cidade }, { merge:true });
+  toast('Cidade do usuário atualizada');
+}
+async function alterarEquipeUsuario(uid, equipe) {
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db,'usuarios',uid), { equipe }, { merge:true });
+  toast('Equipe do usuário atualizada');
+}
 
 // ================================================================
 // GPS
@@ -1155,7 +1481,7 @@ function setQuickSev(btn, val) {
 // ================================================================
 // SALVAR PONTO
 // ================================================================
-function salvarPonto() {
+async function salvarPonto() {
   const cid = document.getElementById('reg-cidade').value;
   const eqId = document.getElementById('reg-equipe').value;
   const dmc = document.getElementById('reg-dmc').value;
@@ -1166,8 +1492,7 @@ function salvarPonto() {
   if (!eqId) { toast('Selecione a equipe'); return; }
   if (!S.pos) { toast('Aguardando GPS...'); return; }
   const eq = S.equipes.find(e => e.id === eqId);
-  if (!S.nextSeq[cid]) S.nextSeq[cid] = 1;
-  const id = `${cid}-${eq.codigo}-VAZ${String(S.nextSeq[cid]++).padStart(3,'0')}`;
+  const id = await proximoIdSequencial(cid, eq.codigo);
   const now = new Date();
   const leak = {
     id, cidade:cid, equipe:eqId, dmc, tipo, severidade:S.sevAtual,
@@ -1175,20 +1500,29 @@ function salvarPonto() {
     desc:obs, diam:diam||null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos:S.photos.length,
-    photoData: S.photosBase64.slice(0,3) // guardar até 3 fotos em base64
+    photoData: (S.photosBase64||[]).slice(0,3),
+    criadoEm: window.FB.serverTimestamp(),
+    criadoPor: S.user?.uid || ''
   };
-  S.leaks.push(leak);
-  addFieldMarkers();
-  renderLeakList();
-  renderManage();
-  salvarEstado();
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
   toast(`✓ Ponto ${id} salvo!`);
-  // Reset
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
   S.photos=[]; S.photosBase64=[];
   renderPhotos();
   switchTab('map-field','tabs-field');
+}
+
+// Gera o próximo ID sequencial de forma segura usando um contador no Firestore
+async function proximoIdSequencial(cidadeId, equipeCodigo) {
+  const { db, doc, getDoc, setDoc } = window.FB;
+  const ref = doc(db, 'meta', 'sequencias');
+  const snap = await getDoc(ref);
+  const seq = snap.exists() ? (snap.data()[cidadeId] || 0) : 0;
+  const novoSeq = seq + 1;
+  await setDoc(ref, { [cidadeId]: novoSeq }, { merge:true });
+  S.nextSeq[cidadeId] = novoSeq + 1;
+  return `${cidadeId}-${equipeCodigo}-VAZ${String(novoSeq).padStart(3,'0')}`;
 }
 
 // ================================================================
@@ -1205,7 +1539,7 @@ function openRegisterQuick() {
   openModal('modal-quick');
 }
 
-function confirmarQuick() {
+async function confirmarQuick() {
   const cid = document.getElementById('quick-cidade').value;
   const eqId = document.getElementById('quick-equipe').value;
   const desc = document.getElementById('quick-desc').value;
@@ -1213,20 +1547,18 @@ function confirmarQuick() {
   if (!eqId) { toast('Selecione a equipe'); return; }
   if (!S.pos) { toast('Aguardando GPS...'); return; }
   const eq = S.equipes.find(e => e.id === eqId);
-  if (!S.nextSeq[cid]) S.nextSeq[cid]=1;
-  const id=`${cid}-${eq.codigo}-VAZ${String(S.nextSeq[cid]++).padStart(3,'0')}`;
+  const id = await proximoIdSequencial(cid, eq.codigo);
   const now=new Date();
   const c=S.cidades.find(c=>c.id===cid);
   const leak={
     id, cidade:cid, equipe:eqId, dmc:c?.dmcs[0]||'-', tipo:'Não categorizado', severidade:S.sevQuick,
     lat:S.pos.lat, lng:S.pos.lng, desc, diam:null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
-    photos:0
+    photos:0,
+    criadoEm: window.FB.serverTimestamp(),
+    criadoPor: S.user?.uid || ''
   };
-  S.leaks.push(leak);
-  addFieldMarkers();
-  renderLeakList();
-  renderManage();
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
   closeModal('modal-quick');
   toast(`✓ Ponto ${id} registrado!`);
 }
@@ -1679,16 +2011,24 @@ function renderConfigCidades() {
 }
 
 function editarWACidade(cidIdx, waIdx, valor) {
-  if (S.cidades[cidIdx]) { S.cidades[cidIdx].wa[waIdx] = valor.trim(); salvarEstado(); }
+  if (S.cidades[cidIdx]) {
+    S.cidades[cidIdx].wa[waIdx] = valor.trim();
+    salvarCidadeFirestore(S.cidades[cidIdx]);
+  }
 }
 function removerWACidade(cidIdx, waIdx) {
   if (S.cidades[cidIdx] && S.cidades[cidIdx].wa.length > 1) {
     S.cidades[cidIdx].wa.splice(waIdx, 1);
     renderConfigCidades();
+    salvarCidadeFirestore(S.cidades[cidIdx]);
   } else { toast('A cidade precisa ter ao menos um contato'); }
 }
 function adicionarWACidade(cidIdx) {
-  if (S.cidades[cidIdx]) { S.cidades[cidIdx].wa.push(''); renderConfigCidades(); salvarEstado(); }
+  if (S.cidades[cidIdx]) {
+    S.cidades[cidIdx].wa.push('');
+    renderConfigCidades();
+    salvarCidadeFirestore(S.cidades[cidIdx]);
+  }
 }
 
 function renderConfigEquipes() {
@@ -1728,7 +2068,7 @@ function openModalCidade() {
   openModal('modal-cidade');
 }
 
-function salvarCidade() {
+async function salvarCidade() {
   const nome=document.getElementById('nc-nome').value.trim();
   const pref=document.getElementById('nc-prefixo').value.trim().toUpperCase();
   const dmcsRaw=document.getElementById('nc-dmcs').value.trim();
@@ -1737,43 +2077,58 @@ function salvarCidade() {
   const coordsRaw=document.getElementById('nc-coords').value.trim();
   if(!nome||!pref){toast('Nome e prefixo são obrigatórios');return;}
   if(!wa.length){toast('Adicione pelo menos um número WhatsApp');return;}
+  if(S.cidades.find(c=>c.id===pref)){toast('Já existe uma cidade com esse prefixo');return;}
   const dmcs=dmcsRaw?dmcsRaw.split('\n').map(s=>s.trim()).filter(Boolean):['DMC-01'];
   let coords=[-28.6775,-49.3680];
   if(coordsRaw){const p=coordsRaw.split(',').map(s=>parseFloat(s.trim()));if(p.length===2&&!isNaN(p[0]))coords=p;}
-  S.cidades.push({id:pref,nome,prefixo:pref,dmcs,wa,coords});
-  S.nextSeq[pref]=1;
-  populateSelects();
-  renderConfigCidades();
-  renderManage();
-  salvarEstado();
+  const novaCidade={id:pref,nome,prefixo:pref,dmcs,wa,coords};
+  await salvarCidadeFirestore(novaCidade);
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','sequencias'), { [pref]: 0 }, { merge:true });
   closeModal('modal-cidade');
   toast('Cidade "' + nome + '" (' + pref + ') adicionada!');
   ['nc-nome','nc-prefixo','nc-dmcs','nc-coords'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const waList=document.getElementById('nc-wa-list'); if(waList) waList.innerHTML='';
 }
 
-function salvarEquipe() {
+async function salvarEquipe() {
   const nome=document.getElementById('ne-nome').value.trim();
   const cod=document.getElementById('ne-codigo').value.trim().toUpperCase();
   const cid=document.getElementById('ne-cidade').value;
   const wa=document.getElementById('ne-wa').value.trim();
   if(!nome||!cod||!cid){toast('Preencha todos os campos');return;}
-  S.equipes.push({id:cod,nome,codigo:cod,cidade:cid,wa});
-  populateSelects();
-  renderConfigEquipes();
-  salvarEstado();
+  if(S.equipes.find(e=>e.id===cod)){toast('Já existe uma equipe com esse código');return;}
+  const novaEquipe={id:cod,nome,codigo:cod,cidade:cid,wa};
+  await salvarEquipeFirestore(novaEquipe);
   closeModal('modal-equipe');
   toast('Equipe "' + cod + '" adicionada!');
   ['ne-nome','ne-codigo','ne-wa'].forEach(id=>document.getElementById(id).value='');
 }
 
-function removerCidade(i){S.cidades.splice(i,1);renderConfigCidades();renderManage();populateSelects();salvarEstado();toast('Cidade removida');}
-function removerEquipe(i){S.equipes.splice(i,1);renderConfigEquipes();populateSelects();salvarEstado();toast('Equipe removida');}
+async function removerCidade(i){
+  const cidade = S.cidades[i];
+  if (!cidade) return;
+  if (!confirm('Remover a cidade "' + cidade.nome + '"? Os vazamentos já registrados não serão apagados.')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'cidades',cidade.id), { removida:true }, { merge:true });
+  // onSnapshot não traz removidas automaticamente pois ainda existe o doc — filtramos no populateSelects/render
+  S.cidades.splice(i,1);
+  renderConfigCidades(); renderManage(); populateSelects();
+  toast('Cidade removida');
+}
+async function removerEquipe(i){
+  const equipe = S.equipes[i];
+  if (!equipe) return;
+  if (!confirm('Remover a equipe "' + equipe.nome + '"?')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'equipes',equipe.id), { removida:true }, { merge:true });
+  S.equipes.splice(i,1);
+  renderConfigEquipes(); populateSelects();
+  toast('Equipe removida');
+}
 
-function salvarConfig(){
+async function salvarConfig(){
   S.config.org=document.getElementById('cfg-org').value;
   S.config.gps=parseInt(document.getElementById('cfg-gps').value)||20;
-  salvarEstado();
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), S.config, { merge:true });
+  salvarEstado(); // mantém camadas/layers locais
   toast('Configurações salvas!');
 }
 
@@ -1874,6 +2229,7 @@ function switchTab(tabId, tabsId) {
   if(tabId==='map-field') setTimeout(()=>{if(mapField)mapField.invalidateSize();},100);
   if(tabId==='map-pc'){initPCMap();setTimeout(()=>{if(mapPC)mapPC.invalidateSize();},100);}
   if(tabId==='manage') renderManage();
+  if(tabId==='register') setTimeout(()=>aplicarRestricaoTecnico(),50);
 }
 
 function toggleMode() {

@@ -1144,19 +1144,26 @@ function iniciarSincronizacaoCamadas() {
 
     snap.docs.forEach(docSnap => {
       const l = docSnap.data();
-      if (!l.geojson || l.removida) return;
+      if (l.removida) return;
+      // Compatibilidade: aceita tanto o formato novo (geojsonStr) quanto o antigo (geojson, se algum dia existiu)
+      let geojson = null;
+      try {
+        geojson = l.geojsonStr ? JSON.parse(l.geojsonStr) : (l.geojson || null);
+      } catch(e) { console.warn('Camada com geojson inválido:', docSnap.id, e); return; }
+      if (!geojson) return;
+
       const tipo = l.tipo === 'redes' ? 'redes' : 'dmc';
       const style = LAYER_STYLE[tipo];
-      const lg = L.geoJSON(l.geojson, {
+      const lg = L.geoJSON(geojson, {
         style: () => style,
         pointToLayer: (ft, ll) => L.circleMarker(ll, { radius:5, ...style }),
         onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||l.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
       });
       if (l.visible !== false) { if (mapField) lg.addTo(mapField); if (mapPC) lg.addTo(mapPC); }
-      lg._geojson = l.geojson;
+      lg._geojson = geojson;
       if (!S.leafletLayers[tipo]) S.leafletLayers[tipo] = [];
-      S.leafletLayers[tipo].push({ id:docSnap.id, nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:l.geojson });
-      if (tipo === 'dmc') sincronizarDMCsCidade(l.geojson, l.cidade);
+      S.leafletLayers[tipo].push({ id:docSnap.id, nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:geojson });
+      if (tipo === 'dmc') sincronizarDMCsCidade(geojson, l.cidade);
     });
 
     renderDMCPanel();
@@ -1728,13 +1735,15 @@ function detectCidadeFromName(nome) {
 async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
   const { db, doc, setDoc, serverTimestamp } = window.FB;
   const id = 'camada_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
-  const tamanhoAprox = JSON.stringify(geojson).length;
-  if (tamanhoAprox > 900000) {
+  const geojsonStr = JSON.stringify(geojson);
+  if (geojsonStr.length > 900000) {
     toast('⚠️ Arquivo muito grande para salvar na nuvem (limite ~900KB). Simplifique o KML.');
     return;
   }
+  // O Firestore não aceita arrays dentro de arrays (formato nativo do GeoJSON).
+  // Por isso guardamos o GeoJSON inteiro como texto (string) e convertemos de volta ao ler.
   await setDoc(doc(db, 'camadas', id), {
-    tipo, nome, cidade: cidadeId || '', visible: true, geojson,
+    tipo, nome, cidade: cidadeId || '', visible: true, geojsonStr,
     criadoEm: serverTimestamp(), criadoPor: S.user?.uid || ''
   });
 }

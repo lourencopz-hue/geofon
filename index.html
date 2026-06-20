@@ -1883,37 +1883,70 @@ async function removerCamada(tipo, idx) {
 }
 
 // Parser KML → GeoJSON
+// Busca elementos por nome de tag IGNORANDO namespace (resolve KMLs do Google Earth/QGIS/ArcGIS,
+// que declaram xmlns="http://www.opengis.net/kml/2.2" e quebram querySelectorAll em alguns navegadores)
+function getByTag(node, tagName) {
+  return Array.from(node.getElementsByTagName(tagName));
+}
+function getFirstByTag(node, tagName) {
+  const els = node.getElementsByTagName(tagName);
+  return els.length ? els[0] : null;
+}
+
 function kmlToGeoJSON(kmlText) {
   const doc = new DOMParser().parseFromString(kmlText,'text/xml');
-  if (doc.querySelector('parsererror')) throw new Error('KML inválido');
+  if (getFirstByTag(doc,'parsererror')) throw new Error('KML inválido (XML malformado)');
   const features = [];
-  doc.querySelectorAll('Placemark').forEach(pm => {
-    const props = { name: pm.querySelector('name')?.textContent||'' };
-    pm.querySelectorAll('SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
-    // Polygon
-    pm.querySelectorAll('Polygon').forEach(poly => {
-      const outer = kmlCoords(poly.querySelector('outerBoundaryIs coordinates'));
+  const placemarks = getByTag(doc, 'Placemark');
+
+  placemarks.forEach(pm => {
+    const nameEl = getFirstByTag(pm,'name');
+    const props = { name: nameEl ? nameEl.textContent.trim() : '' };
+    getByTag(pm,'SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
+
+    // Polygon (inclui Polygon dentro de MultiGeometry, já que getByTag busca em toda a profundidade)
+    getByTag(pm,'Polygon').forEach(poly => {
+      const outerContainer = getFirstByTag(poly,'outerBoundaryIs');
+      const outerCoordsEl = outerContainer ? getFirstByTag(outerContainer,'coordinates') : null;
+      const outer = kmlCoords(outerCoordsEl);
       if (!outer) return;
-      const holes = [...poly.querySelectorAll('innerBoundaryIs coordinates')].map(kmlCoords).filter(Boolean);
+      const holes = getByTag(poly,'innerBoundaryIs')
+        .map(ib => kmlCoords(getFirstByTag(ib,'coordinates')))
+        .filter(Boolean);
       features.push({type:'Feature',properties:props,geometry:{type:'Polygon',coordinates:[outer,...holes]}});
     });
+
     // LineString
-    pm.querySelectorAll('LineString coordinates').forEach(el => {
-      const c = kmlCoords(el);
+    getByTag(pm,'LineString').forEach(ls => {
+      const c = kmlCoords(getFirstByTag(ls,'coordinates'));
       if (c) features.push({type:'Feature',properties:props,geometry:{type:'LineString',coordinates:c}});
     });
+
     // Point
-    const pt = pm.querySelector('Point coordinates');
-    if (pt) {
-      const p = pt.textContent.trim().split(',').map(Number);
-      if (p.length>=2) features.push({type:'Feature',properties:props,geometry:{type:'Point',coordinates:[p[0],p[1]]}});
+    const pointEl = getFirstByTag(pm,'Point');
+    if (pointEl) {
+      const coordsEl = getFirstByTag(pointEl,'coordinates');
+      if (coordsEl) {
+        const p = coordsEl.textContent.trim().split(',').map(Number);
+        if (p.length>=2) features.push({type:'Feature',properties:props,geometry:{type:'Point',coordinates:[p[0],p[1]]}});
+      }
     }
   });
+
+  if (!features.length) {
+    throw new Error('Nenhuma geometria reconhecida no KML (' + placemarks.length + ' Placemark(s) encontrado(s), mas sem Polygon/LineString/Point válidos)');
+  }
   return {type:'FeatureCollection',features};
 }
+
 function kmlCoords(el) {
   if (!el) return null;
-  const c = el.textContent.trim().split(/\s+/).map(t=>{const p=t.split(',').map(Number);return p.length>=2?[p[0],p[1]]:null;}).filter(Boolean);
+  const raw = el.textContent.trim();
+  if (!raw) return null;
+  const c = raw.split(/\s+/).map(t=>{
+    const p = t.split(',').map(Number);
+    return (p.length>=2 && !isNaN(p[0]) && !isNaN(p[1])) ? [p[0],p[1]] : null;
+  }).filter(Boolean);
   return c.length ? c : null;
 }
 

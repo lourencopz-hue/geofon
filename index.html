@@ -290,10 +290,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 <!-- TABS CAMPO -->
 <div id="tabs-field" class="tabs">
   <div class="tab active" onclick="switchTab('map-field','tabs-field')" data-tab="map-field">
-    <i class="ti ti-map-pin"></i>Mapa
+    <i class="ti ti-map-2"></i>Mapa
   </div>
   <div class="tab" onclick="switchTab('register','tabs-field')" data-tab="register">
-    <i class="ti ti-clipboard-check"></i>Registrar
+    <i class="ti ti-edit-circle"></i>Registrar
   </div>
   <div class="tab" onclick="switchTab('list-field','tabs-field')" data-tab="list-field">
     <i class="ti ti-list"></i>Lista
@@ -1410,43 +1410,64 @@ function carregarEstado() {
 // ================================================================
 let unsubCamadas = null;
 
+// ================================================================
+// CAMADAS — metadados sempre sincronizados; GEOMETRIA carregada sob demanda;
+// VISIBILIDADE é local de cada dispositivo (nunca vai para o Firestore).
+// ================================================================
+const LS_VISIBILIDADE_KEY = 'geofon_camadas_visiveis_v1';
+
+// Lê/grava no localStorage quais camadas este dispositivo específico decidiu mostrar.
+// Por padrão (camada nunca vista antes neste aparelho), começa OCULTA.
+function lerVisibilidadeLocal() {
+  try { return JSON.parse(localStorage.getItem(LS_VISIBILIDADE_KEY)) || {}; }
+  catch(e) { return {}; }
+}
+function salvarVisibilidadeLocal(mapa) {
+  try { localStorage.setItem(LS_VISIBILIDADE_KEY, JSON.stringify(mapa)); } catch(e){}
+}
+function estaVisivelLocalmente(camadaId) {
+  const mapa = lerVisibilidadeLocal();
+  return mapa[camadaId] === true; // ausente ou false = oculta por padrão
+}
+function definirVisibilidadeLocal(camadaId, visivel) {
+  const mapa = lerVisibilidadeLocal();
+  mapa[camadaId] = visivel;
+  salvarVisibilidadeLocal(mapa);
+}
+
+// Só sincronizamos METADADOS aqui (nome, cidade, tipo, validada) — leve e rápido,
+// pois não inclui o geojsonStr (que pode ser grande). A geometria real só é buscada
+// quando o usuário pede para ver aquela camada específica (ver carregarGeometriaCamada).
 function iniciarSincronizacaoCamadas() {
   const { db, collection, onSnapshot } = window.FB;
   if (unsubCamadas) unsubCamadas();
   unsubCamadas = onSnapshot(collection(db, 'camadas'), snap => {
-    // Remove camadas atuais do mapa antes de redesenhar
-    ['dmc','redes'].forEach(tipo => {
-      (S.leafletLayers[tipo]||[]).forEach(item => {
-        [mapField, mapPC].filter(Boolean).forEach(m => m.hasLayer(item.lg) && m.removeLayer(item.lg));
-      });
-      S.leafletLayers[tipo] = [];
-    });
+    const metadadosAnteriores = {};
+    ['dmc','redes'].forEach(tipo => (S.leafletLayers[tipo]||[]).forEach(item => { metadadosAnteriores[item.id] = item; }));
+
+    ['dmc','redes'].forEach(tipo => { S.leafletLayers[tipo] = []; });
 
     snap.docs.forEach(docSnap => {
       const l = docSnap.data();
       if (l.removida) return;
-      // Compatibilidade: aceita tanto o formato novo (geojsonStr) quanto o antigo (geojson, se algum dia existiu)
-      let geojson = null;
-      try {
-        geojson = l.geojsonStr ? JSON.parse(l.geojsonStr) : (l.geojson || null);
-      } catch(e) { console.warn('Camada com geojson inválido:', docSnap.id, e); return; }
-      if (!geojson) return;
-
       const tipo = l.tipo === 'redes' ? 'redes' : 'dmc';
-      const style = LAYER_STYLE[tipo];
-      const lg = L.geoJSON(geojson, {
-        style: () => style,
-        pointToLayer: (ft, ll) => L.circleMarker(ll, { radius:5, ...style }),
-        onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||l.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
-      });
-      if (l.visible !== false) { if (mapField) lg.addTo(mapField); if (mapPC) lg.addTo(mapPC); }
-      lg._geojson = geojson;
-      if (!S.leafletLayers[tipo]) S.leafletLayers[tipo] = [];
-      S.leafletLayers[tipo].push({
-        id:docSnap.id, nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:geojson,
-        validada: l.validada !== false, criadoPorNome: l.criadoPorNome || ''
-      });
-      if (tipo === 'dmc') sincronizarDMCsCidade(geojson, l.cidade);
+      const existente = metadadosAnteriores[docSnap.id];
+      // Mantém a geometria já carregada (lg/_geojson) se essa camada já tinha sido aberta antes;
+      // senão, fica null até o usuário pedir para visualizar.
+      const item = {
+        id: docSnap.id, nome: l.nome, cidade: l.cidade || '',
+        validada: l.validada !== false, criadoPorNome: l.criadoPorNome || '', criadoPor: l.criadoPor || '',
+        visible: estaVisivelLocalmente(docSnap.id),
+        lg: existente ? existente.lg : null,
+        _geojson: existente ? existente._geojson : null,
+        _carregando: false
+      };
+      S.leafletLayers[tipo].push(item);
+      // Se este dispositivo já tinha marcado como visível e a geometria ainda não foi
+      // carregada (ex.: acabou de logar), carrega agora automaticamente.
+      if (item.visible && !item.lg) carregarGeometriaCamada(tipo, item.id);
+      else if (item.visible && item.lg) { if (mapField && !mapField.hasLayer(item.lg)) item.lg.addTo(mapField); if (mapPC && !mapPC.hasLayer(item.lg)) item.lg.addTo(mapPC); }
+      if (tipo === 'dmc' && item._geojson) sincronizarDMCsCidade(item._geojson, l.cidade);
     });
 
     renderDMCPanel();
@@ -2354,7 +2375,10 @@ function handleLayerUpload(input, tipo) {
           // Isso evita que o DMC seja adicionado por engano em todas as cidades.
           abrirPerguntaCidadeCamada(geojson, tipo, f.name);
         } else {
-          await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
+          const novoId = await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
+          // Quem sobe o arquivo já vê na hora (visibilidade é local a este dispositivo) —
+          // outros usuários continuam com a camada oculta até decidirem ativá-la.
+          if (novoId) definirVisibilidadeLocal(novoId, true);
           toast('✓ "' + f.name + '" carregada e disponível para todos!');
           centralizarEmGeoJSON(geojson);
         }
@@ -2384,7 +2408,8 @@ async function confirmarCidadeCamada() {
   if (!cidadeId) { toast('Selecione uma cidade'); return; }
   const pend = S._camadaPendenteUpload;
   if (!pend) return;
-  await salvarCamadaFirestore(pend.geojson, pend.tipo, pend.nome, cidadeId);
+  const novoId = await salvarCamadaFirestore(pend.geojson, pend.tipo, pend.nome, cidadeId);
+  if (novoId) definirVisibilidadeLocal(novoId, true);
   toast('✓ "' + pend.nome + '" carregada e disponível para todos!');
   centralizarEmGeoJSON(pend.geojson);
   S._camadaPendenteUpload = null;
@@ -2400,24 +2425,27 @@ function detectCidadeFromName(nome) {
 }
 
 // Grava a camada inteira (com o GeoJSON) como um documento no Firestore.
-// onSnapshot (iniciarSincronizacaoCamadas) detecta e desenha automaticamente em todos os dispositivos.
+// onSnapshot (iniciarSincronizacaoCamadas) detecta o NOVO METADADO automaticamente em
+// todos os dispositivos; a geometria (geojsonStr) só é baixada por quem pedir para ver
+// (ver carregarGeometriaCamada). Retorna o id gerado, para quem chamou marcar visível localmente.
 async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
   const { db, doc, setDoc, serverTimestamp } = window.FB;
   const id = 'camada_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
   const geojsonStr = JSON.stringify(geojson);
   if (geojsonStr.length > 900000) {
     toast('⚠️ Arquivo muito grande para salvar na nuvem (limite ~900KB). Simplifique o KML.');
-    return;
+    return null;
   }
   const role = S.userDoc?.role;
   // Camadas incluídas por Admin/Supervisor já entram validadas; as de Técnico ficam
-  // pendentes até alguém de nível superior confirmar (mas já aparecem no mapa de todos
-  // imediatamente — a validação é um aviso de revisão, não um bloqueio de uso).
+  // pendentes até alguém de nível superior confirmar (mas já aparecem no mapa de quem
+  // optar por vê-las — a validação é um aviso de revisão, não um bloqueio de uso).
   const validada = (role === 'admin' || role === 'supervisor');
   // O Firestore não aceita arrays dentro de arrays (formato nativo do GeoJSON).
   // Por isso guardamos o GeoJSON inteiro como texto (string) e convertemos de volta ao ler.
+  // Nota: não existe mais campo "visible" aqui — visibilidade é decisão local de cada dispositivo.
   await setDoc(doc(db, 'camadas', id), {
-    tipo, nome, cidade: cidadeId || '', visible: true, geojsonStr,
+    tipo, nome, cidade: cidadeId || '', geojsonStr,
     criadoEm: serverTimestamp(), criadoPor: S.user?.uid || '',
     criadoPorNome: S.user?.nome || S.user?.email || '',
     validada
@@ -2425,6 +2453,7 @@ async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
   if (!validada) {
     toast('📋 Camada incluída! Um admin/supervisor vai validar em breve.');
   }
+  return id;
 }
 
 function centralizarEmGeoJSON(geojson) {
@@ -2439,25 +2468,88 @@ function centralizarEmGeoJSON(geojson) {
 }
 
 // Alterna visibilidade — grava no Firestore, e o onSnapshot atualiza todos os dispositivos
-async function toggleCamadaIndividual(tipo, idx) {
-  const item = (S.leafletLayers[tipo]||[])[idx];
-  if (!item || !item.id) return;
-  const novoVisible = !item.visible;
-  await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { visible: novoVisible }, { merge:true });
-  // O próprio onSnapshot vai redesenhar; não precisamos tocar no mapa aqui
+// Busca o documento completo da camada (que contém o geojsonStr, potencialmente grande)
+// só no momento em que o usuário realmente pede para visualizá-la. Depois de carregada
+// uma vez nesta sessão, fica em memória — não precisa buscar de novo ao só ligar/desligar.
+async function carregarGeometriaCamada(tipo, camadaId) {
+  const item = (S.leafletLayers[tipo]||[]).find(i => i.id === camadaId);
+  if (!item || item._carregando) return;
+  if (item.lg && item._geojson) {
+    // Já carregada nesta sessão — só reanexa ao(s) mapa(s)
+    if (mapField && !mapField.hasLayer(item.lg)) item.lg.addTo(mapField);
+    if (mapPC && !mapPC.hasLayer(item.lg)) item.lg.addTo(mapPC);
+    return;
+  }
+  item._carregando = true;
+  try {
+    const { db, doc, getDoc } = window.FB;
+    const snap = await getDoc(doc(db, 'camadas', camadaId));
+    if (!snap.exists()) { toast('Camada não encontrada'); return; }
+    const l = snap.data();
+    let geojson = null;
+    try { geojson = l.geojsonStr ? JSON.parse(l.geojsonStr) : (l.geojson || null); }
+    catch(e) { toast('Erro ao ler geometria da camada'); return; }
+    if (!geojson) return;
+
+    const corPadrao = LAYER_STYLE[tipo];
+    const lg = L.geoJSON(geojson, {
+      // Usa a cor extraída do próprio KML (props._corKml) quando disponível;
+      // senão cai na cor padrão fixa por tipo (azul para DMC, verde para redes).
+      style: (ft) => {
+        const corKml = ft.properties && ft.properties._corKml;
+        return corKml ? { ...corPadrao, color: corKml, fillColor: corKml } : corPadrao;
+      },
+      pointToLayer: (ft, ll) => {
+        const corKml = ft.properties && ft.properties._corKml;
+        const estilo = corKml ? { ...corPadrao, color: corKml, fillColor: corKml } : corPadrao;
+        return L.circleMarker(ll, { radius:5, ...estilo });
+      },
+      onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||l.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
+    });
+    item.lg = lg; item._geojson = geojson;
+    if (mapField) lg.addTo(mapField);
+    if (mapPC) lg.addTo(mapPC);
+    if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
+  } finally {
+    item._carregando = false;
+  }
 }
 
-async function toggleAllDMC(vis) {
-  const { db, doc, setDoc } = window.FB;
-  for (const item of (S.leafletLayers.dmc||[])) {
-    if (item.id && item.visible !== vis) await setDoc(doc(db,'camadas',item.id), { visible:vis }, { merge:true });
-  }
+function removerGeometriaDoMapa(item) {
+  if (!item.lg) return;
+  [mapField, mapPC].filter(Boolean).forEach(m => { if (m.hasLayer(item.lg)) m.removeLayer(item.lg); });
 }
-async function toggleAllRedes(vis) {
-  const { db, doc, setDoc } = window.FB;
-  for (const item of (S.leafletLayers.redes||[])) {
-    if (item.id && item.visible !== vis) await setDoc(doc(db,'camadas',item.id), { visible:vis }, { merge:true });
-  }
+
+// Liga/desliga a visibilidade — decisão 100% local deste dispositivo (localStorage),
+// nunca grava no Firestore. Cada usuário vê só o que escolheu ver.
+function toggleCamadaIndividual(tipo, idx) {
+  const item = (S.leafletLayers[tipo]||[])[idx];
+  if (!item || !item.id) return;
+  item.visible = !item.visible;
+  definirVisibilidadeLocal(item.id, item.visible);
+  if (item.visible) carregarGeometriaCamada(tipo, item.id);
+  else removerGeometriaDoMapa(item);
+  renderDMCPanel();
+  renderRedesPanel();
+}
+
+function toggleAllDMC(vis) {
+  (S.leafletLayers.dmc||[]).forEach(item => {
+    item.visible = vis;
+    definirVisibilidadeLocal(item.id, vis);
+    if (vis) carregarGeometriaCamada('dmc', item.id);
+    else removerGeometriaDoMapa(item);
+  });
+  renderDMCPanel();
+}
+function toggleAllRedes(vis) {
+  (S.leafletLayers.redes||[]).forEach(item => {
+    item.visible = vis;
+    definirVisibilidadeLocal(item.id, vis);
+    if (vis) carregarGeometriaCamada('redes', item.id);
+    else removerGeometriaDoMapa(item);
+  });
+  renderRedesPanel();
 }
 
 function openDMCPanel() {
@@ -2495,7 +2587,8 @@ function setDMCFiltro(cid) {
 function renderDMCPanel() {
   const el = document.getElementById('dmc-panel-list');
   if (!el) return;
-  const podeRemover = S.userDoc?.role === 'admin' || S.userDoc?.role === 'supervisor';
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
   const allLayers = S.leafletLayers.dmc || [];
   const layers = allLayers.filter(l => !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro || l.cidade === '');
   if (!allLayers.length) {
@@ -2512,6 +2605,9 @@ function renderDMCPanel() {
     const avisoValidacao = !item.validada
       ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
       : '';
+    // Admin/Supervisor podem remover qualquer camada. Técnico só pode remover
+    // a própria camada enquanto ela ainda não foi validada (ex.: corrigir um erro de upload).
+    const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#185FA5;flex-shrink:0"></div>' +
       '<div style="flex:1;min-width:0">' +
@@ -2522,14 +2618,14 @@ function renderDMCPanel() {
       '<button onclick="toggleCamadaIndividual(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--blue)':'var(--text2)') + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
-      (podeRemover ? (
+      (podeRemoverEsta ? (
       '<button onclick="removerCamada(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
         '<i class="ti ti-trash"></i>' +
-      '</button>') : (
-      !item.validada ? (
+      '</button>') : '') +
+      (ehSuperior && !item.validada ? (
       '<button onclick="validarCamada(\'dmc\',' + idx + ')" style="background:none;border:1px solid rgba(59,109,17,.3);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--green)" title="Validar camada">' +
         '<i class="ti ti-check"></i>' +
-      '</button>') : '')) +
+      '</button>') : '') +
     '</div>';
   }).join('');
 }
@@ -2537,7 +2633,8 @@ function renderDMCPanel() {
 function renderRedesPanel() {
   const el = document.getElementById('redes-panel-list');
   if (!el) return;
-  const podeRemover = S.userDoc?.role === 'admin' || S.userDoc?.role === 'supervisor';
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
   const layers = S.leafletLayers.redes || [];
   if (!layers.length) {
     el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
@@ -2547,20 +2644,21 @@ function renderRedesPanel() {
     const avisoValidacao = !item.validada
       ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
       : '';
+    const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
       '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' + avisoValidacao + '</div>' +
       '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--teal)':'var(--text2)') + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
-      (podeRemover ? (
+      (podeRemoverEsta ? (
       '<button onclick="removerCamada(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
         '<i class="ti ti-trash"></i>' +
-      '</button>') : (
-      !item.validada ? (
+      '</button>') : '') +
+      (ehSuperior && !item.validada ? (
       '<button onclick="validarCamada(\'redes\',' + idx + ')" style="background:none;border:1px solid rgba(59,109,17,.3);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--green)" title="Validar camada">' +
         '<i class="ti ti-check"></i>' +
-      '</button>') : '')) +
+      '</button>') : '') +
     '</div>';
   }).join('');
 }
@@ -2632,10 +2730,32 @@ function kmlToGeoJSON(kmlText) {
   const features = [];
   const placemarks = getByTag(doc, 'Placemark');
 
+  // Mapa de estilos globais (<Style id="...">...</Style>), referenciados por <styleUrl>#id
+  const estilosGlobais = {};
+  getByTag(doc, 'Style').forEach(styleEl => {
+    const id = styleEl.getAttribute('id');
+    if (!id) return;
+    const cor = extrairCorDoStyle(styleEl);
+    if (cor) estilosGlobais[id] = cor;
+  });
+
   placemarks.forEach(pm => {
     const nameEl = getFirstByTag(pm,'name');
     const props = { name: nameEl ? nameEl.textContent.trim() : '' };
     getByTag(pm,'SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
+
+    // Cor: tenta primeiro um <Style> inline dentro do próprio Placemark,
+    // senão segue o <styleUrl> até o <Style id="..."> correspondente no documento.
+    const styleInline = getFirstByTag(pm, 'Style');
+    let cor = styleInline ? extrairCorDoStyle(styleInline) : null;
+    if (!cor) {
+      const styleUrlEl = getFirstByTag(pm, 'styleUrl');
+      if (styleUrlEl) {
+        const ref = styleUrlEl.textContent.trim().replace(/^#/, '');
+        cor = estilosGlobais[ref] || null;
+      }
+    }
+    if (cor) props._corKml = cor;
 
     // Polygon (inclui Polygon dentro de MultiGeometry, já que getByTag busca em toda a profundidade)
     getByTag(pm,'Polygon').forEach(poly => {
@@ -2670,6 +2790,24 @@ function kmlToGeoJSON(kmlText) {
     throw new Error('Nenhuma geometria reconhecida no KML (' + placemarks.length + ' Placemark(s) encontrado(s), mas sem Polygon/LineString/Point válidos)');
   }
   return {type:'FeatureCollection',features};
+}
+
+// O KML guarda cor no formato AABBGGRR (alpha-azul-verde-vermelho, ordem invertida do habitual).
+// Convertemos para #RRGGBB, que é o que o CSS/Leaflet entendem.
+function corKmlParaHex(corKml) {
+  if (!corKml || corKml.length < 6) return null;
+  const limpo = corKml.replace('#','').padStart(8,'f');
+  const aa = limpo.slice(0,2), bb = limpo.slice(2,4), gg = limpo.slice(4,6), rr = limpo.slice(6,8);
+  return '#' + rr + gg + bb;
+}
+
+function extrairCorDoStyle(styleEl) {
+  // Prioriza LineStyle (mais comum para redes/tubulações); cai para PolyStyle se não houver
+  const lineStyle = getFirstByTag(styleEl, 'LineStyle');
+  const polyStyle = getFirstByTag(styleEl, 'PolyStyle');
+  const colorEl = (lineStyle && getFirstByTag(lineStyle,'color')) || (polyStyle && getFirstByTag(polyStyle,'color'));
+  if (!colorEl) return null;
+  return corKmlParaHex(colorEl.textContent.trim());
 }
 
 function kmlCoords(el) {

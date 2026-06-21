@@ -349,7 +349,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="map-toolbar">
       <button class="btn primary" onclick="openRegisterQuick()"><i class="ti ti-map-pin-plus"></i>Novo ponto</button>
-      <button class="btn sm" onclick="openDMCPanel()"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC</button>
+      <button class="btn sm" onclick="openDMCPanel()" style="position:relative"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
       <button class="btn sm" onclick="openRedesPanel()"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
       <button class="btn sm" onclick="centerMyPosition()"><i class="ti ti-gps"></i>Minha pos.</button>
     </div>
@@ -372,90 +372,108 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <span id="reg-gps-acc" style="font-size:10.5px"></span>
     </div>
     <div class="panel-scroll">
-      <div class="section">
-        <div class="section-title">Identificação do ponto</div>
-        <div class="card">
-          <!-- ID PREVIEW -->
-          <div style="margin-bottom:14px">
-            <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">ID que será gerado:</div>
-            <div class="id-badge" id="id-preview">CIA-EQ1-VAZ001</div>
-          </div>
-          <div class="field">
-            <label>Cidade <span id="reg-cidade-gps-hint" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
-            <select id="reg-cidade" onchange="S._cidadeEscolhidaManualmente=true; onCidadeChange()">
-              <option value="">Selecione a cidade...</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Equipe</label>
-            <select id="reg-equipe" onchange="updateIdPreview()">
-              <option value="">Selecione a equipe...</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>DMC / Setor</label>
-            <select id="reg-dmc">
-              <option value="">Selecione o DMC...</option>
-            </select>
-          </div>
-        </div>
 
-        <div class="section-title" style="margin-top:14px">Dados do vazamento</div>
-        <div class="card">
-          <div class="field">
-            <label>Tipo de vazamento</label>
-            <select id="reg-tipo" onchange="atualizarServicoSugerido()">
-              <option value="">Selecione o tipo...</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Código do serviço <span style="color:var(--text3);font-weight:400">(sugerido pelo tipo, pode trocar)</span></label>
-            <select id="reg-servico">
-              <option value="">Selecione o serviço...</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Severidade</label>
-            <div class="toggle-group" id="sev-group">
-              <button class="toggle-btn baixa" onclick="setSev(this,'baixa')">Baixa</button>
-              <button class="toggle-btn media active" onclick="setSev(this,'media')">Média</button>
-              <button class="toggle-btn alta" onclick="setSev(this,'alta')">Alta</button>
-            </div>
-          </div>
-          <div class="field">
-            <label>Diâmetro estimado (mm)</label>
-            <input type="number" id="reg-diam" placeholder="Ex: 50 mm">
-          </div>
-          <div class="field">
-            <label>Observações / Descrição</label>
-            <textarea id="reg-obs" placeholder="Descreva o vazamento, condições do local, acesso ao ponto..."></textarea>
-          </div>
-        </div>
-
-        <div class="section-title" style="margin-top:14px">Fotos do local</div>
-        <div class="card">
-          <div class="photo-grid" id="photo-grid">
-            <div class="photo-thumb add" onclick="document.getElementById('photo-input').click()">
-              <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
-              <span>Adicionar foto</span>
-            </div>
-          </div>
-          <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
-        </div>
-
-        <div class="section-title" style="margin-top:14px">Salvar</div>
-        <div class="card">
-          <div id="contatos-preview" style="font-size:11.5px;color:var(--text2);margin-bottom:10px;padding:8px;background:var(--bg2);border-radius:var(--radius)">
-            Selecione cidade e equipe para ver os contatos de envio.
-          </div>
-          <button class="btn primary btn-block" onclick="salvarPonto()" style="margin-top:0">
-            <i class="ti ti-device-floppy"></i> Salvar ponto
-          </button>
-          <p style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center">
-            Depois de salvar, você poderá escolher se quer notificar a cidade por WhatsApp.
+      <!-- ESTADO 1: escolher qual ponto completar -->
+      <div class="section" id="register-select-wrap">
+        <div class="section-title">Selecione o ponto para completar</div>
+        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+          <p style="font-size:12px;color:var(--blue-d);line-height:1.6">
+            Marque o ponto rapidamente em "Mapa" (botão Novo ponto), depois volte aqui para completar tipo, serviço, diâmetro e fotos.
           </p>
         </div>
-        <div style="height:20px"></div>
+        <div id="register-pending-list"></div>
+      </div>
+
+      <!-- ESTADO 2: formulário de complementação (some até um ponto ser escolhido) -->
+      <div id="register-form-wrap" class="hidden">
+        <div class="section">
+          <button class="btn sm" onclick="voltarParaListaRegistro()" style="margin-bottom:10px">
+            <i class="ti ti-arrow-left"></i> Voltar para a lista
+          </button>
+          <div class="section-title">Identificação do ponto</div>
+          <div class="card">
+            <div style="margin-bottom:14px">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">ID do ponto:</div>
+              <div class="id-badge" id="id-preview">—</div>
+            </div>
+            <div class="field">
+              <label>Cidade</label>
+              <select id="reg-cidade" disabled>
+                <option value="">Selecione a cidade...</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Equipe</label>
+              <select id="reg-equipe" disabled>
+                <option value="">Selecione a equipe...</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>DMC / Setor</label>
+              <select id="reg-dmc">
+                <option value="">Selecione o DMC...</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="section-title" style="margin-top:14px">Dados do vazamento</div>
+          <div class="card">
+            <div class="field">
+              <label>Tipo de vazamento</label>
+              <select id="reg-tipo" onchange="atualizarServicoSugerido()">
+                <option value="">Selecione o tipo...</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Código do serviço <span style="color:var(--text3);font-weight:400">(sugerido pelo tipo, pode trocar)</span></label>
+              <select id="reg-servico">
+                <option value="">Selecione o serviço...</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Severidade</label>
+              <div class="toggle-group" id="sev-group">
+                <button class="toggle-btn baixa" onclick="setSev(this,'baixa')">Baixa</button>
+                <button class="toggle-btn media active" onclick="setSev(this,'media')">Média</button>
+                <button class="toggle-btn alta" onclick="setSev(this,'alta')">Alta</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>Diâmetro estimado (mm)</label>
+              <input type="number" id="reg-diam" placeholder="Ex: 50 mm">
+            </div>
+            <div class="field">
+              <label>Observações / Descrição</label>
+              <textarea id="reg-obs" placeholder="Descreva o vazamento, condições do local, acesso ao ponto..."></textarea>
+            </div>
+          </div>
+
+          <div class="section-title" style="margin-top:14px">Fotos do local</div>
+          <div class="card">
+            <div class="photo-grid" id="photo-grid">
+              <div class="photo-thumb add" onclick="document.getElementById('photo-input').click()">
+                <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
+                <span>Adicionar foto</span>
+              </div>
+            </div>
+            <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
+            <p style="font-size:11px;color:var(--text2);margin-top:8px">Sugestão: foto do ponto, do hidrômetro mais próximo e da localização geral.</p>
+          </div>
+
+          <div class="section-title" style="margin-top:14px">Salvar</div>
+          <div class="card">
+            <button class="btn primary btn-block" onclick="salvarPonto()" style="margin-top:0">
+              <i class="ti ti-device-floppy"></i> Salvar complementação
+            </button>
+            <button class="btn danger btn-block" onclick="cancelarPontoAtual()" style="margin-top:8px">
+              <i class="ti ti-trash"></i> Cancelar este ponto
+            </button>
+            <p style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center" id="reg-prazo-edicao">
+              Depois de salvar, você poderá escolher se quer notificar a cidade por WhatsApp.
+            </p>
+          </div>
+          <div style="height:20px"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -463,6 +481,12 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <!-- CAMPO: LISTA -->
   <div class="panel" id="list-field">
     <div class="filter-bar">
+      <select id="fl-periodo" onchange="renderLeakList()">
+        <option value="">Qualquer data</option>
+        <option value="hoje">Hoje</option>
+        <option value="ontem">Ontem</option>
+        <option value="semana">Esta semana</option>
+      </select>
       <select id="fl-cidade" onchange="renderLeakList()">
         <option value="">Todas as cidades</option>
       </select>
@@ -523,6 +547,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="toggle-btn" onclick="setPCView(this,'calor')">Mapa de calor</button>
         <button class="toggle-btn" onclick="setPCView(this,'ambos')">Ambos</button>
       </div>
+      <select style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="pc-fr" onchange="onFiltroRegionalChange('pc-fr','pc-fc'); refreshPCMap()">
+        <option value="">Todas as regionais</option>
+      </select>
       <select style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="pc-fc" onchange="refreshPCMap()">
         <option value="">Todas as cidades</option>
       </select>
@@ -534,7 +561,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </select>
       <button class="btn sm primary" onclick="refreshPCMap()"><i class="ti ti-refresh"></i>Atualizar</button>
       <div style="width:1px;background:var(--border);margin:0 2px"></div>
-      <button class="btn sm" onclick="openDMCPanel()"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC</button>
+      <button class="btn sm" onclick="openDMCPanel()" style="position:relative"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
       <button class="btn sm" onclick="openRedesPanel()"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
     </div>
     <div class="pc-split">
@@ -592,6 +619,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <!-- PC: RELATÓRIOS -->
   <div class="panel" id="reports">
     <div style="padding:12px 14px;display:flex;gap:8px;flex-wrap:wrap;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0">
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-regional" onchange="onFiltroRegionalChange('rep-regional','rep-cidade')">
+        <option value="">Todas as regionais</option>
+      </select>
       <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-cidade">
         <option value="">Todas as cidades</option>
       </select>
@@ -699,6 +729,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <input type="text" id="nc-prefixo" placeholder="Ex: CIA" maxlength="5" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
     </div>
     <div class="field">
+      <label>Regional <span style="color:var(--text3);font-weight:400">(ex: AGSU, AMSE — só para filtro, não aparece nos IDs)</span></label>
+      <input type="text" id="nc-regional" placeholder="Ex: AGSU" maxlength="6" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+    </div>
+    <div class="field">
       <label>DMCs desta cidade (um por linha)</label>
       <textarea id="nc-dmcs" placeholder="DMC-01 Centro&#10;DMC-02 Leste&#10;DMC-03 Norte"></textarea>
     </div>
@@ -762,8 +796,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="id-badge" id="quick-coords" style="font-size:11px">—</div>
     </div>
     <div class="field">
-      <label>Cidade</label>
-      <select id="quick-cidade" onchange="quickCidadeChange()">
+      <label>Cidade <span id="quick-cidade-gps-hint" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
+      <select id="quick-cidade" onchange="S._cidadeEscolhidaManualmente=true; quickCidadeChange()">
         <option value="">Selecione...</option>
       </select>
     </div>
@@ -785,6 +819,16 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <label>Descrição rápida</label>
       <textarea id="quick-desc" placeholder="Descreva brevemente o vazamento..." style="min-height:56px"></textarea>
     </div>
+    <div class="field">
+      <label>Foto rápida <span style="color:var(--text3);font-weight:400">(pra lembrar onde era)</span></label>
+      <div class="photo-grid" id="quick-photo-grid">
+        <div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()">
+          <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
+          <span>Adicionar foto</span>
+        </div>
+      </div>
+      <input type="file" id="quick-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleQuickPhoto(this)">
+    </div>
     <div style="margin-bottom:12px">
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px">ID que será gerado:</div>
       <div class="id-badge" id="quick-id-preview">—</div>
@@ -792,6 +836,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <button class="btn primary btn-block" onclick="confirmarQuick()">
       <i class="ti ti-map-pin"></i> Registrar no mapa
     </button>
+    <p style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center">
+      Depois você pode completar com tipo, serviço e mais fotos em "Registrar".
+    </p>
   </div>
 </div>
 
@@ -1075,25 +1122,14 @@ function aplicarPermissoesUI() {
 }
 
 // Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
+// Nota: a restrição de cidade do técnico foi substituída pela sugestão automática via GPS
+// (ver sugerirCidadePorGPS). O campo "reg-cidade" da tela Registrar é sempre travado, pois
+// reflete o ponto já criado — não faz mais sentido reaplicar aqui. Mantida só para "quick-cidade"
+// no caso de cidades sem boa cobertura de GPS, se necessário ajustar no futuro.
 function aplicarRestricaoTecnico() {
-  const role = S.userDoc?.role;
-  if (role !== 'tecnico') return;
-  const minhaCidade = S.userDoc?.cidade;
-  const minhaEquipe = S.userDoc?.equipe;
-  if (!minhaCidade) return;
-  ['reg-cidade','quick-cidade'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) { el.value = minhaCidade; el.disabled = true; el.style.opacity = '0.7'; }
-  });
-  if (document.getElementById('reg-cidade')) onCidadeChange();
-  if (minhaEquipe) {
-    setTimeout(() => {
-      ['reg-equipe','quick-equipe'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) { el.value = minhaEquipe; el.disabled = true; el.style.opacity = '0.7'; }
-      });
-    }, 150);
-  }
+  // Intencionalmente vazio por ora — a pré-seleção de cidade no registro rápido
+  // já é feita via GPS (sugerirCidadePorGPS), que é mais confiável para equipes
+  // que atendem múltiplas cidades.
 }
 
 function atualizarUserMenu() {
@@ -1137,14 +1173,18 @@ function iniciarSincronizacaoFirestore() {
     renderConfigEquipes();
   });
 
-  // Vazamentos (leaks)
+  // Vazamentos (leaks) — pontos cancelados ficam fora da lista principal,
+  // mas continuam no banco (auditoria/histórico), só marcados com cancelado:true
   if (unsubLeaks) unsubLeaks();
   unsubLeaks = onSnapshot(query(collection(db, 'leaks'), orderBy('criadoEm','asc')), snap => {
-    S.leaks = snap.docs.map(d => d.data());
+    S.leaks = snap.docs.map(d => d.data()).filter(l => !l.cancelado);
     addFieldMarkers();
     renderLeakList();
     renderManage();
     if (mapPC) refreshPCMap();
+    if (document.getElementById('register-select-wrap') && !document.getElementById('register-select-wrap').classList.contains('hidden')) {
+      renderRegisterPendingList();
+    }
   });
 
   // Usuários (só admin precisa, para a tela de gestão de usuários)
@@ -1402,13 +1442,17 @@ function iniciarSincronizacaoCamadas() {
       if (l.visible !== false) { if (mapField) lg.addTo(mapField); if (mapPC) lg.addTo(mapPC); }
       lg._geojson = geojson;
       if (!S.leafletLayers[tipo]) S.leafletLayers[tipo] = [];
-      S.leafletLayers[tipo].push({ id:docSnap.id, nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:geojson });
+      S.leafletLayers[tipo].push({
+        id:docSnap.id, nome:l.nome, cidade:l.cidade||'', visible:l.visible!==false, lg, _geojson:geojson,
+        validada: l.validada !== false, criadoPorNome: l.criadoPorNome || ''
+      });
       if (tipo === 'dmc') sincronizarDMCsCidade(geojson, l.cidade);
     });
 
     renderDMCPanel();
     renderRedesPanel();
     renderLayerLists();
+    atualizarBadgePendentes();
   });
 }
 
@@ -1545,20 +1589,19 @@ function cidadeMaisProxima(lat, lng) {
   return melhor;
 }
 
-// Só sugere automaticamente se o técnico ainda não tiver escolhido manualmente
-// (campo "reg-cidade" vazio, ou ainda na primeira sugestão automática).
+// Só sugere automaticamente se o técnico ainda não tiver escolhido manualmente.
+// Atua sobre "quick-cidade" (modal de Novo Ponto), que é onde a cidade é escolhida agora —
+// "reg-cidade" na tela Registrar é só exibição do ponto já existente.
 S._cidadeEscolhidaManualmente = false;
 function sugerirCidadePorGPS() {
   if (!S.pos) return;
-  const sel = document.getElementById('reg-cidade');
-  const hint = document.getElementById('reg-cidade-gps-hint');
+  const sel = document.getElementById('quick-cidade');
   if (!sel || sel.disabled || S._cidadeEscolhidaManualmente) return;
   const sugerida = cidadeMaisProxima(S.pos.lat, S.pos.lng);
   if (sugerida && sel.value !== sugerida.id) {
     sel.value = sugerida.id;
-    onCidadeChange();
+    quickCidadeChange();
   }
-  if (hint && sugerida) hint.textContent = '(sugerido pelo GPS — pode trocar)';
 }
 
 // ================================================================
@@ -1708,6 +1751,31 @@ function populateSelects() {
       repEq.appendChild(o);
     });
   }
+  // Regionais (extraídas das cidades cadastradas que têm o campo preenchido)
+  popularSelectRegionais();
+}
+
+// Preenche os selects de Regional com os valores únicos já cadastrados nas cidades
+function popularSelectRegionais() {
+  const regionais = [...new Set(S.cidades.map(c => c.regional).filter(Boolean))].sort();
+  ['pc-fr','rep-regional'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    el.innerHTML = '<option value="">Todas as regionais</option>' +
+      regionais.map(r => `<option value="${r}">${r}</option>`).join('');
+    el.value = cur;
+  });
+}
+
+// Quando a regional é escolhida, filtra o select de cidade para mostrar só as daquela regional
+function onFiltroRegionalChange(idRegional, idCidade) {
+  const regional = document.getElementById(idRegional).value;
+  const selCidade = document.getElementById(idCidade);
+  if (!selCidade) return;
+  const cidadesFiltradas = regional ? S.cidades.filter(c => c.regional === regional) : S.cidades;
+  selCidade.innerHTML = '<option value="">Todas as cidades</option>' +
+    cidadesFiltradas.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
 }
 
 function onCidadeChange() {
@@ -1745,6 +1813,7 @@ function quickCidadeChange() {
 
 function updateContatosPreview(c) {
   const el = document.getElementById('contatos-preview');
+  if (!el) return; // elemento não existe mais nesta tela (removido na reestruturação do fluxo)
   if (!c) { el.textContent = 'Selecione cidade e equipe para ver os contatos de envio.'; return; }
   el.innerHTML = `<strong style="font-size:11px;color:var(--text2)">Contatos da cidade ${c.nome}:</strong><br>` +
     c.wa.map(w => `<span style="font-family:monospace;font-size:12px">+${w}</span>`).join('<br>');
@@ -1767,59 +1836,147 @@ function setQuickSev(btn, val) {
 // ================================================================
 // SALVAR PONTO
 // ================================================================
+// Ponto atualmente aberto para complementação na tela "Registrar"
+S._pontoEmEdicao = null;
+
+function renderRegisterPendingList() {
+  const el = document.getElementById('register-pending-list');
+  if (!el) return;
+  // Mostra pontos da própria equipe/cidade que ainda não foram totalmente complementados,
+  // priorizando os marcados como "pendenteComplementacao" (criados pelo Novo Ponto rápido).
+  const role = S.userDoc?.role;
+  let candidatos = S.leaks.filter(l => podeEditarPonto(l));
+  // Pendentes de complementação aparecem primeiro
+  candidatos.sort((a,b) => (b.pendenteComplementacao?1:0) - (a.pendenteComplementacao?1:0));
+  if (!candidatos.length) {
+    el.innerHTML = '<p style="font-size:12px;color:var(--text2);text-align:center;padding:24px">Nenhum ponto recente para completar.<br>Marque um "Novo ponto" no Mapa primeiro.</p>';
+    return;
+  }
+  el.innerHTML = candidatos.slice(0,30).map(l => {
+    const c = S.cidades.find(c=>c.id===l.cidade);
+    const incompleto = l.pendenteComplementacao || !l.tipo;
+    return `<div class="leak-item" onclick="abrirComplementacao('${l.id}')">
+      <div class="leak-dot ${l.severidade}"></div>
+      <div class="leak-info">
+        <div class="lid">${l.id}</div>
+        <div class="ltype">${l.tipo || '(tipo não definido ainda)'}</div>
+        <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
+      </div>
+      ${incompleto ? '<span class="badge amber">Completar</span>' : '<span class="badge blue">Editar</span>'}
+    </div>`;
+  }).join('');
+}
+
+// Só pode editar pontos dentro da janela de 24h. Admin/Supervisor podem mesmo fora da janela.
+function podeEditarPonto(l) {
+  const role = S.userDoc?.role;
+  if (role === 'admin' || role === 'supervisor') return true;
+  if (!l.editavelAte) return true; // pontos antigos sem o campo, não bloqueia retroativamente
+  return Date.now() < l.editavelAte;
+}
+
+function abrirComplementacao(leakId) {
+  const l = S.leaks.find(l => l.id === leakId);
+  if (!l) { toast('Ponto não encontrado'); return; }
+  if (!podeEditarPonto(l)) { toast('Prazo de 24h para editar este ponto já passou'); return; }
+  S._pontoEmEdicao = l;
+
+  document.getElementById('register-select-wrap').classList.add('hidden');
+  document.getElementById('register-form-wrap').classList.remove('hidden');
+
+  document.getElementById('id-preview').textContent = l.id;
+  const selCid = document.getElementById('reg-cidade');
+  selCid.innerHTML = `<option value="${l.cidade}">${S.cidades.find(c=>c.id===l.cidade)?.nome||l.cidade}</option>`;
+  const selEq = document.getElementById('reg-equipe');
+  const eq = S.equipes.find(e=>e.id===l.equipe);
+  selEq.innerHTML = `<option value="${l.equipe}">${eq?eq.nome:l.equipe}</option>`;
+
+  const c = S.cidades.find(c=>c.id===l.cidade);
+  const selDmc = document.getElementById('reg-dmc');
+  selDmc.innerHTML = (c?.dmcs||[]).map(d => `<option value="${d}" ${d===l.dmc?'selected':''}>${d}</option>`).join('');
+
+  popularSelectTipos();
+  popularSelectServicos();
+  const tipoObj = S.tiposVazamento.find(t => t.nome === l.tipo);
+  if (tipoObj) document.getElementById('reg-tipo').value = tipoObj.id;
+  const servicoObj = S.servicos.find(s => l.servico && l.servico.startsWith(s.codigo));
+  if (servicoObj) document.getElementById('reg-servico').value = servicoObj.id;
+
+  document.querySelectorAll('#sev-group .toggle-btn').forEach(b=>b.classList.remove('active'));
+  const sevBtn = document.querySelector(`#sev-group .toggle-btn.${l.severidade}`);
+  if (sevBtn) sevBtn.classList.add('active');
+  S.sevAtual = l.severidade;
+
+  document.getElementById('reg-diam').value = l.diam || '';
+  document.getElementById('reg-obs').value = l.desc || '';
+
+  S.photos = (l.fotosUrls||[]).slice();
+  S.photosBase64 = [];
+  renderPhotos();
+
+  const horasRestantes = l.editavelAte ? Math.max(0, Math.round((l.editavelAte - Date.now())/3600000)) : null;
+  const prazoEl = document.getElementById('reg-prazo-edicao');
+  if (prazoEl) {
+    prazoEl.textContent = (S.userDoc?.role==='admin'||S.userDoc?.role==='supervisor')
+      ? 'Como administrador/supervisor, você pode editar este ponto a qualquer momento.'
+      : (horasRestantes!==null ? `Editável por mais ${horasRestantes}h.` : 'Depois de salvar, você poderá notificar a cidade por WhatsApp.');
+  }
+}
+
+function voltarParaListaRegistro() {
+  S._pontoEmEdicao = null;
+  document.getElementById('register-form-wrap').classList.add('hidden');
+  document.getElementById('register-select-wrap').classList.remove('hidden');
+  renderRegisterPendingList();
+}
+
+async function cancelarPontoAtual() {
+  if (!S._pontoEmEdicao) return;
+  if (!confirm('Cancelar o ponto ' + S._pontoEmEdicao.id + '? Esta ação remove o registro definitivamente.')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',S._pontoEmEdicao.id), { cancelado:true }, { merge:true });
+  toast('Ponto cancelado');
+  voltarParaListaRegistro();
+}
+
 async function salvarPonto() {
-  const cid = document.getElementById('reg-cidade').value;
-  const eqId = document.getElementById('reg-equipe').value;
+  if (!S._pontoEmEdicao) { toast('Selecione um ponto na lista primeiro'); return; }
   const dmc = document.getElementById('reg-dmc').value;
   const tipoId = document.getElementById('reg-tipo').value;
   const servicoId = document.getElementById('reg-servico').value;
   const obs = document.getElementById('reg-obs').value;
   const diam = document.getElementById('reg-diam').value;
-  if (!cid) { toast('Selecione a cidade'); return; }
-  if (!eqId) { toast('Selecione a equipe'); return; }
   if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
-  if (!S.pos) { toast('Aguardando GPS...'); return; }
-  const eq = S.equipes.find(e => e.id === eqId);
+
+  const id = S._pontoEmEdicao.id;
   const tipoObj = S.tiposVazamento.find(t => t.id === tipoId);
   const servicoObj = S.servicos.find(s => s.id === servicoId);
   const tipo = tipoObj ? tipoObj.nome : tipoId;
   const servico = servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '';
-  const id = await proximoIdSequencial(cid, eq.codigo);
-  const now = new Date();
-  const temFotos = S.photosBase64 && S.photosBase64.length > 0;
+  const temFotosNovas = S.photosBase64 && S.photosBase64.length > 0;
 
-  const leak = {
-    id, cidade:cid, equipe:eqId, dmc, tipo, servico, severidade:S.sevAtual,
-    lat:S.pos.lat, lng:S.pos.lng,
-    desc:obs, diam:diam||null,
-    data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
-    photos: S.photos.length,
-    fotosUrls: [], // preenchido depois do upload ao Storage
-    criadoEm: window.FB.serverTimestamp(),
-    criadoPor: S.user?.uid || '',
-    editavelAte: Date.now() + (24 * 60 * 60 * 1000) // 24h de janela de edição
+  const atualizacao = {
+    dmc, tipo, servico, severidade: S.sevAtual,
+    desc: obs, diam: diam || null,
+    pendenteComplementacao: false
   };
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), atualizacao, { merge:true });
+  toast(`✓ Ponto ${id} atualizado!`);
 
-  await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
-  toast(`✓ Ponto ${id} salvo!`);
-
-  // Sobe as fotos comprimidas para o Storage SEM travar a tela —
-  // o técnico já pode seguir; quando terminar, atualiza o documento com as URLs.
   const fotosParaWhatsapp = (S.photosBase64||[]).slice();
-  if (temFotos) {
-    enviarFotosParaStorage(id).then(urls => {
-      window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls:urls }, { merge:true });
+  if (temFotosNovas) {
+    enviarFotosParaStorage(id).then(async urls => {
+      const fotosExistentes = S._pontoEmEdicao.fotosUrls || [];
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: fotosExistentes.concat(urls) }, { merge:true });
     });
   }
 
-  // Guarda os dados desse ponto para a pergunta de WhatsApp (modal de confirmação)
-  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, lat:S.pos.lat, lng:S.pos.lng, fotosBase64:fotosParaWhatsapp };
+  S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };
 
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
   S.photos=[]; S.photosBase64=[];
   renderPhotos();
-  switchTab('map-field','tabs-field');
+  voltarParaListaRegistro();
 
   abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
 }
@@ -1866,7 +2023,38 @@ function openRegisterQuick() {
   S.cidades.forEach(c => { const o=document.createElement('option'); o.value=c.id; o.textContent=c.nome; qc.appendChild(o); });
   document.getElementById('quick-desc').value='';
   document.getElementById('quick-id-preview').textContent='—';
+  // Reseta a foto rápida de uma chamada anterior, se houver
+  S.quickPhotoBase64 = null;
+  document.getElementById('quick-photo-grid').innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
+  // Permite uma nova sugestão automática de cidade por GPS a cada abertura do modal
+  S._cidadeEscolhidaManualmente = false;
+  if (S.pos) {
+    const sugerida = cidadeMaisProxima(S.pos.lat, S.pos.lng);
+    if (sugerida) {
+      qc.value = sugerida.id;
+      quickCidadeChange();
+      const hint = document.getElementById('quick-cidade-gps-hint');
+      if (hint) hint.textContent = '(sugerido pelo GPS — pode trocar)';
+    }
+  }
   openModal('modal-quick');
+}
+
+// Foto única do registro rápido (Novo Ponto) — guardada separada da galeria do formulário completo
+S.quickPhotoBase64 = null;
+function handleQuickPhoto(input) {
+  const f = input.files[0];
+  if (!f) return;
+  comprimirImagem(f).then(dataUrl => {
+    S.quickPhotoBase64 = dataUrl;
+    const grid = document.getElementById('quick-photo-grid');
+    grid.innerHTML = `<div class="photo-thumb"><img src="${dataUrl}" alt="foto"></div>` +
+      `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()">
+        <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
+        <span>Trocar foto</span>
+      </div>`;
+  }).catch(err => toast('Erro ao processar foto: ' + (err.message||err)));
+  input.value = '';
 }
 
 async function confirmarQuick() {
@@ -1881,19 +2069,32 @@ async function confirmarQuick() {
   const now=new Date();
   const c=S.cidades.find(c=>c.id===cid);
   const dmcPadrao = c?.dmcs[0]||'-';
+  const temFoto = !!S.quickPhotoBase64;
   const leak={
-    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:'Não categorizado', severidade:S.sevQuick,
+    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:'', servico:'', severidade:S.sevQuick,
     lat:S.pos.lat, lng:S.pos.lng, desc, diam:null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
-    photos:0,
+    photos: temFoto ? 1 : 0,
+    fotosUrls: [],
+    pendenteComplementacao: true, // marca pra aparecer destacado na lista até alguém completar
     criadoEm: window.FB.serverTimestamp(),
-    criadoPor: S.user?.uid || ''
+    criadoPor: S.user?.uid || '',
+    editavelAte: Date.now() + (24 * 60 * 60 * 1000)
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
   closeModal('modal-quick');
-  toast(`✓ Ponto ${id} registrado!`);
+  toast(`✓ Ponto ${id} registrado! Complete os detalhes em "Registrar".`);
 
-  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc:dmcPadrao, tipo:'Não categorizado', severidade:S.sevQuick, obs:desc, diam:null, lat:S.pos.lat, lng:S.pos.lng, fotosBase64:[] };
+  if (temFoto) {
+    const fotoSalva = S.quickPhotoBase64;
+    enviarFotosParaStorageDireto(id, [fotoSalva]).then(urls => {
+      window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls:urls }, { merge:true });
+    });
+  }
+
+  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc:dmcPadrao, tipo:'Não categorizado', servico:'', severidade:S.sevQuick, obs:desc, diam:null, lat:S.pos.lat, lng:S.pos.lng, fotosBase64: temFoto?[S.quickPhotoBase64]:[] };
+  S.quickPhotoBase64 = null;
+  document.getElementById('quick-photo-grid').innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
   abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
 }
 
@@ -1963,14 +2164,20 @@ function renderPhotos() {
 
 // Envia as fotos comprimidas (base64) para o Firebase Storage e retorna as URLs públicas
 async function enviarFotosParaStorage(leakId) {
-  if (!S.photosBase64 || !S.photosBase64.length) return [];
+  return enviarFotosParaStorageDireto(leakId, S.photosBase64 || []);
+}
+
+// Versão genérica: envia um array específico de fotos (usada tanto pelo formulário completo
+// quanto pelo registro rápido, que guarda a foto em S.quickPhotoBase64).
+async function enviarFotosParaStorageDireto(leakId, fotosBase64) {
+  if (!fotosBase64 || !fotosBase64.length) return [];
   const { storage, ref, uploadString, getDownloadURL } = window.FB;
   const urls = [];
-  for (let i = 0; i < S.photosBase64.length; i++) {
+  for (let i = 0; i < fotosBase64.length; i++) {
     try {
       const caminho = `vazamentos/${leakId}/foto_${i+1}.jpg`;
       const fileRef = ref(storage, caminho);
-      await uploadString(fileRef, S.photosBase64[i], 'data_url');
+      await uploadString(fileRef, fotosBase64[i], 'data_url');
       const url = await getDownloadURL(fileRef);
       urls.push(url);
     } catch(err) {
@@ -2055,14 +2262,44 @@ function abrirCompartilharFotoOpcional(ponto) {
 // ================================================================
 // LEAK LIST
 // ================================================================
+// Converte o texto "dd/mm/yyyy hh:mm" salvo em l.data para um objeto Date real
+function dataDoLeak(l) {
+  if (!l.data) return null;
+  const [dataParte] = l.data.split(' ');
+  const [dia, mes, ano] = dataParte.split('/').map(Number);
+  if (!dia || !mes || !ano) return null;
+  return new Date(ano, mes-1, dia);
+}
+
+// Verifica se a data do ponto cai dentro do período escolhido no filtro
+function dataNoPeriodo(l, periodo) {
+  if (!periodo) return true;
+  const d = dataDoLeak(l);
+  if (!d) return true; // sem data reconhecível, não filtra fora por engano
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const dCompare = new Date(d); dCompare.setHours(0,0,0,0);
+  if (periodo === 'hoje') return dCompare.getTime() === hoje.getTime();
+  if (periodo === 'ontem') {
+    const ontem = new Date(hoje); ontem.setDate(ontem.getDate()-1);
+    return dCompare.getTime() === ontem.getTime();
+  }
+  if (periodo === 'semana') {
+    const seteDiasAtras = new Date(hoje); seteDiasAtras.setDate(seteDiasAtras.getDate()-7);
+    return dCompare.getTime() >= seteDiasAtras.getTime() && dCompare.getTime() <= hoje.getTime();
+  }
+  return true;
+}
+
 function renderLeakList() {
   const fc = document.getElementById('fl-cidade')?.value||'';
   const fs = document.getElementById('fl-sev')?.value||'';
   const fe = document.getElementById('fl-equipe')?.value||'';
+  const fp = document.getElementById('fl-periodo')?.value||'';
   const filtered = S.leaks.filter(l=>
     (!fc||l.cidade===fc)&&
     (!fs||l.severidade===fs)&&
-    (!fe||l.equipe===fe)
+    (!fe||l.equipe===fe)&&
+    dataNoPeriodo(l, fp)
   ).slice().reverse();
   const wrap = document.getElementById('leak-list-wrap');
   if (!wrap) return;
@@ -2076,11 +2313,11 @@ function renderLeakList() {
       <div class="leak-dot ${l.severidade}"></div>
       <div class="leak-info">
         <div class="lid">${l.id}</div>
-        <div class="ltype">${l.tipo}</div>
+        <div class="ltype">${l.tipo || '(aguardando complementação)'}</div>
         <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
         ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
       </div>
-      <span class="badge ${l.severidade}">${l.severidade}</span>
+      ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
     </div>`;
   }).join('');
 }
@@ -2172,12 +2409,22 @@ async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
     toast('⚠️ Arquivo muito grande para salvar na nuvem (limite ~900KB). Simplifique o KML.');
     return;
   }
+  const role = S.userDoc?.role;
+  // Camadas incluídas por Admin/Supervisor já entram validadas; as de Técnico ficam
+  // pendentes até alguém de nível superior confirmar (mas já aparecem no mapa de todos
+  // imediatamente — a validação é um aviso de revisão, não um bloqueio de uso).
+  const validada = (role === 'admin' || role === 'supervisor');
   // O Firestore não aceita arrays dentro de arrays (formato nativo do GeoJSON).
   // Por isso guardamos o GeoJSON inteiro como texto (string) e convertemos de volta ao ler.
   await setDoc(doc(db, 'camadas', id), {
     tipo, nome, cidade: cidadeId || '', visible: true, geojsonStr,
-    criadoEm: serverTimestamp(), criadoPor: S.user?.uid || ''
+    criadoEm: serverTimestamp(), criadoPor: S.user?.uid || '',
+    criadoPorNome: S.user?.nome || S.user?.email || '',
+    validada
   });
+  if (!validada) {
+    toast('📋 Camada incluída! Um admin/supervisor vai validar em breve.');
+  }
 }
 
 function centralizarEmGeoJSON(geojson) {
@@ -2248,6 +2495,7 @@ function setDMCFiltro(cid) {
 function renderDMCPanel() {
   const el = document.getElementById('dmc-panel-list');
   if (!el) return;
+  const podeRemover = S.userDoc?.role === 'admin' || S.userDoc?.role === 'supervisor';
   const allLayers = S.leafletLayers.dmc || [];
   const layers = allLayers.filter(l => !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro || l.cidade === '');
   if (!allLayers.length) {
@@ -2261,18 +2509,27 @@ function renderDMCPanel() {
   el.innerHTML = layers.map(item => {
     const idx = allLayers.indexOf(item);
     const c = S.cidades.find(c => c.id === item.cidade);
+    const avisoValidacao = !item.validada
+      ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
+      : '';
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#185FA5;flex-shrink:0"></div>' +
       '<div style="flex:1;min-width:0">' +
         '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' +
         (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
+        avisoValidacao +
       '</div>' +
       '<button onclick="toggleCamadaIndividual(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--blue)':'var(--text2)') + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
+      (podeRemover ? (
       '<button onclick="removerCamada(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
         '<i class="ti ti-trash"></i>' +
-      '</button>' +
+      '</button>') : (
+      !item.validada ? (
+      '<button onclick="validarCamada(\'dmc\',' + idx + ')" style="background:none;border:1px solid rgba(59,109,17,.3);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--green)" title="Validar camada">' +
+        '<i class="ti ti-check"></i>' +
+      '</button>') : '')) +
     '</div>';
   }).join('');
 }
@@ -2280,23 +2537,32 @@ function renderDMCPanel() {
 function renderRedesPanel() {
   const el = document.getElementById('redes-panel-list');
   if (!el) return;
+  const podeRemover = S.userDoc?.role === 'admin' || S.userDoc?.role === 'supervisor';
   const layers = S.leafletLayers.redes || [];
   if (!layers.length) {
     el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
     return;
   }
-  el.innerHTML = layers.map((item, idx) =>
-    '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+  el.innerHTML = layers.map((item, idx) => {
+    const avisoValidacao = !item.validada
+      ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
+      : '';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
-      '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div></div>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' + avisoValidacao + '</div>' +
       '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--teal)':'var(--text2)') + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
+      (podeRemover ? (
       '<button onclick="removerCamada(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
         '<i class="ti ti-trash"></i>' +
-      '</button>' +
-    '</div>'
-  ).join('');
+      '</button>') : (
+      !item.validada ? (
+      '<button onclick="validarCamada(\'redes\',' + idx + ')" style="background:none;border:1px solid rgba(59,109,17,.3);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--green)" title="Validar camada">' +
+        '<i class="ti ti-check"></i>' +
+      '</button>') : '')) +
+    '</div>';
+  }).join('');
 }
 
 function toggleLayerVisibility(tipo) { tipo==='dmc' ? openDMCPanel() : openRedesPanel(); }
@@ -2321,6 +2587,32 @@ async function removerCamada(tipo, idx) {
   if (!confirm('Remover a camada "' + item.nome + '" para todos os usuários?')) return;
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { removida:true }, { merge:true });
   toast('Camada removida para todos');
+}
+
+// Admin/Supervisor confirmam que uma camada incluída por um técnico está correta
+async function validarCamada(tipo, idx) {
+  const item = (S.leafletLayers[tipo]||[])[idx];
+  if (!item || !item.id) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { validada:true }, { merge:true });
+  toast('✓ Camada validada para todos os usuários');
+}
+
+// Mostra um contador visível no botão DMC sempre que houver camadas aguardando validação
+// (só relevante para quem pode validar — admin/supervisor; para técnico, fica oculto)
+function atualizarBadgePendentes() {
+  const role = S.userDoc?.role;
+  const podeValidar = role === 'admin' || role === 'supervisor';
+  const pendentesDMC = (S.leafletLayers.dmc||[]).filter(l => !l.validada).length;
+  const pendentesRedes = (S.leafletLayers.redes||[]).filter(l => !l.validada).length;
+  const total = pendentesDMC + pendentesRedes;
+  document.querySelectorAll('#dmc-pendentes-badge').forEach(badge => {
+    if (podeValidar && total > 0) {
+      badge.textContent = total > 9 ? '9+' : total;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  });
 }
 
 // Parser KML → GeoJSON
@@ -2514,6 +2806,7 @@ function renderConfigCidades() {
     <div class="card" style="margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span class="badge purple">${c.prefixo}</span>
+        ${c.regional?`<span class="badge gray">${c.regional}</span>`:''}
         <strong style="font-size:13px">${c.nome}</strong>
         <button class="btn danger sm" style="margin-left:auto" onclick="removerCidade(${i})"><i class="ti ti-trash"></i></button>
       </div>
@@ -2595,6 +2888,7 @@ function openModalCidade() {
 async function salvarCidade() {
   const nome=document.getElementById('nc-nome').value.trim();
   const pref=document.getElementById('nc-prefixo').value.trim().toUpperCase();
+  const regional=document.getElementById('nc-regional').value.trim().toUpperCase();
   const dmcsRaw=document.getElementById('nc-dmcs').value.trim();
   const waInputs = document.querySelectorAll('.nc-wa-item');
   const wa = [...waInputs].map(i=>i.value.trim()).filter(Boolean);
@@ -2605,12 +2899,12 @@ async function salvarCidade() {
   const dmcs=dmcsRaw?dmcsRaw.split('\n').map(s=>s.trim()).filter(Boolean):['DMC-01'];
   let coords=[-28.6775,-49.3680];
   if(coordsRaw){const p=coordsRaw.split(',').map(s=>parseFloat(s.trim()));if(p.length===2&&!isNaN(p[0]))coords=p;}
-  const novaCidade={id:pref,nome,prefixo:pref,dmcs,wa,coords};
+  const novaCidade={id:pref,nome,prefixo:pref,regional:regional||'',dmcs,wa,coords};
   await salvarCidadeFirestore(novaCidade);
   await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','sequencias'), { [pref]: 0 }, { merge:true });
   closeModal('modal-cidade');
   toast('Cidade "' + nome + '" (' + pref + ') adicionada!');
-  ['nc-nome','nc-prefixo','nc-dmcs','nc-coords'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['nc-nome','nc-prefixo','nc-regional','nc-dmcs','nc-coords'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const waList=document.getElementById('nc-wa-list'); if(waList) waList.innerHTML='';
 }
 
@@ -2754,7 +3048,7 @@ function switchTab(tabId, tabsId) {
   if(tabId==='map-pc'){initPCMap();setTimeout(()=>{if(mapPC)mapPC.invalidateSize();},100);}
   if(tabId==='manage') renderManage();
   if(tabId==='usuarios') renderUsuariosPanel();
-  if(tabId==='register') setTimeout(()=>aplicarRestricaoTecnico(),50);
+  if(tabId==='register') { voltarParaListaRegistro(); }
 }
 
 function toggleMode() {

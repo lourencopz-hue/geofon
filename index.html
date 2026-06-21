@@ -414,6 +414,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
                 <option value="">Selecione o DMC...</option>
               </select>
             </div>
+            <div class="field">
+              <label>Rua <span id="reg-rua-status" style="font-size:10.5px;color:var(--text3);font-weight:400"></span></label>
+              <input type="text" id="reg-rua" placeholder="Identificando pelo GPS...">
+            </div>
           </div>
 
           <div class="section-title" style="margin-top:14px">Dados do vazamento</div>
@@ -829,6 +833,41 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </div>
       <input type="file" id="quick-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleQuickPhoto(this)">
     </div>
+
+    <!-- Atalho para quem vai marcar só este ponto e não quer passar por "Registrar" depois -->
+    <button type="button" class="btn sm" style="width:100%;justify-content:center;margin-bottom:10px" onclick="toggleQuickCompleto()">
+      <i class="ti" id="quick-completo-icon" class="ti ti-chevron-down"></i>
+      <span id="quick-completo-label">Completar tudo agora (tipo, serviço, diâmetro...)</span>
+    </button>
+    <div id="quick-completo-wrap" class="hidden">
+      <div class="field">
+        <label>DMC / Setor</label>
+        <select id="quick-dmc">
+          <option value="">Selecione o DMC...</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Tipo de vazamento</label>
+        <select id="quick-tipo" onchange="atualizarServicoSugeridoQuick()">
+          <option value="">Selecione o tipo...</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Código do serviço <span style="color:var(--text3);font-weight:400">(sugerido pelo tipo)</span></label>
+        <select id="quick-servico">
+          <option value="">Selecione o serviço...</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Diâmetro estimado (mm)</label>
+        <input type="number" id="quick-diam" placeholder="Ex: 50 mm">
+      </div>
+      <div class="field">
+        <label>Rua <span id="quick-rua-status" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
+        <input type="text" id="quick-rua" placeholder="Identificando pelo GPS...">
+      </div>
+    </div>
+
     <div style="margin-bottom:12px">
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px">ID que será gerado:</div>
       <div class="id-badge" id="quick-id-preview">—</div>
@@ -836,7 +875,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <button class="btn primary btn-block" onclick="confirmarQuick()">
       <i class="ti ti-map-pin"></i> Registrar no mapa
     </button>
-    <p style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center">
+    <p style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center" id="quick-completo-hint">
       Depois você pode completar com tipo, serviço e mais fotos em "Registrar".
     </p>
   </div>
@@ -855,12 +894,19 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
       Deseja notificar a equipe de <strong id="wa-confirm-cidade">—</strong> agora por WhatsApp?
     </p>
-    <!-- Aparece só quando o ponto tem foto: passo explícito, sem depender de timing -->
-    <div id="wa-confirm-foto-wrap" class="hidden" style="background:var(--blue-l);border-radius:var(--radius-lg);padding:10px;margin-bottom:14px;text-align:left">
-      <div style="font-size:11.5px;color:var(--blue-d);margin-bottom:8px"><i class="ti ti-camera" style="margin-right:4px"></i>Este ponto tem foto — compartilhe primeiro, depois notifique:</div>
-      <button class="btn sm" style="width:100%;justify-content:center;background:var(--bg)" onclick="compartilharFotoDoModal()">
-        <i class="ti ti-share"></i> Compartilhar foto agora
-      </button>
+    <!-- Aparece só quando o ponto tem foto: ordem clara, passo 1 antes do passo 2 -->
+    <div id="wa-confirm-foto-wrap" class="hidden" style="text-align:left;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;background:var(--blue-l);border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:10px 12px;border-bottom:1px solid rgba(24,95,165,.15)">
+        <span style="background:var(--blue);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</span>
+        <span style="font-size:11.5px;color:var(--blue-d);flex:1">Compartilhe a foto primeiro</span>
+        <button class="btn sm" style="background:var(--bg)" onclick="compartilharFotoDoModal()">
+          <i class="ti ti-share"></i> Compartilhar
+        </button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:0 0 var(--radius-lg) var(--radius-lg);padding:8px 12px">
+        <span style="background:var(--gray);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</span>
+        <span style="font-size:11px;color:var(--text2)">Depois toque em "Notificar" abaixo, com o texto</span>
+      </div>
     </div>
     <div style="display:flex;gap:8px">
       <button class="btn" style="flex:1;justify-content:center" onclick="pularNotificacaoWhatsApp()">
@@ -1619,6 +1665,24 @@ function cidadeMaisProxima(lat, lng) {
   return melhor;
 }
 
+// Geocodificação reversa: converte coordenadas GPS em nome de rua, usando o Nominatim
+// (serviço gratuito do OpenStreetMap, sem necessidade de chave de API). O resultado é só
+// uma sugestão — o campo continua editável pelo técnico em caso de imprecisão.
+async function buscarRuaPorCoordenadas(lat, lng) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+    const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const addr = data.address || {};
+    // Tenta achar o nome da rua nos campos mais comuns retornados pelo OSM
+    return addr.road || addr.street || addr.pedestrian || addr.residential || null;
+  } catch(e) {
+    console.warn('Geocodificação reversa falhou:', e);
+    return null;
+  }
+}
+
 // Só sugere automaticamente se o técnico ainda não tiver escolhido manualmente.
 // Atua sobre "quick-cidade" (modal de Novo Ponto), que é onde a cidade é escolhida agora —
 // "reg-cidade" na tela Registrar é só exibição do ponto já existente.
@@ -1838,6 +1902,10 @@ function quickCidadeChange() {
   S.equipes.filter(e => !cid || e.cidade === cid).forEach(e => {
     const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`; eqSel.appendChild(o);
   });
+  // DMC do modo completo (só relevante se a seção estiver expandida, mas já populamos sempre)
+  const c = S.cidades.find(c => c.id === cid);
+  const selDmc = document.getElementById('quick-dmc');
+  if (selDmc) selDmc.innerHTML = '<option value="">Selecione o DMC...</option>' + (c?.dmcs||[]).map(d => `<option value="${d}">${d}</option>`).join('');
   updateIdPreviewQuick();
 }
 
@@ -1940,6 +2008,23 @@ function abrirComplementacao(leakId) {
   document.getElementById('reg-diam').value = l.diam || '';
   document.getElementById('reg-obs').value = l.desc || '';
 
+  // Rua: usa a que já estiver salva no ponto; se não tiver, busca pelo GPS daquele ponto
+  const regRua = document.getElementById('reg-rua');
+  const regRuaStatus = document.getElementById('reg-rua-status');
+  if (l.rua) {
+    regRua.value = l.rua;
+    regRuaStatus.textContent = '';
+  } else {
+    regRua.value = '';
+    regRua.placeholder = 'Identificando pelo GPS...';
+    regRuaStatus.textContent = '(buscando...)';
+    buscarRuaPorCoordenadas(l.lat, l.lng).then(rua => {
+      if (rua && !regRua.value) { regRua.value = rua; }
+      regRuaStatus.textContent = rua ? '(sugerido pelo GPS — pode corrigir)' : '';
+      if (!rua) regRua.placeholder = 'Digite a rua manualmente';
+    });
+  }
+
   S.photos = (l.fotosUrls||[]).slice();
   S.photosBase64 = [];
   renderPhotos();
@@ -1975,6 +2060,7 @@ async function salvarPonto() {
   const servicoId = document.getElementById('reg-servico').value;
   const obs = document.getElementById('reg-obs').value;
   const diam = document.getElementById('reg-diam').value;
+  const rua = document.getElementById('reg-rua').value.trim();
   if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
 
   const id = S._pontoEmEdicao.id;
@@ -1986,13 +2072,22 @@ async function salvarPonto() {
 
   const atualizacao = {
     dmc, tipo, servico, severidade: S.sevAtual,
-    desc: obs, diam: diam || null,
+    desc: obs, diam: diam || null, rua: rua || null,
     pendenteComplementacao: false
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), atualizacao, { merge:true });
   toast(`✓ Ponto ${id} atualizado!`);
 
-  const fotosParaWhatsapp = (S.photosBase64||[]).slice();
+  // Fotos para o WhatsApp: prioriza fotos NOVAS adicionadas agora (já em base64, prontas
+  // para compartilhar). Se não houver foto nova mas o ponto já tinha foto (ex.: tirada no
+  // "Novo Ponto" rápido), busca essa foto existente a partir da URL do Storage e converte
+  // para base64 — sem isso, o compartilhamento não tem um arquivo real para enviar.
+  let fotosParaWhatsapp = (S.photosBase64||[]).slice();
+  if (!fotosParaWhatsapp.length && S._pontoEmEdicao.fotosUrls && S._pontoEmEdicao.fotosUrls.length) {
+    toast('Preparando foto para compartilhar...');
+    fotosParaWhatsapp = await baixarFotosComoBase64(S._pontoEmEdicao.fotosUrls);
+  }
+
   if (temFotosNovas) {
     enviarFotosParaStorage(id).then(async urls => {
       const fotosExistentes = S._pontoEmEdicao.fotosUrls || [];
@@ -2000,7 +2095,7 @@ async function salvarPonto() {
     });
   }
 
-  S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };
+  S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, rua, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };
 
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
@@ -2071,6 +2166,59 @@ async function proximoIdSequencial(cidadeId, equipeCodigo) {
 // ================================================================
 // REGISTRO RÁPIDO (MAPA)
 // ================================================================
+S._quickModoCompleto = false;
+
+function toggleQuickCompleto() {
+  S._quickModoCompleto = !S._quickModoCompleto;
+  const wrap = document.getElementById('quick-completo-wrap');
+  const icon = document.getElementById('quick-completo-icon');
+  const label = document.getElementById('quick-completo-label');
+  const hint = document.getElementById('quick-completo-hint');
+  wrap.classList.toggle('hidden', !S._quickModoCompleto);
+  icon.className = 'ti ' + (S._quickModoCompleto ? 'ti-chevron-up' : 'ti-chevron-down');
+  label.textContent = S._quickModoCompleto ? 'Ocultar detalhes completos' : 'Completar tudo agora (tipo, serviço, diâmetro...)';
+  hint.textContent = S._quickModoCompleto
+    ? 'Este ponto já será salvo completo — não vai precisar passar por "Registrar".'
+    : 'Depois você pode completar com tipo, serviço e mais fotos em "Registrar".';
+  if (S._quickModoCompleto) {
+    popularSelectTiposEm('quick-tipo');
+    popularSelectServicosEm('quick-servico');
+    // Busca a rua pelo GPS atual, já que esse ponto vai ser salvo completo de uma vez
+    if (S.pos) {
+      const ruaInput = document.getElementById('quick-rua');
+      const ruaStatus = document.getElementById('quick-rua-status');
+      ruaStatus.textContent = '(buscando...)';
+      buscarRuaPorCoordenadas(S.pos.lat, S.pos.lng).then(rua => {
+        if (rua) { ruaInput.value = rua; ruaStatus.textContent = '(sugerido pelo GPS — pode corrigir)'; }
+        else { ruaStatus.textContent = ''; ruaInput.placeholder = 'Digite a rua manualmente'; }
+      });
+    }
+  }
+}
+
+function atualizarServicoSugeridoQuick() {
+  const tipoId = document.getElementById('quick-tipo').value;
+  const tipo = S.tiposVazamento.find(t => t.id === tipoId);
+  const selServico = document.getElementById('quick-servico');
+  if (tipo && tipo.servicoPadrao && selServico) selServico.value = tipo.servicoPadrao;
+}
+
+// Versões genéricas dos populadores de select de tipo/serviço, reaproveitadas
+// tanto pelo formulário "Registrar" (reg-tipo/reg-servico) quanto pelo modo
+// completo do "Novo Ponto" (quick-tipo/quick-servico)
+function popularSelectTiposEm(elementId) {
+  const sel = document.getElementById(elementId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Selecione o tipo...</option>' +
+    S.tiposVazamento.map(t => `<option value="${t.id}">${t.nome}</option>`).join('');
+}
+function popularSelectServicosEm(elementId) {
+  const sel = document.getElementById(elementId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Selecione o serviço...</option>' +
+    S.servicos.map(s => `<option value="${s.id}">${s.codigo} - ${s.descricao}</option>`).join('');
+}
+
 function openRegisterQuick() {
   if (S.pos) document.getElementById('quick-coords').textContent = `${S.pos.lat.toFixed(6)}, ${S.pos.lng.toFixed(6)}`;
   // Popular selects do modal
@@ -2082,6 +2230,15 @@ function openRegisterQuick() {
   // Reseta a foto rápida de uma chamada anterior, se houver
   S.quickPhotoBase64 = null;
   document.getElementById('quick-photo-grid').innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
+  // Reseta o modo completo a cada abertura — começa sempre fechado/rápido
+  S._quickModoCompleto = false;
+  document.getElementById('quick-completo-wrap').classList.add('hidden');
+  document.getElementById('quick-completo-icon').className = 'ti ti-chevron-down';
+  document.getElementById('quick-completo-label').textContent = 'Completar tudo agora (tipo, serviço, diâmetro...)';
+  document.getElementById('quick-completo-hint').textContent = 'Depois você pode completar com tipo, serviço e mais fotos em "Registrar".';
+  document.getElementById('quick-diam').value = '';
+  document.getElementById('quick-rua').value = '';
+  document.getElementById('quick-rua-status').textContent = '';
   // Permite uma nova sugestão automática de cidade por GPS a cada abertura do modal
   S._cidadeEscolhidaManualmente = false;
   if (S.pos) {
@@ -2120,26 +2277,46 @@ async function confirmarQuick() {
   if (!cid) { toast('Selecione a cidade'); return; }
   if (!eqId) { toast('Selecione a equipe'); return; }
   if (!S.pos) { toast('Aguardando GPS...'); return; }
+
+  // Se o modo completo estiver ativo, exige tipo de vazamento (igual ao formulário completo)
+  let tipoId = '', servicoId = '', dmcEscolhido = '', diamCompleto = null, ruaCompleto = '';
+  if (S._quickModoCompleto) {
+    tipoId = document.getElementById('quick-tipo').value;
+    if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
+    servicoId = document.getElementById('quick-servico').value;
+    dmcEscolhido = document.getElementById('quick-dmc').value;
+    diamCompleto = document.getElementById('quick-diam').value || null;
+    ruaCompleto = document.getElementById('quick-rua').value.trim();
+  }
+
   const eq = S.equipes.find(e => e.id === eqId);
   const id = await proximoIdSequencial(cid, eq.codigo);
   const now=new Date();
   const c=S.cidades.find(c=>c.id===cid);
-  const dmcPadrao = c?.dmcs[0]||'-';
+  const dmcPadrao = dmcEscolhido || c?.dmcs[0]||'-';
   const temFoto = !!S.quickPhotoBase64;
+
+  const tipoObj = S.tiposVazamento.find(t => t.id === tipoId);
+  const servicoObj = S.servicos.find(s => s.id === servicoId);
+  const tipoNome = S._quickModoCompleto ? (tipoObj ? tipoObj.nome : '') : '';
+  const servicoTexto = S._quickModoCompleto ? (servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '') : '';
+
   const leak={
-    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:'', servico:'', severidade:S.sevQuick,
-    lat:S.pos.lat, lng:S.pos.lng, desc, diam:null,
+    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:tipoNome, servico:servicoTexto, severidade:S.sevQuick,
+    lat:S.pos.lat, lng:S.pos.lng, desc, diam:diamCompleto, rua: ruaCompleto || null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos: temFoto ? 1 : 0,
     fotosUrls: [],
-    pendenteComplementacao: true, // marca pra aparecer destacado na lista até alguém completar
+    // Só fica marcado como pendente se NÃO usou o modo completo — assim a tela
+    // "Registrar" só lista pontos que realmente ainda precisam de complementação.
+    pendenteComplementacao: !S._quickModoCompleto,
     criadoEm: window.FB.serverTimestamp(),
     criadoPor: S.user?.uid || '',
     editavelAte: Date.now() + (24 * 60 * 60 * 1000)
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
   closeModal('modal-quick');
-  toast(`✓ Ponto ${id} registrado! Complete os detalhes em "Registrar".`);
+  toast(S._quickModoCompleto ? `✓ Ponto ${id} salvo completo!` : `✓ Ponto ${id} registrado! Complete os detalhes em "Registrar".`);
 
   if (temFoto) {
     const fotoSalva = S.quickPhotoBase64;
@@ -2148,7 +2325,12 @@ async function confirmarQuick() {
     });
   }
 
-  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc:dmcPadrao, tipo:'Não categorizado', servico:'', severidade:S.sevQuick, obs:desc, diam:null, lat:S.pos.lat, lng:S.pos.lng, fotosBase64: temFoto?[S.quickPhotoBase64]:[] };
+  S._ultimoPontoSalvo = {
+    id, cidade:cid, equipeId:eqId, dmc:dmcPadrao,
+    tipo: tipoNome || 'Não categorizado', servico: servicoTexto,
+    severidade:S.sevQuick, obs:desc, diam:diamCompleto, rua:ruaCompleto,
+    lat:S.pos.lat, lng:S.pos.lng, fotosBase64: temFoto?[S.quickPhotoBase64]:[]
+  };
   S.quickPhotoBase64 = null;
   document.getElementById('quick-photo-grid').innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
   abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
@@ -2244,6 +2426,29 @@ async function enviarFotosParaStorageDireto(leakId, fotosBase64) {
   return urls;
 }
 
+// Busca uma ou mais fotos já salvas no Storage (a partir da URL pública) e converte
+// cada uma para base64 — necessário porque o compartilhamento (navigator.share) exige
+// um arquivo/blob real, e uma foto "antiga" só existe como link nesse ponto do fluxo.
+async function baixarFotosComoBase64(urls) {
+  const resultados = [];
+  for (const url of urls.slice(0, 3)) { // limite de 3 fotos para não pesar o compartilhamento
+    try {
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      resultados.push(base64);
+    } catch(err) {
+      console.warn('Erro ao baixar foto para compartilhar:', err);
+    }
+  }
+  return resultados;
+}
+
 // ================================================================
 // WHATSAPP
 // ================================================================
@@ -2264,6 +2469,7 @@ function enviarWhatsAppDoponto(ponto) {
     '🚨 *VAZAMENTO DETECTADO — GeoFon*\n\n' +
     '🆔 *ID:* ' + ponto.id + '\n' +
     '🏙️ *Cidade:* ' + c.nome + '\n' +
+    (ponto.rua ? '🛣️ *Rua:* ' + ponto.rua + '\n' : '') +
     '🗂️ *DMC:* ' + ponto.dmc + '\n' +
     '🔧 *Tipo:* ' + ponto.tipo + '\n' +
     (ponto.servico ? '🛠️ *Serviço:* ' + ponto.servico + '\n' : '') +
@@ -2271,10 +2477,11 @@ function enviarWhatsAppDoponto(ponto) {
     '⚠️ *Severidade:* ' + ponto.severidade.toUpperCase() + '\n' +
     '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' +
     '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' +
-    '📍 *Localização:* ' + maps + '\n' +
-    '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') + '\n' +
-    (temFotos ? '📸 Foto enviada separadamente nesta conversa\n' : '') +
-    '\n_Enviado via GeoFon_';
+    // O link fica dentro de uma frase (não solto numa linha própria) para o WhatsApp
+    // não gerar o card grande de prévia de mapa — continua clicável, só não "ocupa a tela".
+    '📍 Toque para abrir no mapa: ' + maps + ' .\n' +
+    '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') +
+    '\n\n_Enviado via GeoFon_';
 
   const msg = encodeURIComponent(texto);
 

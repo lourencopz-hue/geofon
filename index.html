@@ -293,7 +293,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <i class="ti ti-map-pin"></i>Mapa
   </div>
   <div class="tab" onclick="switchTab('register','tabs-field')" data-tab="register">
-    <i class="ti ti-plus-circle"></i>Registrar
+    <i class="ti ti-clipboard-check"></i>Registrar
   </div>
   <div class="tab" onclick="switchTab('list-field','tabs-field')" data-tab="list-field">
     <i class="ti ti-list"></i>Lista
@@ -311,6 +311,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div class="tab" onclick="switchTab('manage','tabs-pc')" data-tab="manage">
     <i class="ti ti-database"></i>Gestão
   </div>
+  <div class="tab" onclick="switchTab('usuarios','tabs-pc')" data-tab="usuarios">
+    <i class="ti ti-users"></i>Usuários
+  </div>
   <div class="tab" onclick="switchTab('reports','tabs-pc')" data-tab="reports">
     <i class="ti ti-chart-bar"></i>Relatórios
   </div>
@@ -320,6 +323,21 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- PANELS -->
+<!-- PC: USUÁRIOS -->
+<div class="panel" id="usuarios" style="display:none">
+  <div class="panel-scroll">
+    <div class="section">
+      <div class="card" style="background:var(--blue-l);margin-bottom:14px">
+        <p style="font-size:12px;color:var(--blue-d);line-height:1.6">
+          <i class="ti ti-info-circle" style="margin-right:4px"></i>
+          Toda pessoa que entrar pela primeira vez aparece aqui como <strong>Pendente</strong>. Defina o nível de acesso (Administrador, Supervisor ou Técnico de campo) e, se for Técnico, a cidade/equipe dela.
+        </p>
+      </div>
+      <div class="stats-row" id="usuarios-resumo" style="padding:0;margin-bottom:14px"></div>
+      <div id="usuarios-list-full"></div>
+    </div>
+  </div>
+</div>
 <div id="panels">
 
   <!-- CAMPO: MAPA -->
@@ -363,8 +381,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             <div class="id-badge" id="id-preview">CIA-EQ1-VAZ001</div>
           </div>
           <div class="field">
-            <label>Cidade</label>
-            <select id="reg-cidade" onchange="onCidadeChange()">
+            <label>Cidade <span id="reg-cidade-gps-hint" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
+            <select id="reg-cidade" onchange="S._cidadeEscolhidaManualmente=true; onCidadeChange()">
               <option value="">Selecione a cidade...</option>
             </select>
           </div>
@@ -386,15 +404,14 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <div class="card">
           <div class="field">
             <label>Tipo de vazamento</label>
-            <select id="reg-tipo">
-              <option>Ramal predial</option>
-              <option>Rede de distribuição</option>
-              <option>Adutora</option>
-              <option>Sub-adutora</option>
-              <option>Ponto de conexão</option>
-              <option>Hidrante</option>
-              <option>Válvula</option>
-              <option>Cavalete / Medidor</option>
+            <select id="reg-tipo" onchange="atualizarServicoSugerido()">
+              <option value="">Selecione o tipo...</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Código do serviço <span style="color:var(--text3);font-weight:400">(sugerido pelo tipo, pode trocar)</span></label>
+            <select id="reg-servico">
+              <option value="">Selecione o serviço...</option>
             </select>
           </div>
           <div class="field">
@@ -618,12 +635,31 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </div>
       <div class="section">
         <div class="section-title">Usuários e permissões</div>
+        <div class="card" style="text-align:center;padding:20px">
+          <i class="ti ti-users" style="font-size:28px;color:var(--blue);display:block;margin-bottom:8px"></i>
+          <p style="font-size:12.5px;color:var(--text2);margin-bottom:10px">A gestão de usuários e níveis de hierarquia agora tem aba própria.</p>
+          <button class="btn primary" onclick="switchTab('usuarios','tabs-pc')">
+            <i class="ti ti-arrow-right"></i> Ir para Usuários
+          </button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Tipos de vazamento e códigos de serviço</div>
         <div class="card" style="background:var(--blue-l);margin-bottom:10px">
           <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-            Toda pessoa que entrar pela primeira vez aparece aqui como <strong>Pendente</strong>. Defina o nível de acesso e, se for Técnico, a cidade/equipe dela.
+            Cada tipo de vazamento pode ter um código de serviço padrão, que já vem sugerido no formulário de registro (a equipe ainda pode trocar se precisar).
           </p>
         </div>
-        <div id="usuarios-list"></div>
+        <div class="section-title" style="font-size:10px">Códigos de serviço</div>
+        <div id="config-servicos" style="margin-bottom:10px"></div>
+        <button class="btn sm" onclick="adicionarServicoManual()">
+          <i class="ti ti-plus"></i> Adicionar código de serviço
+        </button>
+        <div class="section-title" style="font-size:10px;margin-top:16px">Tipos de vazamento</div>
+        <div id="config-tipos"></div>
+        <button class="btn sm" onclick="adicionarTipoManual()">
+          <i class="ti ti-plus"></i> Adicionar tipo de vazamento
+        </button>
       </div>
       <div class="section">
         <div class="section-title">Configurações gerais</div>
@@ -926,6 +962,8 @@ const S = {
   user: null,        // { uid, nome, email, foto }
   userDoc: null,      // { role: 'admin'|'supervisor'|'tecnico'|'pendente', cidade, equipe }
   usuarios: [],       // lista de usuários (só admin carrega)
+  tiposVazamento: [], // [{id, nome, servicoPadrao}]
+  servicos: [],       // [{id, codigo, descricao}] ex: {codigo:'5110', descricao:'Conserto originado de geofone'}
 };
 
 
@@ -941,7 +979,7 @@ let fMarkers = [], pcMarkers = [], heatLayer = null;
 // tecnico    -> só registra vazamentos da própria cidade/equipe
 // pendente   -> aguardando aprovação do admin
 
-let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null;
+let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null;
 
 function fazerLoginGoogle() {
   const statusEl = document.getElementById('login-status');
@@ -1020,16 +1058,18 @@ function aplicarPermissoesUI() {
   const btnSwitch = document.getElementById('btn-switch-mode');
   const tabConfig = document.querySelector('[data-tab="config"]');
   const tabManage = document.querySelector('[data-tab="manage"]');
+  const tabUsuarios = document.querySelector('[data-tab="usuarios"]');
 
   if (role === 'tecnico') {
-    // Técnico: só modo campo, sem acesso a Gestão/Config
+    // Técnico: só modo campo, sem acesso a Gestão/Config/Usuários
     btnSwitch.classList.add('hidden');
     S.mode = 'field';
   } else {
     btnSwitch.classList.remove('hidden');
   }
-  // Apenas admin vê a aba de Configurações (cadastros e usuários)
+  // Apenas admin vê Configurações e Usuários (cadastros e permissões)
   if (tabConfig) tabConfig.classList.toggle('hidden', role !== 'admin');
+  if (tabUsuarios) tabUsuarios.classList.toggle('hidden', role !== 'admin');
   // Supervisor e admin podem ver Gestão; técnico não usa modo PC mesmo
   if (tabManage) tabManage.classList.toggle('hidden', role === 'tecnico');
 }
@@ -1116,12 +1156,162 @@ function iniciarSincronizacaoFirestore() {
     });
   }
 
+  // Tipos de vazamento (com código de serviço sugerido)
+  if (unsubTipos) unsubTipos();
+  unsubTipos = onSnapshot(collection(db, 'tiposVazamento'), snap => {
+    const todos = snap.docs.map(d => d.data()).filter(t => !t.removido);
+    if (!todos.length && S.userDoc.role === 'admin') {
+      criarTiposEServicosIniciais();
+    } else {
+      S.tiposVazamento = todos;
+      popularSelectTipos();
+    }
+  });
+
+  // Códigos de serviço
+  if (unsubServicos) unsubServicos();
+  unsubServicos = onSnapshot(collection(db, 'servicos'), snap => {
+    S.servicos = snap.docs.map(d => d.data()).filter(s => !s.removido);
+    popularSelectServicos();
+    renderConfigServicos();
+  });
+
   initFieldMap();
   startGPS();
   setTimeout(() => iniciarSincronizacaoCamadas(), 400);
 }
 
 // Dados iniciais — só roda se o admin logar e o banco estiver vazio
+async function criarTiposEServicosIniciais() {
+  const { db, doc, setDoc } = window.FB;
+  const servicosIniciais = [
+    { id:'srv_5110', codigo:'5110', descricao:'Conserto originado de geofone' },
+    { id:'srv_5811', codigo:'5811', descricao:'Conserto de ramal originado por geofone' }
+  ];
+  const tiposIniciais = [
+    { id:'tipo_ramal',    nome:'Ramal predial',          servicoPadrao:'srv_5811' },
+    { id:'tipo_rede',     nome:'Rede de distribuição',   servicoPadrao:'srv_5110' },
+    { id:'tipo_adutora',  nome:'Adutora',                servicoPadrao:'srv_5110' },
+    { id:'tipo_subadut',  nome:'Sub-adutora',             servicoPadrao:'srv_5110' },
+    { id:'tipo_conexao',  nome:'Ponto de conexão',        servicoPadrao:'srv_5110' },
+    { id:'tipo_hidrante', nome:'Hidrante',                servicoPadrao:'srv_5110' },
+    { id:'tipo_valvula',  nome:'Válvula',                 servicoPadrao:'srv_5110' },
+    { id:'tipo_cavalete', nome:'Cavalete / Medidor',      servicoPadrao:'srv_5811' }
+  ];
+  for (const s of servicosIniciais) await setDoc(doc(db,'servicos',s.id), s);
+  for (const t of tiposIniciais) await setDoc(doc(db,'tiposVazamento',t.id), t);
+}
+
+// Preenche o <select> de Tipo de vazamento com a lista sincronizada do Firestore
+function popularSelectTipos() {
+  const sel = document.getElementById('reg-tipo');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Selecione o tipo...</option>' +
+    S.tiposVazamento.map(t => `<option value="${t.id}">${t.nome}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+// Preenche o <select> de Código de serviço
+function popularSelectServicos() {
+  const sel = document.getElementById('reg-servico');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Selecione o serviço...</option>' +
+    S.servicos.map(s => `<option value="${s.id}">${s.codigo} - ${s.descricao}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+// Quando o técnico escolhe o Tipo, sugere automaticamente o serviço padrão vinculado
+// (mas deixa destravado para trocar, caso o padrão não se aplique a esse caso)
+function atualizarServicoSugerido() {
+  const tipoId = document.getElementById('reg-tipo').value;
+  const tipo = S.tiposVazamento.find(t => t.id === tipoId);
+  const selServico = document.getElementById('reg-servico');
+  if (tipo && tipo.servicoPadrao && selServico) selServico.value = tipo.servicoPadrao;
+}
+
+// ================================================================
+// GESTÃO DE TIPOS DE VAZAMENTO E CÓDIGOS DE SERVIÇO (Configurações)
+// ================================================================
+function renderConfigServicos() {
+  const elS = document.getElementById('config-servicos');
+  if (elS) {
+    elS.innerHTML = S.servicos.map((s,i) => `
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input type="text" value="${s.codigo}" onchange="editarServico('${s.id}','codigo',this.value)"
+          style="width:70px;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+        <input type="text" value="${s.descricao}" onchange="editarServico('${s.id}','descricao',this.value)"
+          style="flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+        <button onclick="removerServico('${s.id}')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
+          <i class="ti ti-trash" style="font-size:12px"></i>
+        </button>
+      </div>`).join('') || '<p style="font-size:11.5px;color:var(--text2)">Nenhum código cadastrado.</p>';
+  }
+  renderConfigTipos();
+}
+
+function renderConfigTipos() {
+  const elT = document.getElementById('config-tipos');
+  if (!elT) return;
+  elT.innerHTML = S.tiposVazamento.map(t => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="text" value="${t.nome}" onchange="editarTipo('${t.id}','nome',this.value)"
+        style="flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+      <select onchange="editarTipo('${t.id}','servicoPadrao',this.value)" style="font-size:11px;padding:6px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);width:160px">
+        <option value="">Sem serviço padrão</option>
+        ${S.servicos.map(s=>`<option value="${s.id}" ${t.servicoPadrao===s.id?'selected':''}>${s.codigo}</option>`).join('')}
+      </select>
+      <button onclick="removerTipo('${t.id}')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
+        <i class="ti ti-trash" style="font-size:12px"></i>
+      </button>
+    </div>`).join('') || '<p style="font-size:11.5px;color:var(--text2)">Nenhum tipo cadastrado.</p>';
+}
+
+async function editarServico(id, campo, valor) {
+  const s = S.servicos.find(s => s.id === id);
+  if (!s) return;
+  s[campo] = valor.trim();
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'servicos',id), s);
+  toast('Código de serviço atualizado');
+}
+async function removerServico(id) {
+  if (!confirm('Remover este código de serviço?')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'servicos',id), { removido:true }, { merge:true });
+  toast('Código removido');
+}
+async function adicionarServicoManual() {
+  const codigo = prompt('Código do serviço (ex: 5110):');
+  if (!codigo) return;
+  const descricao = prompt('Descrição do serviço:');
+  if (!descricao) return;
+  const id = 'srv_' + Date.now();
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'servicos',id), { id, codigo:codigo.trim(), descricao:descricao.trim() });
+  toast('Código de serviço adicionado');
+}
+
+async function editarTipo(id, campo, valor) {
+  const t = S.tiposVazamento.find(t => t.id === id);
+  if (!t) return;
+  t[campo] = valor;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'tiposVazamento',id), t);
+  popularSelectTipos();
+  toast('Tipo de vazamento atualizado');
+}
+async function removerTipo(id) {
+  if (!confirm('Remover este tipo de vazamento?')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'tiposVazamento',id), { removido:true }, { merge:true });
+  toast('Tipo removido');
+}
+async function adicionarTipoManual() {
+  const nome = prompt('Nome do novo tipo de vazamento:');
+  if (!nome || !nome.trim()) return;
+  const id = 'tipo_' + Date.now();
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'tiposVazamento',id), { id, nome:nome.trim(), servicoPadrao:'' });
+  toast('Tipo de vazamento adicionado');
+}
+
+// Grava qualquer alteração de cidade/equipe diretamente no Firestore
 async function criarDadosIniciais() {
   const { db, doc, setDoc } = window.FB;
   const cidadesIniciais = [
@@ -1247,13 +1437,28 @@ function sincronizarDMCsCidade(geojson, cidadeId) {
 }
 
 function renderUsuariosPanel() {
-  const el = document.getElementById('usuarios-list');
+  const el = document.getElementById('usuarios-list-full');
   if (!el) return;
   const roleLabels = { admin:'Administrador', supervisor:'Supervisor', tecnico:'Técnico de campo', pendente:'Pendente' };
-  el.innerHTML = (S.usuarios||[]).map(u => {
-    const cidadeNome = S.cidades.find(c=>c.id===u.cidade)?.nome || '';
-    const equipeNome = S.equipes.find(e=>e.id===u.equipe)?.codigo || '';
-    return `<div class="card" style="margin-bottom:8px">
+  const lista = S.usuarios || [];
+
+  // Resumo numérico no topo
+  const resumoEl = document.getElementById('usuarios-resumo');
+  if (resumoEl) {
+    const cont = { pendente:0, tecnico:0, supervisor:0, admin:0 };
+    lista.forEach(u => { if (cont[u.role]!==undefined) cont[u.role]++; });
+    resumoEl.innerHTML = `
+      <div class="stat-card"><span class="num" style="color:var(--gray)">${cont.pendente}</span><div class="lbl">Pendentes</div></div>
+      <div class="stat-card"><span class="num" style="color:var(--amber)">${cont.tecnico}</span><div class="lbl">Técnicos</div></div>
+      <div class="stat-card"><span class="num" style="color:var(--teal)">${cont.supervisor}</span><div class="lbl">Supervisores</div></div>
+      <div class="stat-card"><span class="num" style="color:var(--purple)">${cont.admin}</span><div class="lbl">Administradores</div></div>`;
+  }
+
+  // Pendentes aparecem primeiro, para chamar atenção de quem precisa aprovar
+  const ordenada = [...lista].sort((a,b) => (a.role==='pendente'?-1:0) - (b.role==='pendente'?-1:0));
+
+  el.innerHTML = ordenada.map(u => `
+    <div class="card" style="margin-bottom:8px;${u.role==='pendente'?'border-color:rgba(186,117,23,.4)':''}">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:32px;height:32px;border-radius:50%;background:var(--blue-l);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
           ${u.foto?`<img src="${u.foto}" style="width:100%;height:100%;object-fit:cover">`:`<span style="font-size:13px;font-weight:600;color:var(--blue)">${(u.nome||'?').charAt(0).toUpperCase()}</span>`}
@@ -1280,8 +1485,7 @@ function renderUsuariosPanel() {
           ${S.equipes.filter(e=>!u.cidade||e.cidade===u.cidade).map(e=>`<option value="${e.id}" ${u.equipe===e.id?'selected':''}>${e.codigo}</option>`).join('')}
         </select>
       </div>
-    </div>`;
-  }).join('') || '<p style="font-size:12px;color:var(--text2)">Nenhum usuário cadastrado ainda.</p>';
+    </div>`).join('') || '<p style="font-size:12px;color:var(--text2)">Nenhum usuário cadastrado ainda.</p>';
 }
 
 async function alterarRoleUsuario(uid, role) {
@@ -1310,10 +1514,12 @@ function startGPS() {
       S.pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
       const txt = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`;
       setGPSText(txt, `±${S.pos.acc}m`);
+      sugerirCidadePorGPS();
     },
     () => {
       S.pos = { lat: -28.6775, lng: -49.3680, acc: 5 };
       setGPSText('-28.677500, -49.368000 (demo)', '±5m');
+      sugerirCidadePorGPS();
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
   );
@@ -1324,6 +1530,35 @@ function setGPSText(txt, acc) {
 }
 function centerMyPosition() {
   if (S.pos && mapField) mapField.setView([S.pos.lat, S.pos.lng], 17);
+}
+
+// Calcula a cidade cadastrada mais próxima da posição GPS atual (distância simples,
+// suficiente para cidades vizinhas dentro da mesma região).
+function cidadeMaisProxima(lat, lng) {
+  let melhor = null, menorDist = Infinity;
+  S.cidades.forEach(c => {
+    if (!c.coords || c.coords.length < 2) return;
+    const [clat, clng] = c.coords;
+    const dist = Math.sqrt(Math.pow(lat-clat,2) + Math.pow(lng-clng,2));
+    if (dist < menorDist) { menorDist = dist; melhor = c; }
+  });
+  return melhor;
+}
+
+// Só sugere automaticamente se o técnico ainda não tiver escolhido manualmente
+// (campo "reg-cidade" vazio, ou ainda na primeira sugestão automática).
+S._cidadeEscolhidaManualmente = false;
+function sugerirCidadePorGPS() {
+  if (!S.pos) return;
+  const sel = document.getElementById('reg-cidade');
+  const hint = document.getElementById('reg-cidade-gps-hint');
+  if (!sel || sel.disabled || S._cidadeEscolhidaManualmente) return;
+  const sugerida = cidadeMaisProxima(S.pos.lat, S.pos.lng);
+  if (sugerida && sel.value !== sugerida.id) {
+    sel.value = sugerida.id;
+    onCidadeChange();
+  }
+  if (hint && sugerida) hint.textContent = '(sugerido pelo GPS — pode trocar)';
 }
 
 // ================================================================
@@ -1536,26 +1771,33 @@ async function salvarPonto() {
   const cid = document.getElementById('reg-cidade').value;
   const eqId = document.getElementById('reg-equipe').value;
   const dmc = document.getElementById('reg-dmc').value;
-  const tipo = document.getElementById('reg-tipo').value;
+  const tipoId = document.getElementById('reg-tipo').value;
+  const servicoId = document.getElementById('reg-servico').value;
   const obs = document.getElementById('reg-obs').value;
   const diam = document.getElementById('reg-diam').value;
   if (!cid) { toast('Selecione a cidade'); return; }
   if (!eqId) { toast('Selecione a equipe'); return; }
+  if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
   if (!S.pos) { toast('Aguardando GPS...'); return; }
   const eq = S.equipes.find(e => e.id === eqId);
+  const tipoObj = S.tiposVazamento.find(t => t.id === tipoId);
+  const servicoObj = S.servicos.find(s => s.id === servicoId);
+  const tipo = tipoObj ? tipoObj.nome : tipoId;
+  const servico = servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '';
   const id = await proximoIdSequencial(cid, eq.codigo);
   const now = new Date();
   const temFotos = S.photosBase64 && S.photosBase64.length > 0;
 
   const leak = {
-    id, cidade:cid, equipe:eqId, dmc, tipo, severidade:S.sevAtual,
+    id, cidade:cid, equipe:eqId, dmc, tipo, servico, severidade:S.sevAtual,
     lat:S.pos.lat, lng:S.pos.lng,
     desc:obs, diam:diam||null,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos: S.photos.length,
     fotosUrls: [], // preenchido depois do upload ao Storage
     criadoEm: window.FB.serverTimestamp(),
-    criadoPor: S.user?.uid || ''
+    criadoPor: S.user?.uid || '',
+    editavelAte: Date.now() + (24 * 60 * 60 * 1000) // 24h de janela de edição
   };
 
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
@@ -1571,7 +1813,7 @@ async function salvarPonto() {
   }
 
   // Guarda os dados desse ponto para a pergunta de WhatsApp (modal de confirmação)
-  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc, tipo, severidade:S.sevAtual, obs, diam, lat:S.pos.lat, lng:S.pos.lng, fotosBase64:fotosParaWhatsapp };
+  S._ultimoPontoSalvo = { id, cidade:cid, equipeId:eqId, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, lat:S.pos.lat, lng:S.pos.lng, fotosBase64:fotosParaWhatsapp };
 
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
@@ -1746,6 +1988,7 @@ async function enviarFotosParaStorage(leakId) {
 function enviarWhatsAppDoponto(ponto) {
   const c = S.cidades.find(c => c.id === ponto.cidade);
   if (!c) { toast('Cidade não encontrada'); return; }
+  if (!c.wa || !c.wa.length) { toast('Nenhum número WhatsApp cadastrado para esta cidade'); return; }
   const eq = S.equipes.find(e => e.id === ponto.equipeId);
   const maps = 'https://maps.google.com/?q=' + ponto.lat + ',' + ponto.lng;
   const temFotos = ponto.fotosBase64 && ponto.fotosBase64.length > 0;
@@ -1756,36 +1999,57 @@ function enviarWhatsAppDoponto(ponto) {
     '🏙️ *Cidade:* ' + c.nome + '\n' +
     '🗂️ *DMC:* ' + ponto.dmc + '\n' +
     '🔧 *Tipo:* ' + ponto.tipo + '\n' +
+    (ponto.servico ? '🛠️ *Serviço:* ' + ponto.servico + '\n' : '') +
     (ponto.diam ? '📏 *Diâmetro est.:* ' + ponto.diam + 'mm\n' : '') +
     '⚠️ *Severidade:* ' + ponto.severidade.toUpperCase() + '\n' +
     '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' +
     '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' +
     '📍 *Localização:* ' + maps + '\n' +
     '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') + '\n' +
-    (temFotos ? '📸 *Fotos:* ' + ponto.fotosBase64.length + ' foto(s) — envie as imagens nesta conversa após esta mensagem\n' : '') +
+    (temFotos ? '📸 Fotos seguem em seguida nesta conversa\n' : '') +
     '\n_Enviado via GeoFon_';
 
   const msg = encodeURIComponent(texto);
 
-  if (temFotos && navigator.share) {
-    const b64 = ponto.fotosBase64[0];
-    const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
-    const byteStr = atob(b64.split(',')[1]);
-    const arr = new Uint8Array(byteStr.length);
-    for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
-    const blob = new Blob([arr], {type:mime});
-    const file = new File([blob], 'vazamento_' + ponto.id + '.jpg', {type:mime});
-    navigator.share({ title:'Vazamento ' + ponto.id, text:texto, files:[file] })
-      .catch(() => {
-        c.wa.forEach((num, i) => { setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800); });
-      });
-  } else {
-    if (!c.wa || !c.wa.length) { toast('Nenhum número WA cadastrado para esta cidade'); return; }
-    c.wa.forEach((num, i) => {
-      setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800);
-    });
-    if (temFotos) toast('💡 Envie as ' + ponto.fotosBase64.length + ' foto(s) manualmente na conversa do WhatsApp!');
+  // Abre direto a conversa com CADA número cadastrado, sem pedir pra escolher contato —
+  // o número já vem do cadastro da cidade (Configurações).
+  c.wa.forEach((num, i) => {
+    setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800);
+  });
+
+  // Foto é uma etapa separada e opcional: como o WhatsApp Web/app não permite anexar
+  // foto programaticamente a um número específico, oferecemos o compartilhamento nativo
+  // (que pede pra escolher o destino) só pra quem realmente tem foto pra mandar.
+  if (temFotos) {
+    setTimeout(() => abrirCompartilharFotoOpcional(ponto), c.wa.length * 800 + 400);
   }
+}
+
+function abrirCompartilharFotoOpcional(ponto) {
+  if (!navigator.share) {
+    toast('💡 Abra a galeria e envie as ' + ponto.fotosBase64.length + ' foto(s) manualmente no WhatsApp');
+    return;
+  }
+  toast('📸 Toque para compartilhar a foto do vazamento ' + ponto.id);
+  const btn = document.createElement('button');
+  btn.className = 'wa-btn';
+  btn.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:9999;width:auto;padding:12px 20px';
+  btn.innerHTML = '<i class="ti ti-camera" style="font-size:16px"></i> Compartilhar foto do ' + ponto.id;
+  btn.onclick = async () => {
+    try {
+      const b64 = ponto.fotosBase64[0];
+      const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
+      const byteStr = atob(b64.split(',')[1]);
+      const arr = new Uint8Array(byteStr.length);
+      for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
+      const blob = new Blob([arr], {type:mime});
+      const file = new File([blob], 'vazamento_' + ponto.id + '.jpg', {type:mime});
+      await navigator.share({ title:'Vazamento ' + ponto.id, files:[file] });
+    } catch(e) {}
+    btn.remove();
+  };
+  document.body.appendChild(btn);
+  setTimeout(() => btn.remove(), 15000);
 }
 
 // ================================================================
@@ -2489,6 +2753,7 @@ function switchTab(tabId, tabsId) {
   if(tabId==='map-field') setTimeout(()=>{if(mapField)mapField.invalidateSize();},100);
   if(tabId==='map-pc'){initPCMap();setTimeout(()=>{if(mapPC)mapPC.invalidateSize();},100);}
   if(tabId==='manage') renderManage();
+  if(tabId==='usuarios') renderUsuariosPanel();
   if(tabId==='register') setTimeout(()=>aplicarRestricaoTecnico(),50);
 }
 

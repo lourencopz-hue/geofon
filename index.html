@@ -349,9 +349,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="map-toolbar">
       <button class="btn primary" onclick="openRegisterQuick()"><i class="ti ti-map-pin-plus"></i>Novo ponto</button>
-      <button class="btn sm" onclick="openDMCPanel()" style="position:relative"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
-      <button class="btn sm" onclick="openRedesPanel()"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
-      <button class="btn sm" onclick="centerMyPosition()"><i class="ti ti-gps"></i>Minha pos.</button>
+      <button class="btn sm" onclick="openDMCPanel()" style="position:relative;background:var(--blue-l);border-color:rgba(24,95,165,.25);color:var(--blue-d)"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
+      <button class="btn sm" onclick="openRedesPanel()" style="background:var(--teal-l);border-color:rgba(15,110,86,.25);color:var(--teal)"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
+      <button class="btn sm" onclick="centerMyPosition()" style="background:var(--bg2);border-color:var(--border2)"><i class="ti ti-gps" style="color:var(--text2)"></i>Minha pos.</button>
     </div>
     <div class="map-wrap">
       <div id="map-field-map"></div>
@@ -899,8 +899,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <span style="font-weight:600;font-size:14px;flex:1">Gerenciar camadas DMC</span>
     <button onclick="closeDMCPanel()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px;padding:2px"><i class="ti ti-x"></i></button>
   </div>
-  <!-- Filtro por cidade -->
+  <!-- Filtro por regional e cidade -->
   <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="dmc-regional-filter"></div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap" id="dmc-city-filter"></div>
   </div>
@@ -2553,6 +2555,7 @@ function toggleAllRedes(vis) {
 }
 
 function openDMCPanel() {
+  renderDMCPanelRegionalFilter();
   renderDMCPanelCityFilter();
   renderDMCPanel();
   document.getElementById('dmc-panel-overlay').style.display='block';
@@ -2572,11 +2575,37 @@ function closeRedesPanel() {
   document.getElementById('redes-panel').style.display='none';
 }
 
+S.dmcRegionalFiltro = '';
+
+function renderDMCPanelRegionalFilter() {
+  const el = document.getElementById('dmc-regional-filter');
+  if (!el) return;
+  const regionais = [...new Set(S.cidades.map(c => c.regional).filter(Boolean))].sort();
+  if (!regionais.length) {
+    el.innerHTML = '<span style="font-size:11px;color:var(--text3)">Nenhuma cidade com regional cadastrada</span>';
+    return;
+  }
+  el.innerHTML = '<button class="toggle-btn' + (S.dmcRegionalFiltro===''?' active':'') + '" onclick="setDMCRegionalFiltro(\'\')">Todas</button>' +
+    regionais.map(r => '<button class="toggle-btn' + (S.dmcRegionalFiltro===r?' active':'') + '" onclick="setDMCRegionalFiltro(\'' + r + '\')">' + r + '</button>').join('');
+}
+function setDMCRegionalFiltro(regional) {
+  S.dmcRegionalFiltro = regional;
+  // Ao trocar a regional, reseta o filtro de cidade (pode não fazer sentido manter
+  // uma cidade selecionada que não pertence à nova regional escolhida)
+  S.dmcCidadeFiltro = '';
+  renderDMCPanelRegionalFilter();
+  renderDMCPanelCityFilter();
+  renderDMCPanel();
+}
+
 function renderDMCPanelCityFilter() {
   const el = document.getElementById('dmc-city-filter');
   if (!el) return;
+  const cidadesFiltradas = S.dmcRegionalFiltro
+    ? S.cidades.filter(c => c.regional === S.dmcRegionalFiltro)
+    : S.cidades;
   el.innerHTML = '<button class="toggle-btn' + (S.dmcCidadeFiltro===''?' active':'') + '" onclick="setDMCFiltro(\'\')">Todas</button>' +
-    S.cidades.map(c => '<button class="toggle-btn' + (S.dmcCidadeFiltro===c.id?' active':'') + '" onclick="setDMCFiltro(\'' + c.id + '\')">' + c.prefixo + '</button>').join('');
+    cidadesFiltradas.map(c => '<button class="toggle-btn' + (S.dmcCidadeFiltro===c.id?' active':'') + '" onclick="setDMCFiltro(\'' + c.id + '\')">' + c.prefixo + '</button>').join('');
 }
 function setDMCFiltro(cid) {
   S.dmcCidadeFiltro = cid;
@@ -2590,13 +2619,20 @@ function renderDMCPanel() {
   const role = S.userDoc?.role;
   const ehSuperior = role === 'admin' || role === 'supervisor';
   const allLayers = S.leafletLayers.dmc || [];
-  const layers = allLayers.filter(l => !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro || l.cidade === '');
+  // Cidades que pertencem à regional escolhida (vazio = considera todas as cidades)
+  const cidadesDaRegional = S.dmcRegionalFiltro
+    ? new Set(S.cidades.filter(c => c.regional === S.dmcRegionalFiltro).map(c => c.id))
+    : null;
+  const layers = allLayers.filter(l => {
+    if (cidadesDaRegional && l.cidade && !cidadesDaRegional.has(l.cidade)) return false;
+    return !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro || l.cidade === '';
+  });
   if (!allLayers.length) {
     el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
     return;
   }
   if (!layers.length) {
-    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:16px">Nenhuma camada para esta cidade.</p>';
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:16px">Nenhuma camada para este filtro.</p>';
     return;
   }
   el.innerHTML = layers.map(item => {
@@ -2666,22 +2702,37 @@ function renderRedesPanel() {
 function toggleLayerVisibility(tipo) { tipo==='dmc' ? openDMCPanel() : openRedesPanel(); }
 
 function renderLayerLists() {
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
   ['dmc','redes'].forEach(t => {
     const el = document.getElementById(t + '-layer-list');
     if (!el) return;
-    el.innerHTML = (S.leafletLayers[t]||[]).map((item, i) =>
-      '<div class="layer-item">' +
+    el.innerHTML = (S.leafletLayers[t]||[]).map((item, i) => {
+      const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
+      const avisoValidacao = !item.validada
+        ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600">Pendente de validação</div>'
+        : '';
+      return '<div class="layer-item">' +
         '<div class="layer-color" style="background:' + (t==='dmc'?'#185FA5':'#0F6E56') + '"></div>' +
-        '<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</span>' +
-        '<button class="btn sm" style="padding:3px 7px" onclick="removerCamada(\'' + t + '\',' + i + ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' +
-      '</div>'
-    ).join('');
+        '<div style="flex:1;min-width:0">' +
+          '<span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">' + item.nome + '</span>' +
+          avisoValidacao +
+        '</div>' +
+        (podeRemoverEsta ? '<button class="btn sm" style="padding:3px 7px" onclick="removerCamada(\'' + t + '\',' + i + ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' : '') +
+      '</div>';
+    }).join('');
   });
 }
 
 async function removerCamada(tipo, idx) {
   const item = (S.leafletLayers[tipo]||[])[idx];
   if (!item || !item.id) return;
+  // Reforço de segurança no lado do cliente, além da regra do Firestore:
+  // mesmo que alguém force a chamada (ex. pelo console), confirma a permissão de novo.
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
+  const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
+  if (!podeRemoverEsta) { toast('Você não tem permissão para remover esta camada'); return; }
   if (!confirm('Remover a camada "' + item.nome + '" para todos os usuários?')) return;
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { removida:true }, { merge:true });
   toast('Camada removida para todos');
@@ -2739,20 +2790,48 @@ function kmlToGeoJSON(kmlText) {
     if (cor) estilosGlobais[id] = cor;
   });
 
+  // Muitos KMLs (especialmente exportados de shapefile/QGIS) não referenciam um <Style>
+  // diretamente — referenciam um <StyleMap>, que por sua vez aponta para o <Style> real
+  // através do par "normal" (o estilo usado no mapa em condições normais, sem hover).
+  // Resolvemos essa indireção aqui: styleMapId -> styleId do par "normal".
+  const styleMapParaStyle = {};
+  getByTag(doc, 'StyleMap').forEach(smEl => {
+    const id = smEl.getAttribute('id');
+    if (!id) return;
+    const pairs = getByTag(smEl, 'Pair');
+    let refNormal = null, refQualquer = null;
+    pairs.forEach(p => {
+      const keyEl = getFirstByTag(p, 'key');
+      const styleUrlEl = getFirstByTag(p, 'styleUrl');
+      if (!styleUrlEl) return;
+      const ref = styleUrlEl.textContent.trim().replace(/^#/, '');
+      refQualquer = ref;
+      if (keyEl && keyEl.textContent.trim() === 'normal') refNormal = ref;
+    });
+    styleMapParaStyle[id] = refNormal || refQualquer;
+  });
+
+  // Resolve um styleUrl (que pode apontar para Style OU StyleMap) até achar a cor final
+  function resolverCorPorStyleUrl(ref) {
+    if (estilosGlobais[ref]) return estilosGlobais[ref];
+    if (styleMapParaStyle[ref]) return estilosGlobais[styleMapParaStyle[ref]] || null;
+    return null;
+  }
+
   placemarks.forEach(pm => {
     const nameEl = getFirstByTag(pm,'name');
     const props = { name: nameEl ? nameEl.textContent.trim() : '' };
     getByTag(pm,'SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
 
-    // Cor: tenta primeiro um <Style> inline dentro do próprio Placemark,
-    // senão segue o <styleUrl> até o <Style id="..."> correspondente no documento.
+    // Cor: tenta primeiro um <Style> inline dentro do próprio Placemark; senão segue o
+    // <styleUrl> — que pode apontar direto para um <Style> ou indiretamente via <StyleMap>.
     const styleInline = getFirstByTag(pm, 'Style');
     let cor = styleInline ? extrairCorDoStyle(styleInline) : null;
     if (!cor) {
       const styleUrlEl = getFirstByTag(pm, 'styleUrl');
       if (styleUrlEl) {
         const ref = styleUrlEl.textContent.trim().replace(/^#/, '');
-        cor = estilosGlobais[ref] || null;
+        cor = resolverCorPorStyleUrl(ref);
       }
     }
     if (cor) props._corKml = cor;
@@ -2944,9 +3023,15 @@ function renderConfigCidades() {
     <div class="card" style="margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span class="badge purple">${c.prefixo}</span>
-        ${c.regional?`<span class="badge gray">${c.regional}</span>`:''}
-        <strong style="font-size:13px">${c.nome}</strong>
-        <button class="btn danger sm" style="margin-left:auto" onclick="removerCidade(${i})"><i class="ti ti-trash"></i></button>
+        <input type="text" value="${c.nome}" onchange="editarCidadeCampo(${i},'nome',this.value)"
+          style="flex:1;padding:5px 8px;font-size:13px;font-weight:600;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+        <button class="btn danger sm" onclick="removerCidade(${i})"><i class="ti ti-trash"></i></button>
+      </div>
+      <div class="field" style="margin-bottom:8px">
+        <label style="font-size:10.5px">Regional <span style="color:var(--text3);font-weight:400">(ex: AGSU, AMSE)</span></label>
+        <input type="text" value="${c.regional||''}" onchange="editarCidadeCampo(${i},'regional',this.value.toUpperCase())"
+          placeholder="Sem regional definida"
+          style="padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);text-transform:uppercase">
       </div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:6px">DMCs: ${c.dmcs.join(', ')}</div>
       <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">WhatsApp</div>
@@ -2963,6 +3048,17 @@ function renderConfigCidades() {
         <i class="ti ti-plus"></i> Adicionar contato
       </button>
     </div>`).join('');
+}
+
+// Edita um campo simples da cidade (nome, regional) e salva no Firestore
+async function editarCidadeCampo(idx, campo, valor) {
+  const c = S.cidades[idx];
+  if (!c) return;
+  valor = valor.trim();
+  c[campo] = valor;
+  await salvarCidadeFirestore(c);
+  popularSelectRegionais();
+  toast('Cidade atualizada');
 }
 
 function editarWACidade(cidIdx, waIdx, valor) {

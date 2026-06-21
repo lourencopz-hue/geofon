@@ -852,9 +852,16 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <p style="font-size:13px;color:var(--text2);margin-bottom:4px">
       <span class="id-badge" id="wa-confirm-id" style="font-size:12px">—</span>
     </p>
-    <p style="font-size:13px;color:var(--text2);margin-bottom:18px">
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
       Deseja notificar a equipe de <strong id="wa-confirm-cidade">—</strong> agora por WhatsApp?
     </p>
+    <!-- Aparece só quando o ponto tem foto: passo explícito, sem depender de timing -->
+    <div id="wa-confirm-foto-wrap" class="hidden" style="background:var(--blue-l);border-radius:var(--radius-lg);padding:10px;margin-bottom:14px;text-align:left">
+      <div style="font-size:11.5px;color:var(--blue-d);margin-bottom:8px"><i class="ti ti-camera" style="margin-right:4px"></i>Este ponto tem foto — compartilhe primeiro, depois notifique:</div>
+      <button class="btn sm" style="width:100%;justify-content:center;background:var(--bg)" onclick="compartilharFotoDoModal()">
+        <i class="ti ti-share"></i> Compartilhar foto agora
+      </button>
+    </div>
     <div style="display:flex;gap:8px">
       <button class="btn" style="flex:1;justify-content:center" onclick="pularNotificacaoWhatsApp()">
         Agora não
@@ -2009,7 +2016,33 @@ function abrirPerguntaWhatsApp(pontoSalvo) {
   const c = S.cidades.find(c => c.id === pontoSalvo.cidade);
   document.getElementById('wa-confirm-id').textContent = pontoSalvo.id;
   document.getElementById('wa-confirm-cidade').textContent = c ? c.nome : pontoSalvo.cidade;
+  const fotoWrap = document.getElementById('wa-confirm-foto-wrap');
+  const temFotos = pontoSalvo.fotosBase64 && pontoSalvo.fotosBase64.length > 0;
+  fotoWrap.classList.toggle('hidden', !temFotos);
   openModal('modal-wa-confirm');
+}
+
+// Compartilha a foto diretamente a partir do modal — ação explícita e visível,
+// sem depender de um botão temporário que poderia passar despercebido.
+async function compartilharFotoDoModal() {
+  const ponto = S._ultimoPontoSalvo;
+  if (!ponto || !ponto.fotosBase64 || !ponto.fotosBase64.length) { toast('Nenhuma foto para compartilhar'); return; }
+  if (!navigator.share) {
+    toast('💡 Este navegador não compartilha arquivos — abra a galeria e envie manualmente no WhatsApp');
+    return;
+  }
+  try {
+    const b64 = ponto.fotosBase64[0];
+    const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
+    const byteStr = atob(b64.split(',')[1]);
+    const arr = new Uint8Array(byteStr.length);
+    for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
+    const blob = new Blob([arr], {type:mime});
+    const file = new File([blob], 'vazamento_' + ponto.id + '.jpg', {type:mime});
+    await navigator.share({ title:'Vazamento ' + ponto.id, files:[file] });
+  } catch(e) {
+    // Usuário cancelou o compartilhamento — não é erro, só não faz nada
+  }
 }
 
 function pularNotificacaoWhatsApp() {
@@ -2161,8 +2194,10 @@ function comprimirImagem(file) {
   });
 }
 
-function handlePhotos(input) {
-  Array.from(input.files).forEach(async f => {
+async function handlePhotos(input) {
+  const arquivos = Array.from(input.files);
+  input.value = ''; // limpa já, antes de processar, para permitir selecionar os mesmos arquivos de novo se precisar
+  for (const f of arquivos) {
     try {
       const dataUrlComprimida = await comprimirImagem(f);
       S.photos.push(dataUrlComprimida); // já usamos a versão comprimida pra preview também
@@ -2172,8 +2207,7 @@ function handlePhotos(input) {
     } catch(err) {
       toast('Erro ao processar foto: ' + (err.message||err));
     }
-  });
-  input.value = '';
+  }
 }
 function renderPhotos() {
   const g = document.getElementById('photo-grid');
@@ -2215,6 +2249,9 @@ async function enviarFotosParaStorageDireto(leakId, fotosBase64) {
 // ================================================================
 // Envia notificação de WhatsApp para um ponto que JÁ foi salvo no mapa.
 // Recebe o objeto retornado por salvarPonto() (id, cidade, dados, fotosBase64).
+// A foto (se houver) já foi oferecida para compartilhamento explícito ANTES desta
+// função ser chamada (ver botão "Compartilhar foto agora" no modal de confirmação),
+// então aqui só cuidamos de abrir o WhatsApp com o texto para os números cadastrados.
 function enviarWhatsAppDoponto(ponto) {
   const c = S.cidades.find(c => c.id === ponto.cidade);
   if (!c) { toast('Cidade não encontrada'); return; }
@@ -2236,7 +2273,7 @@ function enviarWhatsAppDoponto(ponto) {
     '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' +
     '📍 *Localização:* ' + maps + '\n' +
     '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') + '\n' +
-    (temFotos ? '📸 Fotos seguem em seguida nesta conversa\n' : '') +
+    (temFotos ? '📸 Foto enviada separadamente nesta conversa\n' : '') +
     '\n_Enviado via GeoFon_';
 
   const msg = encodeURIComponent(texto);
@@ -2246,40 +2283,6 @@ function enviarWhatsAppDoponto(ponto) {
   c.wa.forEach((num, i) => {
     setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800);
   });
-
-  // Foto é uma etapa separada e opcional: como o WhatsApp Web/app não permite anexar
-  // foto programaticamente a um número específico, oferecemos o compartilhamento nativo
-  // (que pede pra escolher o destino) só pra quem realmente tem foto pra mandar.
-  if (temFotos) {
-    setTimeout(() => abrirCompartilharFotoOpcional(ponto), c.wa.length * 800 + 400);
-  }
-}
-
-function abrirCompartilharFotoOpcional(ponto) {
-  if (!navigator.share) {
-    toast('💡 Abra a galeria e envie as ' + ponto.fotosBase64.length + ' foto(s) manualmente no WhatsApp');
-    return;
-  }
-  toast('📸 Toque para compartilhar a foto do vazamento ' + ponto.id);
-  const btn = document.createElement('button');
-  btn.className = 'wa-btn';
-  btn.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:9999;width:auto;padding:12px 20px';
-  btn.innerHTML = '<i class="ti ti-camera" style="font-size:16px"></i> Compartilhar foto do ' + ponto.id;
-  btn.onclick = async () => {
-    try {
-      const b64 = ponto.fotosBase64[0];
-      const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
-      const byteStr = atob(b64.split(',')[1]);
-      const arr = new Uint8Array(byteStr.length);
-      for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
-      const blob = new Blob([arr], {type:mime});
-      const file = new File([blob], 'vazamento_' + ponto.id + '.jpg', {type:mime});
-      await navigator.share({ title:'Vazamento ' + ponto.id, files:[file] });
-    } catch(e) {}
-    btn.remove();
-  };
-  document.body.appendChild(btn);
-  setTimeout(() => btn.remove(), 15000);
 }
 
 // ================================================================

@@ -3677,17 +3677,102 @@ function renderConfigEquipes() {
   if(!el) return;
   el.innerHTML=S.equipes.map((e,i)=>{
     const qtdUsuarios = (S.usuarios||[]).filter(u => u.equipe === e.id).length;
-    return `<div class="card" style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:8px">
+    const qtdVazamentos = S.leaks.filter(l => l.equipe === e.id).length;
+    return `<div class="card" style="margin-bottom:6px;padding:10px">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleExpandirEquipe(${i})">
         <span class="badge blue">${e.codigo}</span>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:500">${e.nome}</div>
-          <div style="font-size:11px;color:var(--text2)">+${e.wa}${qtdUsuarios?' · '+qtdUsuarios+' usuário(s) vinculado(s)':''}</div>
+        <span style="font-size:13px;font-weight:600;flex:1">${e.nome}</span>
+        <span style="font-size:10.5px;color:var(--text2)">${qtdUsuarios} usuário(s)</span>
+        <i class="ti ti-chevron-down" id="chev-equipe-${i}" style="font-size:14px;color:var(--text2);transition:transform .15s"></i>
+      </div>
+      <div id="equipe-expand-${i}" class="hidden" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+        <div class="field" style="margin-bottom:8px">
+          <label style="font-size:10.5px">Nome da equipe</label>
+          <input type="text" value="${e.nome}" onchange="editarEquipeCampo(${i},'nome',this.value)"
+            style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
         </div>
-        <button class="btn danger sm" onclick="removerEquipe(${i})"><i class="ti ti-trash"></i></button>
+        <div class="field" style="margin-bottom:8px">
+          <label style="font-size:10.5px">Número WhatsApp do responsável</label>
+          <input type="text" value="${e.wa||''}" onchange="editarEquipeCampo(${i},'wa',this.value)"
+            style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+        </div>
+        <div class="field" style="margin-bottom:8px">
+          <label style="font-size:10.5px">Código <span style="color:var(--text3);font-weight:400">(usado no ID dos vazamentos)</span></label>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="codigo-equipe-edit-${i}" value="${e.codigo}" maxlength="6"
+              style="flex:1;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);text-transform:uppercase;font-family:monospace"
+              oninput="this.value=this.value.toUpperCase()">
+            <button class="btn sm" onclick="confirmarMigrarCodigoEquipe(${i})"><i class="ti ti-replace"></i> Migrar</button>
+          </div>
+          <p style="font-size:10px;color:var(--text3);margin-top:4px">${qtdVazamentos} vazamento(s) já registrados mantêm o ID antigo; só os novos usarão o código atualizado.</p>
+        </div>
+        <button class="btn danger sm" style="width:100%;justify-content:center" onclick="removerEquipe(${i})">
+          <i class="ti ti-trash"></i> Remover equipe
+        </button>
       </div>
     </div>`;
   }).join('');
+}
+
+function toggleExpandirEquipe(idx) {
+  const div = document.getElementById('equipe-expand-' + idx);
+  const chev = document.getElementById('chev-equipe-' + idx);
+  const abrindo = div.classList.contains('hidden');
+  div.classList.toggle('hidden');
+  chev.style.transform = abrindo ? 'rotate(180deg)' : 'rotate(0deg)';
+}
+
+async function editarEquipeCampo(idx, campo, valor) {
+  const e = S.equipes[idx];
+  if (!e) return;
+  e[campo] = valor.trim();
+  await salvarEquipeFirestore(e);
+  toast('Equipe atualizada');
+}
+
+// Migra o código/ID de uma equipe (ex: EQ1 -> EQ01), seguindo a mesma lógica segura
+// usada para o prefixo de cidade: cria a equipe nova, atualiza usuários e vazamentos
+// vinculados (só o campo interno, o ID antigo permanece no nome dos vazamentos já
+// registrados), e remove a equipe antiga.
+async function confirmarMigrarCodigoEquipe(idx) {
+  const e = S.equipes[idx];
+  if (!e) return;
+  const novoCodigo = document.getElementById('codigo-equipe-edit-' + idx).value.trim().toUpperCase();
+  if (!novoCodigo) { toast('Informe o novo código'); return; }
+  if (novoCodigo === e.codigo) { toast('O código já é esse'); return; }
+  if (S.equipes.find(e2 => e2.id === novoCodigo)) { toast('Já existe uma equipe com esse código'); return; }
+
+  const qtdVazamentos = S.leaks.filter(l => l.equipe === e.id).length;
+  const qtdUsuarios = (S.usuarios||[]).filter(u => u.equipe === e.id).length;
+  const aviso = `Migrar "${e.codigo}" para "${novoCodigo}"?\n\n` +
+    `${qtdVazamentos} vazamento(s) e ${qtdUsuarios} usuário(s) serão atualizados.\n` +
+    `Vazamentos já existentes mantêm o ID antigo (ex: CIA-${e.codigo}-VAZ001) — só a equipe vinculada é corrigida.\n\n` +
+    `Esta operação não pode ser desfeita automaticamente.`;
+  if (!confirm(aviso)) return;
+
+  toast('Migrando... isso pode levar alguns segundos');
+  const { db, doc, setDoc } = window.FB;
+
+  // 1) Cria a equipe nova com o código atualizado
+  const equipeNova = { ...e, id: novoCodigo, codigo: novoCodigo };
+  await setDoc(doc(db, 'equipes', novoCodigo), equipeNova);
+
+  // 2) Atualiza vazamentos vinculados (campo "equipe", mantendo o ID/nome do documento)
+  const leaksParaMigrar = S.leaks.filter(l => l.equipe === e.id);
+  for (const l of leaksParaMigrar) {
+    await setDoc(doc(db, 'leaks', l.id), { equipe: novoCodigo }, { merge:true });
+  }
+
+  // 3) Atualiza usuários vinculados a essa equipe
+  const usuariosParaMigrar = (S.usuarios||[]).filter(u => u.equipe === e.id);
+  for (const u of usuariosParaMigrar) {
+    await setDoc(doc(db, 'usuarios', u.uid), { equipe: novoCodigo }, { merge:true });
+  }
+
+  // 4) Remove a equipe antiga
+  await setDoc(doc(db, 'equipes', e.id), { removida:true }, { merge:true });
+
+  toast(`✓ Migração concluída: ${e.codigo} → ${novoCodigo}`);
 }
 
 function addWAField(value) {

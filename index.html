@@ -1481,7 +1481,7 @@ function iniciarSincronizacaoFirestore() {
 // a página) — religa os intervalos de checkpoint/relógio e atualiza o botão da toolbar.
 function restaurarCampanhaPropria(id, dados) {
   const inicioMs = dados.iniciadoEm?.toMillis ? dados.iniciadoEm.toMillis() : Date.now();
-  S.campanhaAtual = { id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: dados.pontos||[], inicioMs, programadaId: dados.programadaOrigemId||null };
+  S.campanhaAtual = { id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: pontosDoCampo(dados), inicioMs, programadaId: dados.programadaOrigemId||null };
   const btn = document.getElementById('btn-campanha');
   if (btn) { btn.style.background = 'var(--purple)'; btn.style.color = '#fff'; }
   const label = document.getElementById('btn-campanha-label');
@@ -2061,11 +2061,15 @@ async function iniciarCampanhaProgramada(programadaId) {
 async function efetivamenteIniciarCampanha({ nome, dmc, cidade, programadaId }) {
   const id = 'campanha_' + Date.now() + '_' + (S.user?.uid || '').slice(0,6);
   const corUsuario = S.userDoc?.corCampanha || corPadraoPorUid(S.user?.uid);
+  const pontosIniciais = [[S.pos.lat, S.pos.lng]];
   const dados = {
     id, nome, dmc, cidade,
     usuarioUid: S.user?.uid || '', usuarioNome: S.user?.nome || S.user?.email || '',
     cor: corUsuario,
-    pontos: [[S.pos.lat, S.pos.lng]],
+    // O Firestore não aceita "lista dentro de lista" direto num campo — por isso o
+    // trajeto (lista de pares [lat,lng]) é guardado como texto (JSON.stringify) e
+    // convertido de volta ao ler (ver pontosDoCampo / redesenharCampanhasNoMapa).
+    pontosStr: JSON.stringify(pontosIniciais),
     iniciadoEm: window.FB.serverTimestamp(),
     atualizadoEm: window.FB.serverTimestamp(),
     ativa: true,
@@ -2081,7 +2085,7 @@ async function efetivamenteIniciarCampanha({ nome, dmc, cidade, programadaId }) 
     }, { merge:true });
   }
 
-  S.campanhaAtual = { id, nome, dmc, cidade, pontos: [[S.pos.lat, S.pos.lng]], inicioMs: Date.now(), programadaId };
+  S.campanhaAtual = { id, nome, dmc, cidade, pontos: pontosIniciais, inicioMs: Date.now(), programadaId };
   closeModal('modal-campanha');
   toast('🚶 Campanha "' + nome + '" iniciada! Seu trajeto está sendo registrado.');
 
@@ -2112,7 +2116,7 @@ async function salvarCheckpointCampanha() {
   if (!S.campanhaAtual) return;
   try {
     await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.id), {
-      pontos: S.campanhaAtual.pontos,
+      pontosStr: JSON.stringify(S.campanhaAtual.pontos),
       atualizadoEm: window.FB.serverTimestamp()
     }, { merge:true });
   } catch(e) { console.warn('Erro ao salvar checkpoint da campanha:', e); }
@@ -2188,6 +2192,16 @@ function distanciaTotalPercurso(pontos) {
   return total;
 }
 
+// Lê o trajeto de um documento de campanha vindo do Firestore — sempre em formato
+// texto (pontosStr), convertendo de volta para a lista de pares [lat,lng]. Aceita
+// também o formato antigo "pontos" (array direto), caso algum documento legado exista.
+function pontosDoCampo(dados) {
+  if (dados.pontosStr) {
+    try { return JSON.parse(dados.pontosStr); } catch(e) { return []; }
+  }
+  return dados.pontos || [];
+}
+
 // Cor padrão por usuário, usada só se o admin ainda não tiver definido uma cor
 // específica em Usuários e Permissões — garante que sempre exista alguma cor,
 // determinística (mesmo uid sempre gera a mesma cor) para não mudar a cada sessão.
@@ -2218,7 +2232,8 @@ function redesenharCampanhasNoMapa() {
   });
 
   Object.entries(S.campanhasAtivas).forEach(([id, dados]) => {
-    if (!dados.pontos || dados.pontos.length < 2) return;
+    const pontos = pontosDoCampo(dados);
+    if (!pontos || pontos.length < 2) return;
     const cor = dados.cor || corPadraoPorUid(dados.usuarioUid);
     const ehMinha = dados.usuarioUid === S.user?.uid;
     const estilo = { color: cor, weight: ehMinha ? 5 : 4, opacity: dados.ativa ? 0.9 : 0.5, dashArray: dados.ativa ? null : '6,5' };
@@ -2227,10 +2242,10 @@ function redesenharCampanhasNoMapa() {
     [{ mapa: mapField, chave: 'field' }, { mapa: mapPC, chave: 'pc' }].forEach(({ mapa, chave }) => {
       if (!mapa) return;
       if (S.campanhasPolylines[id][chave]) {
-        S.campanhasPolylines[id][chave].setLatLngs(dados.pontos);
+        S.campanhasPolylines[id][chave].setLatLngs(pontos);
         S.campanhasPolylines[id][chave].setStyle(estilo);
       } else {
-        const linha = L.polyline(dados.pontos, estilo).addTo(mapa);
+        const linha = L.polyline(pontos, estilo).addTo(mapa);
         linha.bindPopup('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + (dados.ativa ? ' · em andamento' : ' · finalizada') + '</small>');
         S.campanhasPolylines[id][chave] = linha;
       }
@@ -2251,7 +2266,7 @@ function renderCampanhasColegas() {
   }
   el.innerHTML = ativas.map(([id, c]) => {
     const cor = c.cor || corPadraoPorUid(c.usuarioUid);
-    const dist = distanciaTotalPercurso(c.pontos||[]);
+    const dist = distanciaTotalPercurso(pontosDoCampo(c));
     const distTxt = dist < 1000 ? Math.round(dist)+'m' : (dist/1000).toFixed(1)+'km';
     const ehMinha = c.usuarioUid === S.user?.uid;
     // Admin/supervisor podem encerrar campanhas de outros que ficaram esquecidas
@@ -2332,7 +2347,7 @@ async function programarCampanha() {
     equipesDesignadas,
     criadoPor: S.user?.uid || '', criadoPorNome: S.user?.nome || S.user?.email || '',
     criadoEm: window.FB.serverTimestamp(),
-    pontos: [], ativa: false
+    pontosStr: JSON.stringify([]), ativa: false
   });
   toast('✓ Campanha "' + nome + '" programada!');
   document.getElementById('prog-nome-livre').value = '';

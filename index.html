@@ -308,6 +308,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div class="tab active" onclick="switchTab('map-pc','tabs-pc')" data-tab="map-pc">
     <i class="ti ti-map"></i>Mapa
   </div>
+  <div class="tab" onclick="switchTab('campanhas-pc','tabs-pc')" data-tab="campanhas-pc">
+    <i class="ti ti-route"></i>Campanhas
+  </div>
   <div class="tab" onclick="switchTab('manage','tabs-pc')" data-tab="manage">
     <i class="ti ti-database"></i>Gestão
   </div>
@@ -323,6 +326,50 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- PANELS -->
+<!-- PC: CAMPANHAS (programação) -->
+<div class="panel" id="campanhas-pc" style="display:none">
+  <div class="pc-split" style="overflow:hidden">
+    <div style="flex:1;overflow-y:auto;padding:14px;border-right:1px solid var(--border);max-width:380px">
+      <div class="section-title">Programar nova campanha</div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="field">
+          <label>Regional <span style="color:var(--text3);font-weight:400">(opcional, só pra filtrar)</span></label>
+          <select id="prog-regional" onchange="onFiltroRegionalChange('prog-regional','prog-cidade')">
+            <option value="">Todas as regionais</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Cidade</label>
+          <select id="prog-cidade" onchange="popularSelectDMCProgramacao()">
+            <option value="">Selecione a cidade...</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Vincular a um DMC <span style="color:var(--text3);font-weight:400">(opcional)</span></label>
+          <select id="prog-dmc">
+            <option value="">Campanha livre (sem DMC)</option>
+          </select>
+        </div>
+        <div class="field" id="prog-nome-livre-wrap">
+          <label>Nome da área <span style="color:var(--text3);font-weight:400">(para áreas ainda sem DMC mapeado)</span></label>
+          <input type="text" id="prog-nome-livre" placeholder="Ex: Bairro Centenário - Setor 2">
+        </div>
+        <div class="field">
+          <label>Equipes designadas <span style="color:var(--text3);font-weight:400">(referência — qualquer equipe pode iniciar)</span></label>
+          <div id="prog-equipes-checkboxes" style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto;padding:8px;border:1px solid var(--border);border-radius:var(--radius)"></div>
+        </div>
+        <button class="btn primary btn-block" onclick="programarCampanha()">
+          <i class="ti ti-calendar-plus"></i> Programar campanha
+        </button>
+      </div>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px">
+      <div class="section-title">Campanhas programadas</div>
+      <div id="campanhas-programadas-list"></div>
+    </div>
+  </div>
+</div>
+
 <!-- PC: USUÁRIOS -->
 <div class="panel" id="usuarios" style="display:none">
   <div class="panel-scroll">
@@ -950,24 +997,36 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="modal-close" onclick="closeModal('modal-campanha')"><i class="ti ti-x"></i></button>
     </div>
 
-    <!-- ESTADO 1: nenhuma campanha em andamento — escolher e iniciar -->
+    <!-- ESTADO 1: nenhuma campanha em andamento — escolher entre programadas ou livre -->
     <div id="campanha-iniciar-wrap">
       <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">
         Ao iniciar, seu trajeto será desenhado no mapa em tempo real para toda a equipe acompanhar. Mantenha o GeoFon aberto na tela durante o percurso.
       </p>
-      <div class="field">
-        <label>Vincular a um DMC <span style="color:var(--text3);font-weight:400">(opcional)</span></label>
-        <select id="campanha-dmc">
-          <option value="">Campanha livre (sem DMC)</option>
-        </select>
+
+      <div class="section-title">Campanhas programadas</div>
+      <div id="campanhas-programadas-celular-list" style="margin-bottom:14px">
+        <p style="font-size:11.5px;color:var(--text2);text-align:center;padding:12px">Nenhuma campanha programada pelo gestor.</p>
       </div>
-      <div class="field" id="campanha-nome-livre-wrap">
-        <label>Nome da área <span style="color:var(--text3);font-weight:400">(para áreas ainda sem DMC mapeado)</span></label>
-        <input type="text" id="campanha-nome-livre" placeholder="Ex: Bairro Centenário - Setor 2">
-      </div>
-      <button class="btn primary btn-block" onclick="iniciarCampanha()">
-        <i class="ti ti-player-play"></i> Iniciar campanha
+
+      <button type="button" class="btn sm" style="width:100%;justify-content:center;margin-bottom:10px" onclick="toggleCampanhaLivreForm()">
+        <i class="ti ti-chevron-down" id="campanha-livre-icon"></i>
+        <span id="campanha-livre-label">Criar campanha livre (imprevisto)</span>
       </button>
+      <div id="campanha-livre-form-wrap" class="hidden">
+        <div class="field">
+          <label>Vincular a um DMC <span style="color:var(--text3);font-weight:400">(opcional)</span></label>
+          <select id="campanha-dmc">
+            <option value="">Campanha livre (sem DMC)</option>
+          </select>
+        </div>
+        <div class="field" id="campanha-nome-livre-wrap">
+          <label>Nome da área <span id="campanha-rua-status" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
+          <input type="text" id="campanha-nome-livre" placeholder="Identificando pelo GPS...">
+        </div>
+        <button class="btn primary btn-block" onclick="iniciarCampanha()">
+          <i class="ti ti-player-play"></i> Iniciar campanha livre
+        </button>
+      </div>
     </div>
 
     <!-- ESTADO 2: campanha em andamento (minha) -->
@@ -1247,6 +1306,7 @@ function aplicarPermissoesUI() {
   const tabConfig = document.querySelector('[data-tab="config"]');
   const tabManage = document.querySelector('[data-tab="manage"]');
   const tabUsuarios = document.querySelector('[data-tab="usuarios"]');
+  const tabCampanhas = document.querySelector('[data-tab="campanhas-pc"]');
 
   if (role === 'tecnico') {
     // Técnico: só modo campo, sem acesso a Gestão/Config/Usuários
@@ -1258,8 +1318,9 @@ function aplicarPermissoesUI() {
   // Apenas admin vê Configurações e Usuários (cadastros e permissões)
   if (tabConfig) tabConfig.classList.toggle('hidden', role !== 'admin');
   if (tabUsuarios) tabUsuarios.classList.toggle('hidden', role !== 'admin');
-  // Supervisor e admin podem ver Gestão; técnico não usa modo PC mesmo
+  // Supervisor e admin podem ver Gestão e programar Campanhas; técnico não usa modo PC mesmo
   if (tabManage) tabManage.classList.toggle('hidden', role === 'tecnico');
+  if (tabCampanhas) tabCampanhas.classList.toggle('hidden', role === 'tecnico');
 }
 
 // Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
@@ -1386,6 +1447,7 @@ function iniciarSincronizacaoFirestore() {
     const todasAtivas = {};
     snap.docs.forEach(docSnap => {
       const dados = docSnap.data();
+      if (dados.removida) return;
       // Campanha ainda ativa OU finalizada há menos de 7 dias continua visível no mapa
       const finalizadoMs = dados.finalizadoEm?.toMillis ? dados.finalizadoEm.toMillis() : null;
       const expirou = !dados.ativa && finalizadoMs && finalizadoMs < seteDiasAtrasMs;
@@ -1403,6 +1465,11 @@ function iniciarSincronizacaoFirestore() {
     }
     redesenharCampanhasNoMapa();
     renderCampanhasColegas();
+    renderCampanhasProgramadasDesktop();
+    // Atualiza a lista do celular só se o modal estiver de fato aberto na tela 1
+    // (evita erro se os elementos ainda não existirem nesse momento da sincronização)
+    const wrapCelular = document.getElementById('campanhas-programadas-celular-list');
+    if (wrapCelular) renderCampanhasProgramadasCelular();
   });
 
   initFieldMap();
@@ -1414,7 +1481,7 @@ function iniciarSincronizacaoFirestore() {
 // a página) — religa os intervalos de checkpoint/relógio e atualiza o botão da toolbar.
 function restaurarCampanhaPropria(id, dados) {
   const inicioMs = dados.iniciadoEm?.toMillis ? dados.iniciadoEm.toMillis() : Date.now();
-  S.campanhaAtual = { id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: dados.pontos||[], inicioMs };
+  S.campanhaAtual = { id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: dados.pontos||[], inicioMs, programadaId: dados.programadaOrigemId||null };
   const btn = document.getElementById('btn-campanha');
   if (btn) { btn.style.background = 'var(--purple)'; btn.style.color = '#fff'; }
   const label = document.getElementById('btn-campanha-label');
@@ -1876,18 +1943,67 @@ let campanhaIntervaloSalvar = null;
 let campanhaIntervaloRelogio = null;
 
 function abrirPainelCampanha() {
-  // Popula o select de DMC (todos, de todas as cidades — útil já que a equipe atende a região toda)
+  // Popula o select de DMC do formulário livre (todos, de todas as cidades)
   const sel = document.getElementById('campanha-dmc');
   sel.innerHTML = '<option value="">Campanha livre (sem DMC)</option>' +
     S.cidades.flatMap(c => c.dmcs.map(d => ({c,d})))
       .map(({c,d}) => `<option value="${c.id}::${d}">${c.prefixo} - ${d}</option>`).join('');
 
+  // Reseta o formulário de campanha livre a cada abertura — começa fechado
+  document.getElementById('campanha-livre-form-wrap').classList.add('hidden');
+  document.getElementById('campanha-livre-icon').className = 'ti ti-chevron-down';
+  document.getElementById('campanha-livre-label').textContent = 'Criar campanha livre (imprevisto)';
+  document.getElementById('campanha-nome-livre').value = '';
+
   const emAndamento = !!S.campanhaAtual;
   document.getElementById('campanha-iniciar-wrap').classList.toggle('hidden', emAndamento);
   document.getElementById('campanha-andamento-wrap').classList.toggle('hidden', !emAndamento);
   if (emAndamento) atualizarPainelCampanhaAndamento();
+  else renderCampanhasProgramadasCelular();
   renderCampanhasColegas();
   openModal('modal-campanha');
+}
+
+// Mostra/esconde o formulário de criar campanha livre — fica fechado por padrão pra
+// dar destaque às campanhas já programadas pelo gestor.
+function toggleCampanhaLivreForm() {
+  const wrap = document.getElementById('campanha-livre-form-wrap');
+  const abrindo = wrap.classList.contains('hidden');
+  wrap.classList.toggle('hidden', !abrindo);
+  document.getElementById('campanha-livre-icon').className = 'ti ' + (abrindo ? 'ti-chevron-up' : 'ti-chevron-down');
+  document.getElementById('campanha-livre-label').textContent = abrindo ? 'Ocultar campanha livre' : 'Criar campanha livre (imprevisto)';
+  if (abrindo && S.pos) {
+    const status = document.getElementById('campanha-rua-status');
+    const input = document.getElementById('campanha-nome-livre');
+    status.textContent = '(buscando rua pelo GPS...)';
+    buscarRuaPorCoordenadas(S.pos.lat, S.pos.lng).then(rua => {
+      if (rua && !input.value) { input.value = rua; status.textContent = '(sugerido pelo GPS — pode corrigir)'; }
+      else { status.textContent = ''; input.placeholder = 'Digite o nome da área'; }
+    });
+  }
+}
+
+// Lista as campanhas PROGRAMADAS pelo gestor (status 'pendente') no modal do celular —
+// um toque inicia direto, sem precisar escolher DMC/nome de novo.
+function renderCampanhasProgramadasCelular() {
+  const el = document.getElementById('campanhas-programadas-celular-list');
+  if (!el) return;
+  const programadas = Object.entries(S.campanhasAtivas).filter(([id,c]) => c.programada && c.status === 'pendente');
+  if (!programadas.length) {
+    el.innerHTML = '<p style="font-size:11.5px;color:var(--text2);text-align:center;padding:12px">Nenhuma campanha programada pelo gestor.</p>';
+    return;
+  }
+  el.innerHTML = programadas.map(([id, c]) => {
+    const equipesTxt = (c.equipesDesignadas||[]).length ? c.equipesDesignadas.join(', ') : 'Qualquer equipe';
+    return `<div class="leak-item" onclick="iniciarCampanhaProgramada('${id}')" style="cursor:pointer">
+      <div class="leak-dot media"></div>
+      <div class="leak-info">
+        <div class="lid">${c.nome}</div>
+        <div class="lmeta">${equipesTxt}</div>
+      </div>
+      <span class="badge blue"><i class="ti ti-player-play" style="font-size:11px"></i> Iniciar</span>
+    </div>`;
+  }).join('');
 }
 
 function atualizarPainelCampanhaAndamento() {
@@ -1912,31 +2028,67 @@ async function iniciarCampanha() {
     toast('Selecione um DMC ou informe o nome da área');
     return;
   }
+  await efetivamenteIniciarCampanha({ nome, dmc, cidade: cidadeId, programadaId: null });
+}
 
+// Inicia uma campanha que já estava programada pelo gestor — só precisa do toque,
+// sem escolher DMC/nome de novo. Antes de iniciar, avisa (sem bloquear) se o técnico
+// parece estar longe da área programada — útil pra evitar começar no DMC errado.
+async function iniciarCampanhaProgramada(programadaId) {
+  if (S.campanhaAtual) { toast('Você já tem uma campanha em andamento'); return; }
+  if (!S.pos) { toast('Aguardando GPS...'); return; }
+  const prog = S.campanhasAtivas[programadaId];
+  if (!prog) { toast('Campanha não encontrada'); return; }
+
+  // Aviso de geofencing: compara a posição atual com o centro da cidade vinculada
+  // (aproximação simples — não exige o polígono exato do DMC, só um alerta de bom senso)
+  if (prog.cidade) {
+    const cidadeAlvo = S.cidades.find(c => c.id === prog.cidade);
+    if (cidadeAlvo && cidadeAlvo.coords) {
+      const distKm = distanciaMetros(S.pos.lat, S.pos.lng, cidadeAlvo.coords[0], cidadeAlvo.coords[1]) / 1000;
+      if (distKm > 15) {
+        const continuar = confirm('Você está a ' + distKm.toFixed(0) + ' km de ' + cidadeAlvo.nome + ', área desta campanha. Iniciar mesmo assim?');
+        if (!continuar) return;
+      }
+    }
+  }
+
+  await efetivamenteIniciarCampanha({ nome: prog.nome, dmc: prog.dmc, cidade: prog.cidade, programadaId });
+}
+
+// Lógica comum de início de campanha (livre ou programada) — cria o documento no
+// Firestore, liga os intervalos de checkpoint/relógio, atualiza a UI.
+async function efetivamenteIniciarCampanha({ nome, dmc, cidade, programadaId }) {
   const id = 'campanha_' + Date.now() + '_' + (S.user?.uid || '').slice(0,6);
   const corUsuario = S.userDoc?.corCampanha || corPadraoPorUid(S.user?.uid);
   const dados = {
-    id, nome, dmc, cidade: cidadeId,
+    id, nome, dmc, cidade,
     usuarioUid: S.user?.uid || '', usuarioNome: S.user?.nome || S.user?.email || '',
     cor: corUsuario,
     pontos: [[S.pos.lat, S.pos.lng]],
     iniciadoEm: window.FB.serverTimestamp(),
     atualizadoEm: window.FB.serverTimestamp(),
-    ativa: true
+    ativa: true,
+    programadaOrigemId: programadaId || null
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', id), dados);
 
-  S.campanhaAtual = { id, nome, dmc, cidade: cidadeId, pontos: [[S.pos.lat, S.pos.lng]], inicioMs: Date.now() };
+  // Se veio de uma campanha programada, marca a programação como "em andamento"
+  // (status visível no painel do desktop, sem precisar abrir o mapa)
+  if (programadaId) {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', programadaId), {
+      status: 'em_andamento', execucaoId: id, iniciadaPor: S.user?.nome || S.user?.email || ''
+    }, { merge:true });
+  }
+
+  S.campanhaAtual = { id, nome, dmc, cidade, pontos: [[S.pos.lat, S.pos.lng]], inicioMs: Date.now(), programadaId };
   closeModal('modal-campanha');
   toast('🚶 Campanha "' + nome + '" iniciada! Seu trajeto está sendo registrado.');
 
-  // Botão da toolbar reflete visualmente que há uma campanha ativa
   const btn = document.getElementById('btn-campanha');
   btn.style.background = 'var(--purple)'; btn.style.color = '#fff';
   document.getElementById('btn-campanha-label').textContent = 'Em campanha';
 
-  // Salva um checkpoint a cada 15s (evita gravar a cada metro, economiza leitura/escrita
-  // do Firestore) e atualiza o relógio/distância na tela a cada 1s.
   if (campanhaIntervaloSalvar) clearInterval(campanhaIntervaloSalvar);
   campanhaIntervaloSalvar = setInterval(salvarCheckpointCampanha, 15000);
   if (campanhaIntervaloRelogio) clearInterval(campanhaIntervaloRelogio);
@@ -1990,6 +2142,14 @@ async function finalizarCampanha() {
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.id), {
     ativa: false, finalizadoEm: window.FB.serverTimestamp()
   }, { merge:true });
+
+  // Se essa campanha veio de uma programação, marca a programação como concluída
+  // (status visível pro admin no painel do desktop)
+  if (S.campanhaAtual.programadaId) {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.programadaId), {
+      status: 'concluida'
+    }, { merge:true });
+  }
 
   if (campanhaIntervaloSalvar) { clearInterval(campanhaIntervaloSalvar); campanhaIntervaloSalvar = null; }
   if (campanhaIntervaloRelogio) { clearInterval(campanhaIntervaloRelogio); campanhaIntervaloRelogio = null; }
@@ -2120,6 +2280,102 @@ async function encerrarCampanhaDeOutro(campanhaId) {
     ativa: false, finalizadoEm: window.FB.serverTimestamp()
   }, { merge:true });
   toast('Campanha encerrada');
+}
+
+// ================================================================
+// PROGRAMAÇÃO DE CAMPANHA (Desktop) — admin/supervisor planejam com
+// antecedência, indicando DMC/área e equipes designadas (referência).
+// ================================================================
+function popularSelectDMCProgramacao() {
+  const cid = document.getElementById('prog-cidade').value;
+  const sel = document.getElementById('prog-dmc');
+  const c = S.cidades.find(c => c.id === cid);
+  sel.innerHTML = '<option value="">Campanha livre (sem DMC)</option>' +
+    (c ? c.dmcs.map(d => `<option value="${d}">${d}</option>`).join('') : '');
+}
+
+function renderProgEquipesCheckboxes() {
+  const el = document.getElementById('prog-equipes-checkboxes');
+  if (!el) return;
+  if (!S.equipes.length) { el.innerHTML = '<p style="font-size:11px;color:var(--text2)">Nenhuma equipe cadastrada.</p>'; return; }
+  el.innerHTML = S.equipes.map(e => `
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+      <input type="checkbox" value="${e.id}" class="prog-equipe-cb" style="cursor:pointer">
+      ${e.codigo} - ${e.nome.split(' - ')[0]}
+    </label>`).join('');
+}
+
+// Cria uma campanha "programada" — um documento na mesma coleção 'campanhas', mas
+// sem trajeto ainda (pontos vazio) e com status 'pendente'. Quando um técnico a inicia
+// pelo celular, ela passa a 'em_andamento' e ganha um trajeto de verdade.
+async function programarCampanha() {
+  const cid = document.getElementById('prog-cidade').value;
+  const dmc = document.getElementById('prog-dmc').value;
+  const nomeLivre = document.getElementById('prog-nome-livre').value.trim();
+  const equipesDesignadas = [...document.querySelectorAll('.prog-equipe-cb:checked')].map(cb => cb.value);
+
+  let nome;
+  if (dmc) {
+    const c = S.cidades.find(c => c.id === cid);
+    nome = (c ? c.nome + ' - ' : '') + dmc;
+  } else if (nomeLivre) {
+    nome = nomeLivre;
+  } else {
+    toast('Selecione um DMC ou informe o nome da área');
+    return;
+  }
+
+  const id = 'campanha_prog_' + Date.now();
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', id), {
+    id, nome, dmc, cidade: cid,
+    programada: true, status: 'pendente',
+    equipesDesignadas,
+    criadoPor: S.user?.uid || '', criadoPorNome: S.user?.nome || S.user?.email || '',
+    criadoEm: window.FB.serverTimestamp(),
+    pontos: [], ativa: false
+  });
+  toast('✓ Campanha "' + nome + '" programada!');
+  document.getElementById('prog-nome-livre').value = '';
+  document.querySelectorAll('.prog-equipe-cb').forEach(cb => cb.checked = false);
+}
+
+const STATUS_CAMPANHA_LABELS = { pendente: 'Pendente', em_andamento: 'Em andamento', concluida: 'Concluída' };
+const STATUS_CAMPANHA_CORES = { pendente: 'gray', em_andamento: 'amber', concluida: 'teal' };
+
+// Lista as campanhas programadas no painel do desktop, com status visível —
+// admin acompanha sem precisar abrir o mapa.
+function renderCampanhasProgramadasDesktop() {
+  const el = document.getElementById('campanhas-programadas-list');
+  if (!el) return;
+  const programadas = Object.entries(S.campanhasAtivas).filter(([id,c]) => c.programada);
+  if (!programadas.length) {
+    el.innerHTML = '<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma campanha programada ainda.</p>';
+    return;
+  }
+  // Mais recentes primeiro
+  programadas.sort((a,b) => (b[1].criadoEm?.toMillis?.()||0) - (a[1].criadoEm?.toMillis?.()||0));
+  el.innerHTML = programadas.map(([id, c]) => {
+    const cor = STATUS_CAMPANHA_CORES[c.status] || 'gray';
+    const label = STATUS_CAMPANHA_LABELS[c.status] || c.status;
+    const equipesTxt = (c.equipesDesignadas||[]).length
+      ? c.equipesDesignadas.map(eid => S.equipes.find(e=>e.id===eid)?.codigo || eid).join(', ')
+      : 'Qualquer equipe';
+    return `<div class="card" style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:600;flex:1">${c.nome}</span>
+        <span class="badge ${cor}">${label}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">Equipes: ${equipesTxt}</div>
+      ${c.iniciadaPor ? `<div style="font-size:11px;color:var(--text2)">Iniciada por: ${c.iniciadaPor}</div>` : ''}
+      <button class="btn danger sm" style="margin-top:8px" onclick="removerCampanhaProgramada('${id}')"><i class="ti ti-trash"></i> Remover</button>
+    </div>`;
+  }).join('');
+}
+
+async function removerCampanhaProgramada(id) {
+  if (!confirm('Remover esta campanha programada?')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', id), { removida: true }, { merge:true });
+  toast('Campanha programada removida');
 }
 
 // Calcula a cidade cadastrada mais próxima da posição GPS atual (distância simples,
@@ -2313,7 +2569,7 @@ function updateIdPreviewQuick() {
 // ================================================================
 function populateSelects() {
   const cidadeIds = ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade','nc-prefixo'];
-  ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade'].forEach(id => {
+  ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade','prog-cidade'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     const cur = el.value;
@@ -2345,6 +2601,8 @@ function populateSelects() {
       repEq.appendChild(o);
     });
   }
+  // Checkboxes de equipe na programação de campanha
+  renderProgEquipesCheckboxes();
   // Regionais (extraídas das cidades cadastradas que têm o campo preenchido)
   popularSelectRegionais();
 }
@@ -2352,7 +2610,7 @@ function populateSelects() {
 // Preenche os selects de Regional com os valores únicos já cadastrados nas cidades
 function popularSelectRegionais() {
   const regionais = [...new Set(S.cidades.map(c => c.regional).filter(Boolean))].sort();
-  ['pc-fr','rep-regional'].forEach(id => {
+  ['pc-fr','rep-regional','prog-regional'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     const cur = el.value;
@@ -4407,6 +4665,7 @@ function switchTab(tabId, tabsId) {
   if(tabId==='map-pc'){initPCMap();setTimeout(()=>{if(mapPC)mapPC.invalidateSize();},100);}
   if(tabId==='manage') renderManage();
   if(tabId==='usuarios') renderUsuariosPanel();
+  if(tabId==='campanhas-pc') { renderProgEquipesCheckboxes(); renderCampanhasProgramadasDesktop(); }
   if(tabId==='register') { voltarParaListaRegistro(); }
 }
 

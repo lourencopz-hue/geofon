@@ -382,6 +382,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           </p>
         </div>
         <div id="register-pending-list"></div>
+        <div style="height:60px"></div>
       </div>
 
       <!-- ESTADO 2: formulário de complementação (some até um ponto ser escolhido) -->
@@ -923,6 +924,20 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
 </div>
 
+<!-- Modal: Detalhes do ponto (usado pela Lista — clique mostra resumo + foto antes de ir ao mapa) -->
+<div class="modal-overlay" id="modal-leak-detalhes">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3 id="leak-detalhes-id" style="font-family:monospace">—</h3>
+      <button class="modal-close" onclick="closeModal('modal-leak-detalhes')"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="leak-detalhes-conteudo"></div>
+    <button class="btn primary btn-block" id="leak-detalhes-ver-mapa" style="margin-top:12px">
+      <i class="ti ti-map-pin"></i> Ver localização no mapa
+    </button>
+  </div>
+</div>
+
 <!-- Modal: Perguntar cidade quando o nome do arquivo não permite identificar automaticamente -->
 <div class="modal-overlay" id="modal-camada-cidade">
   <div class="modal">
@@ -995,6 +1010,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <i class="ti ti-upload"></i> Carregar KML / GeoJSON de redes
     </button>
     <input type="file" id="up-redes-panel" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
+  </div>
+  <!-- Filtro por regional e cidade (mesmo padrão do painel DMC) -->
+  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-regional-filter"></div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap" id="redes-city-filter"></div>
   </div>
   <div style="flex:1;overflow-y:auto;padding:10px 14px" id="redes-panel-list">
     <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.</p>
@@ -2034,7 +2056,9 @@ function renderRegisterPendingList() {
   // priorizando os marcados como "pendenteComplementacao" (criados pelo Novo Ponto rápido).
   const role = S.userDoc?.role;
   let candidatos = S.leaks.filter(l => podeEditarPonto(l));
-  // Pendentes de complementação aparecem primeiro
+  // Mais recentes primeiro (S.leaks vem do Firestore em ordem crescente de criação,
+  // então invertemos), e dentro disso, pendentes de complementação sobem ao topo.
+  candidatos = candidatos.slice().reverse();
   candidatos.sort((a,b) => (b.pendenteComplementacao?1:0) - (a.pendenteComplementacao?1:0));
   if (!candidatos.length) {
     el.innerHTML = '<p style="font-size:12px;color:var(--text2);text-align:center;padding:24px">Nenhum ponto recente para completar.<br>Marque um "Novo ponto" no Mapa primeiro.</p>';
@@ -2043,10 +2067,13 @@ function renderRegisterPendingList() {
   el.innerHTML = candidatos.slice(0,30).map(l => {
     const c = S.cidades.find(c=>c.id===l.cidade);
     const incompleto = l.pendenteComplementacao || !l.tipo;
+    const notificado = l.notificadoWhatsApp
+      ? '<i class="ti ti-brand-whatsapp" style="color:#25D366;font-size:13px" title="Já notificado por WhatsApp"></i>'
+      : '';
     return `<div class="leak-item" onclick="abrirComplementacao('${l.id}')">
       <div class="leak-dot ${l.severidade}"></div>
       <div class="leak-info">
-        <div class="lid">${l.id}</div>
+        <div class="lid">${l.id} ${notificado}</div>
         <div class="ltype">${l.tipo || '(tipo não definido ainda)'}</div>
         <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
       </div>
@@ -2235,9 +2262,16 @@ function pularNotificacaoWhatsApp() {
   S._ultimoPontoSalvo = null;
 }
 
-function confirmarNotificacaoWhatsApp() {
+async function confirmarNotificacaoWhatsApp() {
   closeModal('modal-wa-confirm');
-  if (S._ultimoPontoSalvo) enviarWhatsAppDoponto(S._ultimoPontoSalvo);
+  if (S._ultimoPontoSalvo) {
+    enviarWhatsAppDoponto(S._ultimoPontoSalvo);
+    // Marca o ponto como notificado — vira o indicador visual (ícone do WhatsApp) na
+    // lista de "Registrar", para a equipe saber rapidamente quais já foram avisados.
+    try {
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',S._ultimoPontoSalvo.id), { notificadoWhatsApp:true }, { merge:true });
+    } catch(e) { console.warn('Não foi possível marcar como notificado:', e); }
+  }
   S._ultimoPontoSalvo = null;
 }
 
@@ -2635,7 +2669,7 @@ function renderLeakList() {
   wrap.innerHTML = filtered.map(l => {
     const c=S.cidades.find(c=>c.id===l.cidade);
     const temFoto = l.fotosUrls && l.fotosUrls.length;
-    return `<div class="leak-item" onclick="zoomLeak(${l.lat},${l.lng})">
+    return `<div class="leak-item" onclick="abrirDetalhesLeak('${l.id}')">
       ${temFoto
         ? `<img src="${l.fotosUrls[0]}" alt="" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="leak-dot ${l.severidade}"></div>`
@@ -2653,6 +2687,23 @@ function renderLeakList() {
 
 function zoomLeak(lat, lng) {
   if (mapField) { mapField.setView([lat,lng],17); switchTab('map-field','tabs-field'); }
+}
+
+// Abre um modal com o resumo do ponto (foto + campos configurados, mesmo padrão do
+// popup do mapa) e um botão para então ir até a localização — usado pela Lista, que
+// antes ia direto para o mapa sem mostrar nada primeiro.
+function abrirDetalhesLeak(leakId) {
+  const l = S.leaks.find(l => l.id === leakId);
+  if (!l) return;
+  document.getElementById('leak-detalhes-id').textContent = l.id;
+  document.getElementById('leak-detalhes-conteudo').innerHTML = popupHtml(l).replace(
+    /^<div style="font-family:monospace[^>]*>.*?<\/div>/, ''
+  ); // remove o ID duplicado, já que aparece no cabeçalho do modal
+  document.getElementById('leak-detalhes-ver-mapa').onclick = () => {
+    closeModal('modal-leak-detalhes');
+    zoomLeak(l.lat, l.lng);
+  };
+  openModal('modal-leak-detalhes');
 }
 
 // ================================================================
@@ -2678,9 +2729,11 @@ function handleLayerUpload(input, tipo) {
           : JSON.parse(content);
         if (!geojson || !geojson.features) throw new Error('Sem geometrias encontradas');
         const cidadeId = detectCidadeFromName(f.name);
-        if (!cidadeId && tipo === 'dmc') {
-          // Não foi possível identificar a cidade pelo nome do arquivo — perguntar explicitamente.
-          // Isso evita que o DMC seja adicionado por engano em todas as cidades.
+        if (!cidadeId) {
+          // Não foi possível identificar a cidade pelo nome do arquivo — perguntar
+          // explicitamente, para QUALQUER tipo de camada (DMC ou Rede). Isso evita que a
+          // camada fique sem cidade definida, o que antes fazia ela "aparecer em todos os
+          // filtros" (comportamento removido — ver renderDMCPanel/renderRedesPanel).
           abrirPerguntaCidadeCamada(geojson, tipo, f.name);
         } else {
           const novoId = await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
@@ -2699,14 +2752,33 @@ function handleLayerUpload(input, tipo) {
   input.value = '';
 }
 
+// Calcula um ponto representativo (centróide aproximado) de um GeoJSON, pegando a média
+// de todas as coordenadas de todas as features. Suficiente para sugerir a cidade mais
+// próxima — não precisa ser um centróide geometricamente perfeito.
+function centroideAproximado(geojson) {
+  let somaLat = 0, somaLng = 0, count = 0;
+  function visitarCoords(coords) {
+    if (typeof coords[0] === 'number') { somaLng += coords[0]; somaLat += coords[1]; count++; }
+    else coords.forEach(visitarCoords);
+  }
+  (geojson.features || []).forEach(ft => {
+    if (ft.geometry && ft.geometry.coordinates) visitarCoords(ft.geometry.coordinates);
+  });
+  return count ? { lat: somaLat / count, lng: somaLng / count } : null;
+}
+
 // Quando o nome do arquivo não deixa claro a cidade, perguntamos antes de salvar —
-// evita que o DMC seja erroneamente associado a todas as cidades.
+// evita que a camada fique sem cidade definida (o que antes a fazia aparecer em todos
+// os filtros). Já vem com uma sugestão pré-selecionada, calculada pela posição real
+// do desenho (centróide aproximado comparado ao centro de cada cidade cadastrada).
 S._camadaPendenteUpload = null;
 function abrirPerguntaCidadeCamada(geojson, tipo, nome) {
   S._camadaPendenteUpload = { geojson, tipo, nome };
   const sel = document.getElementById('camada-cidade-select');
+  const centro = centroideAproximado(geojson);
+  const sugerida = centro ? cidadeMaisProxima(centro.lat, centro.lng) : null;
   sel.innerHTML = '<option value="">Selecione a cidade...</option>' +
-    S.cidades.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+    S.cidades.map(c => `<option value="${c.id}" ${sugerida && sugerida.id===c.id ? 'selected':''}>${c.nome}${sugerida && sugerida.id===c.id ? ' (sugerido pela localização)':''}</option>`).join('');
   document.getElementById('camada-cidade-nome').textContent = nome;
   openModal('modal-camada-cidade');
 }
@@ -2872,6 +2944,8 @@ function closeDMCPanel() {
   document.getElementById('dmc-panel').style.display='none';
 }
 function openRedesPanel() {
+  renderRedesPanelRegionalFilter();
+  renderRedesPanelCityFilter();
   renderRedesPanel();
   document.getElementById('redes-panel-overlay').style.display='block';
   document.getElementById('redes-panel').style.display='flex';
@@ -2879,6 +2953,42 @@ function openRedesPanel() {
 function closeRedesPanel() {
   document.getElementById('redes-panel-overlay').style.display='none';
   document.getElementById('redes-panel').style.display='none';
+}
+
+S.redesRegionalFiltro = '';
+S.redesCidadeFiltro = '';
+
+function renderRedesPanelRegionalFilter() {
+  const el = document.getElementById('redes-regional-filter');
+  if (!el) return;
+  const regionais = [...new Set(S.cidades.map(c => c.regional).filter(Boolean))].sort();
+  if (!regionais.length) {
+    el.innerHTML = '<span style="font-size:11px;color:var(--text3)">Nenhuma cidade com regional cadastrada</span>';
+    return;
+  }
+  el.innerHTML = '<button class="toggle-btn' + (S.redesRegionalFiltro===''?' active':'') + '" onclick="setRedesRegionalFiltro(\'\')">Todas</button>' +
+    regionais.map(r => '<button class="toggle-btn' + (S.redesRegionalFiltro===r?' active':'') + '" onclick="setRedesRegionalFiltro(\'' + r + '\')">' + r + '</button>').join('');
+}
+function setRedesRegionalFiltro(regional) {
+  S.redesRegionalFiltro = regional;
+  S.redesCidadeFiltro = '';
+  renderRedesPanelRegionalFilter();
+  renderRedesPanelCityFilter();
+  renderRedesPanel();
+}
+function renderRedesPanelCityFilter() {
+  const el = document.getElementById('redes-city-filter');
+  if (!el) return;
+  const cidadesFiltradas = S.redesRegionalFiltro
+    ? S.cidades.filter(c => c.regional === S.redesRegionalFiltro)
+    : S.cidades;
+  el.innerHTML = '<button class="toggle-btn' + (S.redesCidadeFiltro===''?' active':'') + '" onclick="setRedesFiltro(\'\')">Todas</button>' +
+    cidadesFiltradas.map(c => '<button class="toggle-btn' + (S.redesCidadeFiltro===c.id?' active':'') + '" onclick="setRedesFiltro(\'' + c.id + '\')">' + c.prefixo + '</button>').join('');
+}
+function setRedesFiltro(cid) {
+  S.redesCidadeFiltro = cid;
+  renderRedesPanelCityFilter();
+  renderRedesPanel();
 }
 
 S.dmcRegionalFiltro = '';
@@ -2931,7 +3041,10 @@ function renderDMCPanel() {
     : null;
   const layers = allLayers.filter(l => {
     if (cidadesDaRegional && l.cidade && !cidadesDaRegional.has(l.cidade)) return false;
-    return !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro || l.cidade === '';
+    // Camadas sem cidade definida não deveriam mais existir (agora sempre perguntamos
+    // no upload), mas se algum dado antigo ainda tiver cidade vazia, ela só aparece
+    // quando o filtro está em "Todas" — não mais em qualquer filtro de cidade específica.
+    return !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro;
   });
   if (!allLayers.length) {
     el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
@@ -2977,19 +3090,36 @@ function renderRedesPanel() {
   if (!el) return;
   const role = S.userDoc?.role;
   const ehSuperior = role === 'admin' || role === 'supervisor';
-  const layers = S.leafletLayers.redes || [];
-  if (!layers.length) {
+  const allLayers = S.leafletLayers.redes || [];
+  const cidadesDaRegional = S.redesRegionalFiltro
+    ? new Set(S.cidades.filter(c => c.regional === S.redesRegionalFiltro).map(c => c.id))
+    : null;
+  const layers = allLayers.filter(l => {
+    if (cidadesDaRegional && l.cidade && !cidadesDaRegional.has(l.cidade)) return false;
+    return !S.redesCidadeFiltro || l.cidade === S.redesCidadeFiltro;
+  });
+  if (!allLayers.length) {
     el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
     return;
   }
-  el.innerHTML = layers.map((item, idx) => {
+  if (!layers.length) {
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:16px">Nenhuma camada para este filtro.</p>';
+    return;
+  }
+  el.innerHTML = layers.map(item => {
+    const idx = allLayers.indexOf(item);
+    const c = S.cidades.find(c => c.id === item.cidade);
     const avisoValidacao = !item.validada
       ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
       : '';
     const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
-      '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' + avisoValidacao + '</div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' +
+        (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
+        avisoValidacao +
+      '</div>' +
       '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--teal)':'var(--text2)') + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +

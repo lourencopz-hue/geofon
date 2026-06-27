@@ -349,6 +349,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="map-toolbar">
       <button class="btn primary" onclick="openRegisterQuick()"><i class="ti ti-map-pin-plus"></i>Novo ponto</button>
+      <button class="btn sm" id="btn-campanha" onclick="abrirPainelCampanha()" style="background:var(--purple-l);border-color:rgba(83,74,183,.25);color:var(--purple)"><i class="ti ti-route" style="color:var(--purple)"></i><span id="btn-campanha-label">Campanha</span></button>
       <button class="btn sm" onclick="openDMCPanel()" style="position:relative;background:var(--blue-l);border-color:rgba(24,95,165,.25);color:var(--blue-d)"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
       <button class="btn sm" onclick="openRedesPanel()" style="background:var(--teal-l);border-color:rgba(15,110,86,.25);color:var(--teal)"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
       <button class="btn sm" onclick="centerMyPosition()" style="background:var(--bg2);border-color:var(--border2)"><i class="ti ti-gps" style="color:var(--text2)"></i>Minha pos.</button>
@@ -941,6 +942,55 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
 </div>
 
+<!-- Modal: Campanha de geofonamento -->
+<div class="modal-overlay" id="modal-campanha">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3><i class="ti ti-route" style="color:var(--purple)"></i> Campanha de geofonamento</h3>
+      <button class="modal-close" onclick="closeModal('modal-campanha')"><i class="ti ti-x"></i></button>
+    </div>
+
+    <!-- ESTADO 1: nenhuma campanha em andamento — escolher e iniciar -->
+    <div id="campanha-iniciar-wrap">
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">
+        Ao iniciar, seu trajeto será desenhado no mapa em tempo real para toda a equipe acompanhar. Mantenha o GeoFon aberto na tela durante o percurso.
+      </p>
+      <div class="field">
+        <label>Vincular a um DMC <span style="color:var(--text3);font-weight:400">(opcional)</span></label>
+        <select id="campanha-dmc">
+          <option value="">Campanha livre (sem DMC)</option>
+        </select>
+      </div>
+      <div class="field" id="campanha-nome-livre-wrap">
+        <label>Nome da área <span style="color:var(--text3);font-weight:400">(para áreas ainda sem DMC mapeado)</span></label>
+        <input type="text" id="campanha-nome-livre" placeholder="Ex: Bairro Centenário - Setor 2">
+      </div>
+      <button class="btn primary btn-block" onclick="iniciarCampanha()">
+        <i class="ti ti-player-play"></i> Iniciar campanha
+      </button>
+    </div>
+
+    <!-- ESTADO 2: campanha em andamento (minha) -->
+    <div id="campanha-andamento-wrap" class="hidden">
+      <div class="card" style="background:var(--purple-l);text-align:center;margin-bottom:14px">
+        <div style="font-size:11px;color:var(--purple);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Em andamento</div>
+        <div style="font-size:18px;font-weight:700;color:var(--purple)" id="campanha-nome-atual">—</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:6px" id="campanha-tempo-atual">00:00</div>
+        <div style="font-size:11px;color:var(--text2)" id="campanha-distancia-atual">0 m percorridos</div>
+      </div>
+      <button class="btn danger btn-block" onclick="confirmarFinalizarCampanha()">
+        <i class="ti ti-player-stop"></i> Finalizar campanha
+      </button>
+    </div>
+
+    <!-- ESTADO 3: ver campanhas ativas de colegas -->
+    <div class="section-title" style="margin-top:16px">Equipe em campo agora</div>
+    <div id="campanhas-colegas-list" style="max-height:160px;overflow-y:auto">
+      <p style="font-size:11.5px;color:var(--text2);text-align:center;padding:12px">Nenhum colega em campanha no momento.</p>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Perguntar cidade quando o nome do arquivo não permite identificar automaticamente -->
 <div class="modal-overlay" id="modal-camada-cidade">
   <div class="modal">
@@ -1099,6 +1149,9 @@ const S = {
   // primeiro (se existir), os demais campos são exibidos na ordem desta lista.
   // Configurável em Configurações → Exibição (renderConfigCamposPopup).
   camposPopup: { data:true, severidade:true, tipo:true, dmc:false, servico:false, desc:false, diam:false, rua:false },
+  campanhaAtual: null,      // { id, dmc, nomeLivre, pontos:[[lat,lng],...], inicioMs } — minha campanha em andamento
+  campanhasAtivas: {},      // { campanhaId: {dados do Firestore} } — campanhas de TODOS os usuários (incluindo a própria)
+  campanhasPolylines: {},   // { campanhaId: L.Polyline } — referências de desenho no mapa, por mapa (field/pc)
 };
 
 
@@ -1114,7 +1167,7 @@ let fMarkers = [], pcMarkers = [], heatLayer = null;
 // tecnico    -> só registra vazamentos da própria cidade/equipe
 // pendente   -> aguardando aprovação do admin
 
-let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null;
+let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null, unsubCampanhas = null;
 
 function fazerLoginGoogle() {
   const statusEl = document.getElementById('login-status');
@@ -1323,9 +1376,54 @@ function iniciarSincronizacaoFirestore() {
     renderConfigCamposPopup();
   });
 
+  // Campanhas de geofonamento — sincronizadas em tempo real, para que toda a equipe
+  // veja o trajeto de quem está em campo agora, conforme ele é percorrido. Campanhas
+  // com mais de 7 dias desde o término são ignoradas (somem do mapa, mas continuam
+  // no banco como histórico/auditoria).
+  if (unsubCampanhas) unsubCampanhas();
+  unsubCampanhas = onSnapshot(collection(db, 'campanhas'), snap => {
+    const seteDiasAtrasMs = Date.now() - 7*24*60*60*1000;
+    const todasAtivas = {};
+    snap.docs.forEach(docSnap => {
+      const dados = docSnap.data();
+      // Campanha ainda ativa OU finalizada há menos de 7 dias continua visível no mapa
+      const finalizadoMs = dados.finalizadoEm?.toMillis ? dados.finalizadoEm.toMillis() : null;
+      const expirou = !dados.ativa && finalizadoMs && finalizadoMs < seteDiasAtrasMs;
+      if (expirou) return;
+      todasAtivas[docSnap.id] = dados;
+    });
+    S.campanhasAtivas = todasAtivas;
+    // Se a página foi recarregada com uma campanha própria ainda marcada como ativa
+    // no banco (ex.: o usuário atualizou o app sem finalizar), restaura o controle local
+    // e os intervalos de salvamento — sem isso, o trajeto pararia de ser gravado mesmo
+    // a campanha continuando "ativa" visualmente para os colegas.
+    if (!S.campanhaAtual) {
+      const minhaAtiva = Object.entries(todasAtivas).find(([id, c]) => c.ativa && c.usuarioUid === S.user?.uid);
+      if (minhaAtiva) restaurarCampanhaPropria(minhaAtiva[0], minhaAtiva[1]);
+    }
+    redesenharCampanhasNoMapa();
+    renderCampanhasColegas();
+  });
+
   initFieldMap();
   startGPS();
   setTimeout(() => iniciarSincronizacaoCamadas(), 400);
+}
+
+// Retoma uma campanha própria que já estava ativa no Firestore (ex.: após recarregar
+// a página) — religa os intervalos de checkpoint/relógio e atualiza o botão da toolbar.
+function restaurarCampanhaPropria(id, dados) {
+  const inicioMs = dados.iniciadoEm?.toMillis ? dados.iniciadoEm.toMillis() : Date.now();
+  S.campanhaAtual = { id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: dados.pontos||[], inicioMs };
+  const btn = document.getElementById('btn-campanha');
+  if (btn) { btn.style.background = 'var(--purple)'; btn.style.color = '#fff'; }
+  const label = document.getElementById('btn-campanha-label');
+  if (label) label.textContent = 'Em campanha';
+  if (campanhaIntervaloSalvar) clearInterval(campanhaIntervaloSalvar);
+  campanhaIntervaloSalvar = setInterval(salvarCheckpointCampanha, 15000);
+  if (campanhaIntervaloRelogio) clearInterval(campanhaIntervaloRelogio);
+  campanhaIntervaloRelogio = setInterval(atualizarRelogioCampanha, 1000);
+  toast('🚶 Campanha "' + dados.nome + '" retomada');
 }
 
 // Dados iniciais — só roda se o admin logar e o banco estiver vazio
@@ -1658,7 +1756,9 @@ function renderUsuariosPanel() {
   // Pendentes aparecem primeiro, para chamar atenção de quem precisa aprovar
   const ordenada = [...lista].sort((a,b) => (a.role==='pendente'?-1:0) - (b.role==='pendente'?-1:0));
 
-  el.innerHTML = ordenada.map(u => `
+  el.innerHTML = ordenada.map(u => {
+    const corAtual = u.corCampanha || corPadraoPorUid(u.uid);
+    return `
     <div class="card" style="margin-bottom:8px;${u.role==='pendente'?'border-color:rgba(186,117,23,.4)':''}">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:32px;height:32px;border-radius:50%;background:var(--blue-l);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
@@ -1670,7 +1770,7 @@ function renderUsuariosPanel() {
         </div>
         <span class="role-badge ${u.role}">${roleLabels[u.role]||u.role}</span>
       </div>
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
         <select onchange="alterarRoleUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
           <option value="pendente" ${u.role==='pendente'?'selected':''}>Pendente</option>
           <option value="tecnico" ${u.role==='tecnico'?'selected':''}>Técnico de campo</option>
@@ -1685,8 +1785,13 @@ function renderUsuariosPanel() {
           <option value="">Sem equipe</option>
           ${S.equipes.map(e=>`<option value="${e.id}" ${u.equipe===e.id?'selected':''}>${e.codigo} - ${e.nome.split(' - ')[0]}</option>`).join('')}
         </select>
+        <label style="display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text2);cursor:pointer" title="Cor do trajeto nas campanhas de geofonamento">
+          <input type="color" value="${corAtual}" onchange="alterarCorCampanhaUsuario('${u.uid}', this.value)" style="width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer">
+          Cor da rota
+        </label>
       </div>
-    </div>`).join('') || '<p style="font-size:12px;color:var(--text2)">Nenhum usuário cadastrado ainda.</p>';
+    </div>`;
+  }).join('') || '<p style="font-size:12px;color:var(--text2)">Nenhum usuário cadastrado ainda.</p>';
 }
 
 async function alterarRoleUsuario(uid, role) {
@@ -1704,6 +1809,15 @@ async function alterarEquipeUsuario(uid, equipe) {
   await setDoc(doc(db,'usuarios',uid), { equipe }, { merge:true });
   toast('Equipe do usuário atualizada');
 }
+async function alterarCorCampanhaUsuario(uid, cor) {
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db,'usuarios',uid), { corCampanha: cor }, { merge:true });
+  // Atualiza localmente também, para refletir na hora se for o próprio usuário logado
+  if (uid === S.user?.uid && S.userDoc) S.userDoc.corCampanha = cor;
+  const u = (S.usuarios||[]).find(u => u.uid === uid);
+  if (u) u.corCampanha = cor;
+  toast('Cor da rota atualizada');
+}
 
 // ================================================================
 // GPS
@@ -1717,6 +1831,7 @@ function startGPS() {
       const txt = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`;
       setGPSText(txt, `±${S.pos.acc}m`);
       sugerirCidadePorGPS();
+      registrarPontoNaCampanha();
       // Na primeira vez que o GPS responde (o mapa pode já ter sido criado com a
       // coordenada padrão como fallback temporário), recentraliza na posição real do usuário.
       if (primeiraLeitura) recentralizarMapasNaPrimeiraLeituraGPS();
@@ -1726,6 +1841,7 @@ function startGPS() {
       S.pos = { lat: -28.6775, lng: -49.3680, acc: 5 };
       setGPSText('-28.677500, -49.368000 (demo)', '±5m');
       sugerirCidadePorGPS();
+      registrarPontoNaCampanha();
       if (primeiraLeitura) recentralizarMapasNaPrimeiraLeituraGPS();
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
@@ -1744,6 +1860,266 @@ function setGPSText(txt, acc) {
 }
 function centerMyPosition() {
   if (S.pos && mapField) mapField.setView([S.pos.lat, S.pos.lng], 17);
+}
+
+// ================================================================
+// CAMPANHA DE GEOFONAMENTO
+// ================================================================
+// Registra o trajeto percorrido pelo técnico como uma linha no mapa, visível em
+// tempo real para toda a equipe. Limitação conhecida (avisada ao usuário): como o
+// GeoFon roda no navegador (não é app nativo), o GPS pausa se a tela bloquear ou o
+// app for para segundo plano — por isso orientamos manter o app aberto na tela.
+// Para resistir a interrupções curtas, salvamos checkpoints periodicamente no Firestore
+// em vez de só no fim, então um soluço breve de conexão não perde o trajeto já feito.
+
+let campanhaIntervaloSalvar = null;
+let campanhaIntervaloRelogio = null;
+
+function abrirPainelCampanha() {
+  // Popula o select de DMC (todos, de todas as cidades — útil já que a equipe atende a região toda)
+  const sel = document.getElementById('campanha-dmc');
+  sel.innerHTML = '<option value="">Campanha livre (sem DMC)</option>' +
+    S.cidades.flatMap(c => c.dmcs.map(d => ({c,d})))
+      .map(({c,d}) => `<option value="${c.id}::${d}">${c.prefixo} - ${d}</option>`).join('');
+
+  const emAndamento = !!S.campanhaAtual;
+  document.getElementById('campanha-iniciar-wrap').classList.toggle('hidden', emAndamento);
+  document.getElementById('campanha-andamento-wrap').classList.toggle('hidden', !emAndamento);
+  if (emAndamento) atualizarPainelCampanhaAndamento();
+  renderCampanhasColegas();
+  openModal('modal-campanha');
+}
+
+function atualizarPainelCampanhaAndamento() {
+  if (!S.campanhaAtual) return;
+  document.getElementById('campanha-nome-atual').textContent = S.campanhaAtual.nome;
+}
+
+async function iniciarCampanha() {
+  if (S.campanhaAtual) { toast('Você já tem uma campanha em andamento'); return; }
+  if (!S.pos) { toast('Aguardando GPS...'); return; }
+  const dmcValor = document.getElementById('campanha-dmc').value;
+  const nomeLivre = document.getElementById('campanha-nome-livre').value.trim();
+  let nome, cidadeId = '', dmc = '';
+  if (dmcValor) {
+    const [cid, d] = dmcValor.split('::');
+    cidadeId = cid; dmc = d;
+    const c = S.cidades.find(c => c.id === cid);
+    nome = (c ? c.nome + ' - ' : '') + d;
+  } else if (nomeLivre) {
+    nome = nomeLivre;
+  } else {
+    toast('Selecione um DMC ou informe o nome da área');
+    return;
+  }
+
+  const id = 'campanha_' + Date.now() + '_' + (S.user?.uid || '').slice(0,6);
+  const corUsuario = S.userDoc?.corCampanha || corPadraoPorUid(S.user?.uid);
+  const dados = {
+    id, nome, dmc, cidade: cidadeId,
+    usuarioUid: S.user?.uid || '', usuarioNome: S.user?.nome || S.user?.email || '',
+    cor: corUsuario,
+    pontos: [[S.pos.lat, S.pos.lng]],
+    iniciadoEm: window.FB.serverTimestamp(),
+    atualizadoEm: window.FB.serverTimestamp(),
+    ativa: true
+  };
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', id), dados);
+
+  S.campanhaAtual = { id, nome, dmc, cidade: cidadeId, pontos: [[S.pos.lat, S.pos.lng]], inicioMs: Date.now() };
+  closeModal('modal-campanha');
+  toast('🚶 Campanha "' + nome + '" iniciada! Seu trajeto está sendo registrado.');
+
+  // Botão da toolbar reflete visualmente que há uma campanha ativa
+  const btn = document.getElementById('btn-campanha');
+  btn.style.background = 'var(--purple)'; btn.style.color = '#fff';
+  document.getElementById('btn-campanha-label').textContent = 'Em campanha';
+
+  // Salva um checkpoint a cada 15s (evita gravar a cada metro, economiza leitura/escrita
+  // do Firestore) e atualiza o relógio/distância na tela a cada 1s.
+  if (campanhaIntervaloSalvar) clearInterval(campanhaIntervaloSalvar);
+  campanhaIntervaloSalvar = setInterval(salvarCheckpointCampanha, 15000);
+  if (campanhaIntervaloRelogio) clearInterval(campanhaIntervaloRelogio);
+  campanhaIntervaloRelogio = setInterval(atualizarRelogioCampanha, 1000);
+}
+
+// Adiciona o ponto GPS atual ao trajeto local; o envio ao Firestore acontece
+// periodicamente (salvarCheckpointCampanha), não a cada leitura de GPS.
+function registrarPontoNaCampanha() {
+  if (!S.campanhaAtual || !S.pos) return;
+  const ultimo = S.campanhaAtual.pontos[S.campanhaAtual.pontos.length - 1];
+  // Só adiciona se moveu o suficiente (evita acumular pontos idênticos parado no lugar)
+  if (ultimo) {
+    const dist = distanciaMetros(ultimo[0], ultimo[1], S.pos.lat, S.pos.lng);
+    if (dist < 5) return;
+  }
+  S.campanhaAtual.pontos.push([S.pos.lat, S.pos.lng]);
+}
+
+async function salvarCheckpointCampanha() {
+  if (!S.campanhaAtual) return;
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.id), {
+      pontos: S.campanhaAtual.pontos,
+      atualizadoEm: window.FB.serverTimestamp()
+    }, { merge:true });
+  } catch(e) { console.warn('Erro ao salvar checkpoint da campanha:', e); }
+}
+
+function atualizarRelogioCampanha() {
+  if (!S.campanhaAtual) return;
+  const seg = Math.floor((Date.now() - S.campanhaAtual.inicioMs) / 1000);
+  const mm = String(Math.floor(seg/60)).padStart(2,'0');
+  const ss = String(seg%60).padStart(2,'0');
+  const elTempo = document.getElementById('campanha-tempo-atual');
+  if (elTempo) elTempo.textContent = mm + ':' + ss;
+  const dist = distanciaTotalPercurso(S.campanhaAtual.pontos);
+  const elDist = document.getElementById('campanha-distancia-atual');
+  if (elDist) elDist.textContent = (dist < 1000 ? Math.round(dist) + ' m' : (dist/1000).toFixed(2) + ' km') + ' percorridos';
+}
+
+function confirmarFinalizarCampanha() {
+  if (!S.campanhaAtual) return;
+  if (!confirm('Finalizar a campanha "' + S.campanhaAtual.nome + '"? O trajeto registrado ficará visível para a equipe por 7 dias.')) return;
+  finalizarCampanha();
+}
+
+async function finalizarCampanha() {
+  if (!S.campanhaAtual) return;
+  await salvarCheckpointCampanha(); // garante que o último trecho não se perca
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.id), {
+    ativa: false, finalizadoEm: window.FB.serverTimestamp()
+  }, { merge:true });
+
+  if (campanhaIntervaloSalvar) { clearInterval(campanhaIntervaloSalvar); campanhaIntervaloSalvar = null; }
+  if (campanhaIntervaloRelogio) { clearInterval(campanhaIntervaloRelogio); campanhaIntervaloRelogio = null; }
+
+  toast('✓ Campanha "' + S.campanhaAtual.nome + '" finalizada');
+  S.campanhaAtual = null;
+  closeModal('modal-campanha');
+
+  const btn = document.getElementById('btn-campanha');
+  btn.style.background = 'var(--purple-l)'; btn.style.color = 'var(--purple)';
+  document.getElementById('btn-campanha-label').textContent = 'Campanha';
+}
+
+// Avisa antes de fechar/recarregar a aba com uma campanha em andamento — o navegador
+// salva um último checkpoint quando possível, mas a campanha continua "ativa" no banco
+// até alguém (o próprio usuário, ou admin/supervisor) finalizá-la manualmente depois.
+window.addEventListener('beforeunload', e => {
+  if (S.campanhaAtual) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+// Distância aproximada entre dois pontos GPS (fórmula de Haversine), em metros —
+// suficiente para a escala de uma campanha de geofonamento a pé.
+function distanciaMetros(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function distanciaTotalPercurso(pontos) {
+  let total = 0;
+  for (let i=1; i<pontos.length; i++) total += distanciaMetros(pontos[i-1][0],pontos[i-1][1],pontos[i][0],pontos[i][1]);
+  return total;
+}
+
+// Cor padrão por usuário, usada só se o admin ainda não tiver definido uma cor
+// específica em Usuários e Permissões — garante que sempre exista alguma cor,
+// determinística (mesmo uid sempre gera a mesma cor) para não mudar a cada sessão.
+const CORES_CAMPANHA_PADRAO = ['#534AB7','#0F6E56','#BA7517','#A32D2D','#185FA5','#3B6D11','#C0388A','#5F5E5A'];
+function corPadraoPorUid(uid) {
+  if (!uid) return CORES_CAMPANHA_PADRAO[0];
+  let hash = 0;
+  for (let i=0; i<uid.length; i++) hash = (hash * 31 + uid.charCodeAt(i)) >>> 0;
+  return CORES_CAMPANHA_PADRAO[hash % CORES_CAMPANHA_PADRAO.length];
+}
+
+// Desenha (ou atualiza) a linha de cada campanha ativa nos mapas Campo e PC.
+// Roda a cada atualização do listener de campanhas — remove o que não existe mais
+// e redesenha o resto, mantendo simples (o volume de campanhas simultâneas é baixo,
+// poucas equipes ao mesmo tempo, então redesenhar tudo não pesa).
+function redesenharCampanhasNoMapa() {
+  // Remove polylines antigas que não correspondem mais a uma campanha ativa
+  Object.keys(S.campanhasPolylines).forEach(id => {
+    if (!S.campanhasAtivas[id]) {
+      const linhas = S.campanhasPolylines[id];
+      [mapField, mapPC].filter(Boolean).forEach(m => {
+        if (linhas[m === mapField ? 'field' : 'pc'] && m.hasLayer(linhas[m === mapField ? 'field' : 'pc'])) {
+          m.removeLayer(linhas[m === mapField ? 'field' : 'pc']);
+        }
+      });
+      delete S.campanhasPolylines[id];
+    }
+  });
+
+  Object.entries(S.campanhasAtivas).forEach(([id, dados]) => {
+    if (!dados.pontos || dados.pontos.length < 2) return;
+    const cor = dados.cor || corPadraoPorUid(dados.usuarioUid);
+    const ehMinha = dados.usuarioUid === S.user?.uid;
+    const estilo = { color: cor, weight: ehMinha ? 5 : 4, opacity: dados.ativa ? 0.9 : 0.5, dashArray: dados.ativa ? null : '6,5' };
+
+    if (!S.campanhasPolylines[id]) S.campanhasPolylines[id] = {};
+    [{ mapa: mapField, chave: 'field' }, { mapa: mapPC, chave: 'pc' }].forEach(({ mapa, chave }) => {
+      if (!mapa) return;
+      if (S.campanhasPolylines[id][chave]) {
+        S.campanhasPolylines[id][chave].setLatLngs(dados.pontos);
+        S.campanhasPolylines[id][chave].setStyle(estilo);
+      } else {
+        const linha = L.polyline(dados.pontos, estilo).addTo(mapa);
+        linha.bindPopup('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + (dados.ativa ? ' · em andamento' : ' · finalizada') + '</small>');
+        S.campanhasPolylines[id][chave] = linha;
+      }
+    });
+  });
+}
+
+// Lista as campanhas ATIVAS agora (não as finalizadas) no painel — "equipe em campo agora"
+function renderCampanhasColegas() {
+  const el = document.getElementById('campanhas-colegas-list');
+  if (!el) return;
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
+  const ativas = Object.entries(S.campanhasAtivas).filter(([id,c]) => c.ativa);
+  if (!ativas.length) {
+    el.innerHTML = '<p style="font-size:11.5px;color:var(--text2);text-align:center;padding:12px">Nenhum colega em campanha no momento.</p>';
+    return;
+  }
+  el.innerHTML = ativas.map(([id, c]) => {
+    const cor = c.cor || corPadraoPorUid(c.usuarioUid);
+    const dist = distanciaTotalPercurso(c.pontos||[]);
+    const distTxt = dist < 1000 ? Math.round(dist)+'m' : (dist/1000).toFixed(1)+'km';
+    const ehMinha = c.usuarioUid === S.user?.uid;
+    // Admin/supervisor podem encerrar campanhas de outros que ficaram esquecidas
+    // abertas (ex.: técnico fechou o navegador sem finalizar).
+    const botaoEncerrar = (ehSuperior && !ehMinha)
+      ? `<button onclick="encerrarCampanhaDeOutro('${id}')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:3px 7px;cursor:pointer;color:var(--red);font-size:10px" title="Encerrar campanha"><i class="ti ti-player-stop" style="font-size:11px"></i></button>`
+      : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="width:10px;height:10px;border-radius:50%;background:${cor};flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:500">${c.usuarioNome||'—'}${ehMinha?' (você)':''}</div>
+        <div style="font-size:10.5px;color:var(--text2)">${c.nome} · ${distTxt}</div>
+      </div>
+      ${botaoEncerrar}
+    </div>`;
+  }).join('');
+}
+
+// Admin/Supervisor encerram uma campanha de outro usuário que ficou esquecida ativa
+// (ex.: alguém fechou o navegador sem finalizar manualmente).
+async function encerrarCampanhaDeOutro(campanhaId) {
+  const c = S.campanhasAtivas[campanhaId];
+  if (!c) return;
+  if (!confirm('Encerrar a campanha "' + c.nome + '" de ' + (c.usuarioNome||'usuário') + '?')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', campanhaId), {
+    ativa: false, finalizadoEm: window.FB.serverTimestamp()
+  }, { merge:true });
+  toast('Campanha encerrada');
 }
 
 // Calcula a cidade cadastrada mais próxima da posição GPS atual (distância simples,
@@ -1816,6 +2192,7 @@ function initPCMap() {
   mapPC = L.map('map-pc-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapPC);
   refreshPCMap();
+  redesenharCampanhasNoMapa(); // mapa PC é criado sob demanda, pode já existir campanhas ativas
   setTimeout(() => mapPC.invalidateSize(), 300);
 }
 

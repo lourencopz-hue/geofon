@@ -696,6 +696,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         </button>
       </div>
       <div class="section">
+        <div class="section-title">Exibição no mapa e na lista</div>
+        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+            Escolha quais informações aparecem no popup do mapa (clique num ponto) e como destaque na lista. A foto, quando existir, sempre aparece em destaque.
+          </p>
+        </div>
+        <div id="config-campos-popup"></div>
+      </div>
+      <div class="section">
         <div class="section-title">Configurações gerais</div>
         <div class="card">
           <div class="field">
@@ -764,6 +773,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <h3><i class="ti ti-users" style="color:var(--teal)"></i> Cadastrar equipe</h3>
       <button class="modal-close" onclick="closeModal('modal-equipe')"><i class="ti ti-x"></i></button>
     </div>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:14px">As equipes atendem toda a região — não é mais necessário vincular a uma cidade específica.</p>
     <div class="field">
       <label>Nome da equipe</label>
       <input type="text" id="ne-nome" placeholder="Ex: Equipe 1 - Turno Manhã">
@@ -771,12 +781,6 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <div class="field">
       <label>Código da equipe (2-4 letras/números)</label>
       <input type="text" id="ne-codigo" placeholder="Ex: EQ1" maxlength="6" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
-    </div>
-    <div class="field">
-      <label>Cidade desta equipe</label>
-      <select id="ne-cidade">
-        <option value="">Selecione a cidade...</option>
-      </select>
     </div>
     <div class="field">
       <label>Número WhatsApp do responsável (com DDI+DDD)</label>
@@ -806,8 +810,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </select>
     </div>
     <div class="field">
-      <label>Equipe</label>
-      <select id="quick-equipe" onchange="updateIdPreviewQuick()">
+      <label>Equipe <span id="quick-equipe-hint" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
+      <select id="quick-equipe" onchange="S._equipeEscolhidaManualmente=true; updateIdPreviewQuick()">
         <option value="">Selecione...</option>
       </select>
     </div>
@@ -1066,6 +1070,10 @@ const S = {
   usuarios: [],       // lista de usuários (só admin carrega)
   tiposVazamento: [], // [{id, nome, servicoPadrao}]
   servicos: [],       // [{id, codigo, descricao}] ex: {codigo:'5110', descricao:'Conserto originado de geofone'}
+  // Quais campos aparecem no popup do mapa / card de detalhes. "foto" sempre é tentada
+  // primeiro (se existir), os demais campos são exibidos na ordem desta lista.
+  // Configurável em Configurações → Exibição (renderConfigCamposPopup).
+  camposPopup: { data:true, severidade:true, tipo:true, dmc:false, servico:false, desc:false, diam:false, rua:false },
 };
 
 
@@ -1081,7 +1089,7 @@ let fMarkers = [], pcMarkers = [], heatLayer = null;
 // tecnico    -> só registra vazamentos da própria cidade/equipe
 // pendente   -> aguardando aprovação do admin
 
-let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null;
+let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null;
 
 function fazerLoginGoogle() {
   const statusEl = document.getElementById('login-status');
@@ -1271,6 +1279,21 @@ function iniciarSincronizacaoFirestore() {
     renderConfigServicos();
   });
 
+  // Configurações gerais e preferências de exibição (meta/config) — sincronizadas em
+  // tempo real, para que uma mudança feita pelo admin reflita em todos os dispositivos.
+  if (unsubMetaConfig) unsubMetaConfig();
+  unsubMetaConfig = onSnapshot(window.FB.doc(db, 'meta', 'config'), snap => {
+    if (snap.exists()) {
+      const dados = snap.data();
+      if (dados.org !== undefined) S.config.org = dados.org;
+      if (dados.gps !== undefined) S.config.gps = dados.gps;
+      if (dados.camposPopup) S.camposPopup = { ...S.camposPopup, ...dados.camposPopup };
+      const cfgOrgEl = document.getElementById('cfg-org'); if (cfgOrgEl) cfgOrgEl.value = S.config.org || '';
+      const cfgGpsEl = document.getElementById('cfg-gps'); if (cfgGpsEl) cfgGpsEl.value = S.config.gps || 20;
+      renderConfigCamposPopup();
+    }
+  });
+
   initFieldMap();
   startGPS();
   setTimeout(() => iniciarSincronizacaoCamadas(), 400);
@@ -1361,6 +1384,30 @@ function renderConfigTipos() {
         <i class="ti ti-trash" style="font-size:12px"></i>
       </button>
     </div>`).join('') || '<p style="font-size:11.5px;color:var(--text2)">Nenhum tipo cadastrado.</p>';
+}
+
+// Checkboxes para escolher quais campos aparecem no popup do mapa / lista.
+// A preferência é compartilhada (sincronizada via Firestore), já que reflete uma
+// decisão de padrão da operação, não algo pessoal de cada usuário.
+const CAMPOS_POPUP_LABELS = {
+  data: 'Data e hora', severidade: 'Severidade', tipo: 'Tipo de vazamento',
+  dmc: 'DMC / Setor', servico: 'Código de serviço', diam: 'Diâmetro estimado',
+  rua: 'Rua', desc: 'Observações / Descrição'
+};
+function renderConfigCamposPopup() {
+  const el = document.getElementById('config-campos-popup');
+  if (!el) return;
+  const cfg = S.camposPopup || {};
+  el.innerHTML = Object.entries(CAMPOS_POPUP_LABELS).map(([campo, label]) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+      <input type="checkbox" ${cfg[campo] ? 'checked' : ''} onchange="toggleCampoPopup('${campo}', this.checked)" style="width:16px;height:16px;cursor:pointer">
+      ${label}
+    </label>`).join('');
+}
+async function toggleCampoPopup(campo, valor) {
+  S.camposPopup[campo] = valor;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposPopup: S.camposPopup }, { merge:true });
+  toast('Preferência de exibição atualizada');
 }
 
 async function editarServico(id, campo, valor) {
@@ -1597,12 +1644,12 @@ function renderUsuariosPanel() {
           <option value="admin" ${u.role==='admin'?'selected':''}>Administrador</option>
         </select>
         <select onchange="alterarCidadeUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
-          <option value="">Sem cidade</option>
+          <option value="">Sem cidade fixa</option>
           ${S.cidades.map(c=>`<option value="${c.id}" ${u.cidade===c.id?'selected':''}>${c.nome}</option>`).join('')}
         </select>
         <select onchange="alterarEquipeUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
           <option value="">Sem equipe</option>
-          ${S.equipes.filter(e=>!u.cidade||e.cidade===u.cidade).map(e=>`<option value="${e.id}" ${u.equipe===e.id?'selected':''}>${e.codigo}</option>`).join('')}
+          ${S.equipes.map(e=>`<option value="${e.id}" ${u.equipe===e.id?'selected':''}>${e.codigo} - ${e.nome.split(' - ')[0]}</option>`).join('')}
         </select>
       </div>
     </div>`).join('') || '<p style="font-size:12px;color:var(--text2)">Nenhum usuário cadastrado ainda.</p>';
@@ -1631,19 +1678,32 @@ function startGPS() {
   if (!navigator.geolocation) { setGPSText('GPS não disponível'); return; }
   navigator.geolocation.watchPosition(
     p => {
+      const primeiraLeitura = !S.pos;
       S.pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
       const txt = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`;
       setGPSText(txt, `±${S.pos.acc}m`);
       sugerirCidadePorGPS();
+      // Na primeira vez que o GPS responde (o mapa pode já ter sido criado com a
+      // coordenada padrão como fallback temporário), recentraliza na posição real do usuário.
+      if (primeiraLeitura) recentralizarMapasNaPrimeiraLeituraGPS();
     },
     () => {
+      const primeiraLeitura = !S.pos;
       S.pos = { lat: -28.6775, lng: -49.3680, acc: 5 };
       setGPSText('-28.677500, -49.368000 (demo)', '±5m');
       sugerirCidadePorGPS();
+      if (primeiraLeitura) recentralizarMapasNaPrimeiraLeituraGPS();
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
   );
 }
+
+function recentralizarMapasNaPrimeiraLeituraGPS() {
+  if (!S.pos) return;
+  if (mapField) mapField.setView([S.pos.lat, S.pos.lng], 15);
+  if (mapPC) mapPC.setView([S.pos.lat, S.pos.lng], 13);
+}
+
 function setGPSText(txt, acc) {
   ['gps-coords','reg-gps-coords'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = txt; });
   ['gps-acc','reg-gps-acc'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = acc||''; });
@@ -1703,7 +1763,11 @@ function sugerirCidadePorGPS() {
 // ================================================================
 function initFieldMap() {
   if (mapField) return;
-  mapField = L.map('map-field-map', { zoomControl: true }).setView([-28.6775,-49.3680], 13);
+  // Usa a posição GPS já capturada, se disponível nesse momento; senão, cai no centro
+  // padrão (Criciúma) só como ponto de partida temporário até o GPS responder.
+  const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-28.6775,-49.3680];
+  const zoomInicial = S.pos ? 15 : 13;
+  mapField = L.map('map-field-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapField);
   addFieldMarkers();
   setTimeout(() => mapField.invalidateSize(), 300);
@@ -1711,7 +1775,11 @@ function initFieldMap() {
 
 function initPCMap() {
   if (mapPC) return;
-  mapPC = L.map('map-pc-map', { zoomControl: true }).setView([-28.6775,-49.3680], 11);
+  // No desktop também centralizamos na posição do usuário quando disponível (útil para
+  // supervisores que acessam de campo); senão, mantém o centro padrão com zoom mais aberto.
+  const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-28.6775,-49.3680];
+  const zoomInicial = S.pos ? 13 : 11;
+  mapPC = L.map('map-pc-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapPC);
   refreshPCMap();
   setTimeout(() => mapPC.invalidateSize(), 300);
@@ -1722,7 +1790,7 @@ function addFieldMarkers() {
   fMarkers.forEach(m => m.remove()); fMarkers = [];
   S.leaks.forEach(l => {
     const m = makeMarker(l);
-    m.addTo(mapField).bindPopup(popupHtml(l));
+    m.addTo(mapField).bindPopup(popupHtml(l), { maxWidth: 240 });
     fMarkers.push(m);
   });
 }
@@ -1735,7 +1803,7 @@ function refreshPCMap() {
   const fs = document.getElementById('pc-fs').value;
   const filtered = S.leaks.filter(l => (!fc || l.cidade === fc) && (!fs || l.severidade === fs));
   if (S.pcView !== 'calor') {
-    filtered.forEach(l => { const m = makeMarker(l, 16); m.addTo(mapPC).bindPopup(popupHtml(l)); pcMarkers.push(m); });
+    filtered.forEach(l => { const m = makeMarker(l, 16); m.addTo(mapPC).bindPopup(popupHtml(l), { maxWidth: 240 }); pcMarkers.push(m); });
   }
   if (S.pcView !== 'pontos') {
     const pts = filtered.map(l => [l.lat, l.lng, l.severidade==='alta'?1:l.severidade==='media'?.6:.3]);
@@ -1753,9 +1821,30 @@ function makeMarker(l, size=13) {
   return L.marker([l.lat, l.lng], { icon });
 }
 
+// Monta o conteúdo do popup/card de um ponto, respeitando os campos configurados em
+// S.camposPopup. A foto (quando existir) usa a URL do Storage direto na tag <img> —
+// não precisamos baixar/converter nada, o navegador carrega a imagem sozinho.
 function popupHtml(l) {
   const c = sevColor(l.severidade);
-  return `<b>${l.id}</b><br>${l.tipo}<br><span style="color:${c};font-weight:600">${l.severidade.toUpperCase()}</span><br><small>${l.dmc} · ${l.data}</small>`;
+  const cfg = S.camposPopup || {};
+  const partes = [];
+
+  partes.push(`<div style="font-family:monospace;font-weight:700;color:var(--blue);font-size:13px;margin-bottom:4px">${l.id}</div>`);
+
+  if (l.fotosUrls && l.fotosUrls.length) {
+    partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:220px;border-radius:8px;margin-bottom:6px;display:block" loading="lazy" onerror="this.style.display='none'">`);
+  }
+
+  if (cfg.tipo && l.tipo) partes.push(`<div style="font-size:12.5px;font-weight:500">${l.tipo}</div>`);
+  if (cfg.severidade) partes.push(`<span style="color:${c};font-weight:700;font-size:11.5px">${l.severidade.toUpperCase()}</span>`);
+  if (cfg.dmc && l.dmc) partes.push(`<div style="font-size:11.5px;color:#555">DMC: ${l.dmc}</div>`);
+  if (cfg.rua && l.rua) partes.push(`<div style="font-size:11.5px;color:#555">Rua: ${l.rua}</div>`);
+  if (cfg.servico && l.servico) partes.push(`<div style="font-size:11px;color:#666">${l.servico}</div>`);
+  if (cfg.diam && l.diam) partes.push(`<div style="font-size:11px;color:#666">Ø ${l.diam}mm</div>`);
+  if (cfg.desc && l.desc) partes.push(`<div style="font-size:11px;color:#666;margin-top:3px">${l.desc}</div>`);
+  if (cfg.data) partes.push(`<div style="font-size:10.5px;color:#888;margin-top:4px">${l.data}</div>`);
+
+  return partes.join('');
 }
 
 function sevColor(s) { return s==='alta'?'#E24B4A':s==='media'?'#EF9F27':'#639922'; }
@@ -1872,10 +1961,12 @@ function onFiltroRegionalChange(idRegional, idCidade) {
     cidadesFiltradas.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
 }
 
+// Atualiza a lista de DMC quando a cidade do ponto em complementação muda
+// (hoje "reg-cidade" é sempre somente leitura, preenchido por abrirComplementacao;
+// esta função permanece para reagir a uma sincronização de DMCs em segundo plano).
 function onCidadeChange() {
   const cid = document.getElementById('reg-cidade').value;
   const c = S.cidades.find(c => c.id === cid);
-  // DMC
   const dmc = document.getElementById('reg-dmc');
   while (dmc.options.length > 0) dmc.remove(0);
   if (c) {
@@ -1883,25 +1974,24 @@ function onCidadeChange() {
   } else {
     const o = document.createElement('option'); o.textContent = 'Selecione a cidade primeiro'; dmc.appendChild(o);
   }
-  // Equipes
-  const eqSel = document.getElementById('reg-equipe');
-  while (eqSel.options.length > 0) eqSel.remove(0);
-  const eqDef = document.createElement('option'); eqDef.textContent = 'Selecione...'; eqSel.appendChild(eqDef);
-  S.equipes.filter(e => !cid || e.cidade === cid).forEach(e => {
-    const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`; eqSel.appendChild(o);
-  });
-  updateIdPreview();
-  updateContatosPreview(c);
 }
 
 function quickCidadeChange() {
   const cid = document.getElementById('quick-cidade').value;
   const eqSel = document.getElementById('quick-equipe');
+  const eqHint = document.getElementById('quick-equipe-hint');
   while (eqSel.options.length > 0) eqSel.remove(0);
   const def = document.createElement('option'); def.textContent = 'Selecione...'; eqSel.appendChild(def);
-  S.equipes.filter(e => !cid || e.cidade === cid).forEach(e => {
+  // Equipes não são mais vinculadas a uma cidade fixa — uma equipe pode atender
+  // toda a região. Por isso listamos todas, e pré-selecionamos a equipe do
+  // próprio usuário logado (cadastrada em Usuários e Permissões), sem travar o campo.
+  S.equipes.forEach(e => {
     const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`; eqSel.appendChild(o);
   });
+  if (!S._equipeEscolhidaManualmente && S.userDoc?.equipe && S.equipes.find(e => e.id === S.userDoc.equipe)) {
+    eqSel.value = S.userDoc.equipe;
+    if (eqHint) eqHint.textContent = '(sua equipe — pode trocar se necessário)';
+  }
   // DMC do modo completo (só relevante se a seção estiver expandida, mas já populamos sempre)
   const c = S.cidades.find(c => c.id === cid);
   const selDmc = document.getElementById('quick-dmc');
@@ -2239,8 +2329,10 @@ function openRegisterQuick() {
   document.getElementById('quick-diam').value = '';
   document.getElementById('quick-rua').value = '';
   document.getElementById('quick-rua-status').textContent = '';
-  // Permite uma nova sugestão automática de cidade por GPS a cada abertura do modal
+  // Permite uma nova sugestão automática de cidade/equipe a cada abertura do modal
   S._cidadeEscolhidaManualmente = false;
+  S._equipeEscolhidaManualmente = false;
+  document.getElementById('quick-equipe-hint').textContent = '';
   if (S.pos) {
     const sugerida = cidadeMaisProxima(S.pos.lat, S.pos.lng);
     if (sugerida) {
@@ -2542,8 +2634,12 @@ function renderLeakList() {
   }
   wrap.innerHTML = filtered.map(l => {
     const c=S.cidades.find(c=>c.id===l.cidade);
+    const temFoto = l.fotosUrls && l.fotosUrls.length;
     return `<div class="leak-item" onclick="zoomLeak(${l.lat},${l.lng})">
-      <div class="leak-dot ${l.severidade}"></div>
+      ${temFoto
+        ? `<img src="${l.fotosUrls[0]}" alt="" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="leak-dot ${l.severidade}"></div>`
+      }
       <div class="leak-info">
         <div class="lid">${l.id}</div>
         <div class="ltype">${l.tipo || '(aguardando complementação)'}</div>
@@ -3296,13 +3392,13 @@ function renderConfigEquipes() {
   const el=document.getElementById('config-equipes');
   if(!el) return;
   el.innerHTML=S.equipes.map((e,i)=>{
-    const c=S.cidades.find(c=>c.id===e.cidade);
+    const qtdUsuarios = (S.usuarios||[]).filter(u => u.equipe === e.id).length;
     return `<div class="card" style="margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px">
         <span class="badge blue">${e.codigo}</span>
         <div style="flex:1">
           <div style="font-size:13px;font-weight:500">${e.nome}</div>
-          <div style="font-size:11px;color:var(--text2)">${c?c.nome:'—'} · +${e.wa}</div>
+          <div style="font-size:11px;color:var(--text2)">+${e.wa}${qtdUsuarios?' · '+qtdUsuarios+' usuário(s) vinculado(s)':''}</div>
         </div>
         <button class="btn danger sm" onclick="removerEquipe(${i})"><i class="ti ti-trash"></i></button>
       </div>
@@ -3355,11 +3451,12 @@ async function salvarCidade() {
 async function salvarEquipe() {
   const nome=document.getElementById('ne-nome').value.trim();
   const cod=document.getElementById('ne-codigo').value.trim().toUpperCase();
-  const cid=document.getElementById('ne-cidade').value;
   const wa=document.getElementById('ne-wa').value.trim();
-  if(!nome||!cod||!cid){toast('Preencha todos os campos');return;}
+  if(!nome||!cod){toast('Preencha nome e código da equipe');return;}
   if(S.equipes.find(e=>e.id===cod)){toast('Já existe uma equipe com esse código');return;}
-  const novaEquipe={id:cod,nome,codigo:cod,cidade:cid,wa};
+  // Equipes não têm mais cidade fixa — atendem toda a região. O campo "cidade" só
+  // permanece no documento por compatibilidade com dados antigos, mas não é mais usado.
+  const novaEquipe={id:cod,nome,codigo:cod,wa};
   await salvarEquipeFirestore(novaEquipe);
   closeModal('modal-equipe');
   toast('Equipe "' + cod + '" adicionada!');
@@ -3524,12 +3621,11 @@ document.addEventListener('click', e=>{
   if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
 });
 
-// Modal equipe: popular cidades
-document.getElementById('modal-equipe').addEventListener('click', ()=>{
-  const sel=document.getElementById('ne-cidade');
-  while(sel.options.length>1) sel.remove(1);
-  S.cidades.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.nome;sel.appendChild(o);});
-});
+// Modal equipe: a lista de cidades já é populada por populateSelects() sempre que
+// as cidades sincronizam — não precisamos (e não devemos) recriar as opções aqui.
+// (Removido um listener de "click" que recriava as opções a cada clique dentro do modal,
+// inclusive ao clicar no próprio <select> ou em uma <option>, o que resetava a seleção
+// antes de "Salvar equipe" conseguir ler o valor escolhido.)
 
 // ================================================================
 // TOAST

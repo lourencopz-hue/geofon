@@ -627,8 +627,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-regional" onchange="onFiltroRegionalChange('rep-regional','rep-cidade')">
         <option value="">Todas as regionais</option>
       </select>
-      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-cidade">
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-cidade" onchange="popularSelectDMCRelatorio()">
         <option value="">Todas as cidades</option>
+      </select>
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-dmc">
+        <option value="">Todos os DMCs</option>
       </select>
       <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-equipe">
         <option value="">Todas as equipes</option>
@@ -639,6 +642,16 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <option value="media">Média</option>
         <option value="baixa">Baixa</option>
       </select>
+      <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-periodo">
+        <option value="">Qualquer data</option>
+        <option value="hoje">Hoje</option>
+        <option value="ontem">Ontem</option>
+        <option value="semana">Esta semana</option>
+        <option value="mes">Este mês</option>
+        <option value="personalizado">Período personalizado...</option>
+      </select>
+      <input type="date" id="rep-data-inicio" class="hidden" style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+      <input type="date" id="rep-data-fim" class="hidden" style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
       <button class="btn sm primary" onclick="gerarRelatorio()"><i class="ti ti-chart-bar"></i>Gerar</button>
       <button class="btn sm success" onclick="exportarCSV()"><i class="ti ti-table-export"></i>CSV</button>
       <button class="btn sm" onclick="window.print()"><i class="ti ti-printer"></i>Imprimir / PDF</button>
@@ -667,16 +680,6 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="btn primary" style="margin-top:8px" onclick="openModal('modal-equipe')">
           <i class="ti ti-plus"></i> Adicionar equipe
         </button>
-      </div>
-      <div class="section">
-        <div class="section-title">Usuários e permissões</div>
-        <div class="card" style="text-align:center;padding:20px">
-          <i class="ti ti-users" style="font-size:28px;color:var(--blue);display:block;margin-bottom:8px"></i>
-          <p style="font-size:12.5px;color:var(--text2);margin-bottom:10px">A gestão de usuários e níveis de hierarquia agora tem aba própria.</p>
-          <button class="btn primary" onclick="switchTab('usuarios','tabs-pc')">
-            <i class="ti ti-arrow-right"></i> Ir para Usuários
-          </button>
-        </div>
       </div>
       <div class="section">
         <div class="section-title">Tipos de vazamento e códigos de serviço</div>
@@ -1290,6 +1293,8 @@ function iniciarSincronizacaoFirestore() {
     } else {
       S.tiposVazamento = todos;
       popularSelectTipos();
+      popularSelectTiposEm('quick-tipo');
+      renderConfigTipos(); // antes só atualizava o formulário de registro, não a tela de Config
     }
   });
 
@@ -1312,8 +1317,10 @@ function iniciarSincronizacaoFirestore() {
       if (dados.camposPopup) S.camposPopup = { ...S.camposPopup, ...dados.camposPopup };
       const cfgOrgEl = document.getElementById('cfg-org'); if (cfgOrgEl) cfgOrgEl.value = S.config.org || '';
       const cfgGpsEl = document.getElementById('cfg-gps'); if (cfgGpsEl) cfgGpsEl.value = S.config.gps || 20;
-      renderConfigCamposPopup();
     }
+    // Renderiza sempre — mesmo que o documento ainda não exista no Firestore (1ª vez),
+    // os checkboxes aparecem com os valores padrão definidos em S.camposPopup.
+    renderConfigCamposPopup();
   });
 
   initFieldMap();
@@ -1470,8 +1477,13 @@ async function removerTipo(id) {
 async function adicionarTipoManual() {
   const nome = prompt('Nome do novo tipo de vazamento:');
   if (!nome || !nome.trim()) return;
+  const nomeNormalizado = nome.trim();
+  if (S.tiposVazamento.find(t => t.nome.toLowerCase() === nomeNormalizado.toLowerCase())) {
+    toast('Já existe um tipo com esse nome');
+    return;
+  }
   const id = 'tipo_' + Date.now();
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'tiposVazamento',id), { id, nome:nome.trim(), servicoPadrao:'' });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'tiposVazamento',id), { id, nome:nomeNormalizado, servicoPadrao:'' });
   toast('Tipo de vazamento adicionado');
 }
 
@@ -1812,7 +1824,7 @@ function addFieldMarkers() {
   fMarkers.forEach(m => m.remove()); fMarkers = [];
   S.leaks.forEach(l => {
     const m = makeMarker(l);
-    m.addTo(mapField).bindPopup(popupHtml(l), { maxWidth: 240 });
+    m.addTo(mapField).bindPopup(popupHtml(l), { maxWidth: 340 });
     fMarkers.push(m);
   });
 }
@@ -1825,7 +1837,7 @@ function refreshPCMap() {
   const fs = document.getElementById('pc-fs').value;
   const filtered = S.leaks.filter(l => (!fc || l.cidade === fc) && (!fs || l.severidade === fs));
   if (S.pcView !== 'calor') {
-    filtered.forEach(l => { const m = makeMarker(l, 16); m.addTo(mapPC).bindPopup(popupHtml(l), { maxWidth: 240 }); pcMarkers.push(m); });
+    filtered.forEach(l => { const m = makeMarker(l, 16); m.addTo(mapPC).bindPopup(popupHtml(l), { maxWidth: 340 }); pcMarkers.push(m); });
   }
   if (S.pcView !== 'pontos') {
     const pts = filtered.map(l => [l.lat, l.lng, l.severidade==='alta'?1:l.severidade==='media'?.6:.3]);
@@ -1854,7 +1866,7 @@ function popupHtml(l) {
   partes.push(`<div style="font-family:monospace;font-weight:700;color:var(--blue);font-size:13px;margin-bottom:4px">${l.id}</div>`);
 
   if (l.fotosUrls && l.fotosUrls.length) {
-    partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:220px;border-radius:8px;margin-bottom:6px;display:block" loading="lazy" onerror="this.style.display='none'">`);
+    partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:320px;max-height:240px;object-fit:cover;border-radius:8px;margin-bottom:6px;display:block;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" onclick="abrirFotoAmpliada('${l.fotosUrls[0]}')">`);
   }
 
   if (cfg.tipo && l.tipo) partes.push(`<div style="font-size:12.5px;font-weight:500">${l.tipo}</div>`);
@@ -2692,6 +2704,19 @@ function zoomLeak(lat, lng) {
 // Abre um modal com o resumo do ponto (foto + campos configurados, mesmo padrão do
 // popup do mapa) e um botão para então ir até a localização — usado pela Lista, que
 // antes ia direto para o mapa sem mostrar nada primeiro.
+// Abre a foto em tela cheia (lightbox simples) — usado tanto no popup do mapa
+// quanto no modal de detalhes da Lista, quando se quer ver a foto bem maior.
+function abrirFotoAmpliada(url) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out';
+  overlay.onclick = () => overlay.remove();
+  const img = document.createElement('img');
+  img.src = url;
+  img.style.cssText = 'max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.4)';
+  overlay.appendChild(img);
+  document.body.appendChild(overlay);
+}
+
 function abrirDetalhesLeak(leakId) {
   const l = S.leaks.find(l => l.id === leakId);
   if (!l) return;
@@ -3066,7 +3091,9 @@ function renderDMCPanel() {
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#185FA5;flex-shrink:0"></div>' +
       '<div style="flex:1;min-width:0">' +
-        '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' +
+        (ehSuperior
+          ? '<input type="text" value="' + item.nome.replace(/"/g,'&quot;') + '" onchange="editarNomeCamada(\'dmc\',' + idx + ',this.value)" style="width:100%;padding:3px 5px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text)" onfocus="this.style.borderColor=\'var(--border)\';this.style.background=\'var(--bg)\'" onblur="this.style.borderColor=\'transparent\';this.style.background=\'transparent\'">'
+          : '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>') +
         (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
         avisoValidacao +
       '</div>' +
@@ -3116,7 +3143,9 @@ function renderRedesPanel() {
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
       '<div style="flex:1;min-width:0">' +
-        '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>' +
+        (ehSuperior
+          ? '<input type="text" value="' + item.nome.replace(/"/g,'&quot;') + '" onchange="editarNomeCamada(\'redes\',' + idx + ',this.value)" style="width:100%;padding:3px 5px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text)" onfocus="this.style.borderColor=\'var(--border)\';this.style.background=\'var(--bg)\'" onblur="this.style.borderColor=\'transparent\';this.style.background=\'transparent\'">'
+          : '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>') +
         (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
         avisoValidacao +
       '</div>' +
@@ -3180,6 +3209,18 @@ async function validarCamada(tipo, idx) {
   if (!item || !item.id) return;
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { validada:true }, { merge:true });
   toast('✓ Camada validada para todos os usuários');
+}
+
+// Renomeia uma camada (DMC ou Rede) — disponível apenas para admin/supervisor, já que
+// renomear afeta a visualização de todos os usuários que enxergam essa camada.
+async function editarNomeCamada(tipo, idx, novoNome) {
+  const item = (S.leafletLayers[tipo]||[])[idx];
+  if (!item || !item.id) return;
+  novoNome = novoNome.trim();
+  if (!novoNome) { tipo==='dmc' ? renderDMCPanel() : renderRedesPanel(); return; }
+  item.nome = novoNome; // atualiza localmente para refletir na hora, sem esperar o snapshot
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { nome: novoNome }, { merge:true });
+  toast('Nome da camada atualizado');
 }
 
 // Mostra um contador visível no botão DMC sempre que houver camadas aguardando validação
@@ -3455,35 +3496,88 @@ async function adicionarDMCManual(cidadeId) {
 function renderConfigCidades() {
   const el=document.getElementById('config-cidades');
   if(!el) return;
-  el.innerHTML=S.cidades.map((c,i)=>`
-    <div class="card" style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+  el.innerHTML=S.cidades.map((c,i)=>{
+    // Alerta visual se a cidade está usando a coordenada "fantasma" padrão antiga
+    // (centro de Criciúma) sem ser a própria Criciúma — sinal de que nunca foi ajustada.
+    const coordsSuspeitas = c.coords && c.coords[0]===-28.6775 && c.coords[1]===-49.3680 && c.prefixo !== 'CIA';
+    return `
+    <div class="card" style="margin-bottom:6px;padding:10px">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleExpandirCidade(${i})">
         <span class="badge purple">${c.prefixo}</span>
-        <input type="text" value="${c.nome}" onchange="editarCidadeCampo(${i},'nome',this.value)"
-          style="flex:1;padding:5px 8px;font-size:13px;font-weight:600;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
-        <button class="btn danger sm" onclick="removerCidade(${i})"><i class="ti ti-trash"></i></button>
+        ${c.regional?`<span class="badge gray">${c.regional}</span>`:''}
+        <span style="font-size:13px;font-weight:600;flex:1">${c.nome}</span>
+        ${coordsSuspeitas?'<i class="ti ti-alert-triangle" style="color:var(--amber);font-size:14px" title="Coordenada pode estar incorreta — confira"></i>':''}
+        <span style="font-size:10.5px;color:var(--text2)">${c.wa.length} contato(s)</span>
+        <i class="ti ti-chevron-down" id="chev-cidade-${i}" style="font-size:14px;color:var(--text2);transition:transform .15s"></i>
       </div>
-      <div class="field" style="margin-bottom:8px">
-        <label style="font-size:10.5px">Regional <span style="color:var(--text3);font-weight:400">(ex: AGSU, AMSE)</span></label>
-        <input type="text" value="${c.regional||''}" onchange="editarCidadeCampo(${i},'regional',this.value.toUpperCase())"
-          placeholder="Sem regional definida"
-          style="padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);text-transform:uppercase">
+      <div id="cidade-expand-${i}" class="hidden" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <div class="field" style="margin-bottom:0;flex:1">
+            <label style="font-size:10.5px">Nome</label>
+            <input type="text" value="${c.nome}" onchange="editarCidadeCampo(${i},'nome',this.value)"
+              style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          </div>
+          <div class="field" style="margin-bottom:0;width:90px">
+            <label style="font-size:10.5px">Regional</label>
+            <input type="text" value="${c.regional||''}" onchange="editarCidadeCampo(${i},'regional',this.value.toUpperCase())"
+              placeholder="—" style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);text-transform:uppercase">
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:8px">
+          <label style="font-size:10.5px">Prefixo / código <span style="color:var(--text3);font-weight:400">(usado no ID dos vazamentos)</span></label>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="prefixo-edit-${i}" value="${c.prefixo}" maxlength="5"
+              style="flex:1;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);text-transform:uppercase;font-family:monospace"
+              oninput="this.value=this.value.toUpperCase()">
+            <button class="btn sm" onclick="confirmarMigrarPrefixo(${i})"><i class="ti ti-replace"></i> Migrar</button>
+          </div>
+          <p style="font-size:10px;color:var(--text3);margin-top:4px">Vazamentos já registrados mantêm o ID antigo; só os novos usarão o prefixo atualizado.</p>
+        </div>
+        <div class="field" style="margin-bottom:8px">
+          <label style="font-size:10.5px">Centro do mapa (latitude, longitude)</label>
+          <input type="text" value="${(c.coords||[]).join(', ')}" onchange="editarCoordsCidade(${i},this.value)"
+            placeholder="-28.6775, -49.3680" style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+        </div>
+        <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">WhatsApp</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          ${c.wa.map((w,wi)=>`
+            <div style="display:flex;align-items:center;gap:6px">
+              <i class="ti ti-brand-whatsapp" style="color:#25D366;font-size:14px"></i>
+              <input type="text" value="${w}" onchange="editarWACidade(${i},${wi},this.value)"
+                style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+              <button onclick="removerWACidade(${i},${wi})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 7px;cursor:pointer;color:var(--red)"><i class="ti ti-x" style="font-size:11px"></i></button>
+            </div>`).join('')}
+        </div>
+        <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarWACidade(${i})">
+          <i class="ti ti-plus"></i> Adicionar contato
+        </button>
+        <button class="btn danger sm" style="margin-top:8px;width:100%;justify-content:center" onclick="removerCidade(${i})">
+          <i class="ti ti-trash"></i> Remover cidade
+        </button>
       </div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">DMCs: ${c.dmcs.join(', ')}</div>
-      <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">WhatsApp</div>
-      <div style="display:flex;flex-direction:column;gap:4px">
-        ${c.wa.map((w,wi)=>`
-          <div style="display:flex;align-items:center;gap:6px">
-            <i class="ti ti-brand-whatsapp" style="color:#25D366;font-size:14px"></i>
-            <input type="text" value="${w}" onchange="editarWACidade(${i},${wi},this.value)"
-              style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
-            <button onclick="removerWACidade(${i},${wi})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 7px;cursor:pointer;color:var(--red)"><i class="ti ti-x" style="font-size:11px"></i></button>
-          </div>`).join('')}
-      </div>
-      <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarWACidade(${i})">
-        <i class="ti ti-plus"></i> Adicionar contato
-      </button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+
+function toggleExpandirCidade(idx) {
+  const div = document.getElementById('cidade-expand-' + idx);
+  const chev = document.getElementById('chev-cidade-' + idx);
+  const abrindo = div.classList.contains('hidden');
+  div.classList.toggle('hidden');
+  chev.style.transform = abrindo ? 'rotate(180deg)' : 'rotate(0deg)';
+}
+
+async function editarCoordsCidade(idx, valor) {
+  const c = S.cidades[idx];
+  if (!c) return;
+  const partes = valor.split(',').map(s => parseFloat(s.trim()));
+  if (partes.length !== 2 || isNaN(partes[0]) || isNaN(partes[1])) {
+    toast('Coordenada inválida — use o formato: -28.6775, -49.3680');
+    return;
+  }
+  c.coords = partes;
+  await salvarCidadeFirestore(c);
+  toast('Coordenada atualizada');
 }
 
 // Edita um campo simples da cidade (nome, regional) e salva no Firestore
@@ -3495,6 +3589,66 @@ async function editarCidadeCampo(idx, campo, valor) {
   await salvarCidadeFirestore(c);
   popularSelectRegionais();
   toast('Cidade atualizada');
+}
+
+// Migra o prefixo/ID de uma cidade (ex: SID -> SRS). Como o prefixo é o ID do documento
+// no Firestore, isso não é uma simples edição — é necessário: criar a cidade com o novo
+// ID, atualizar todas as referências (vazamentos, camadas, usuários, sequência de
+// numeração) para o novo prefixo, e então remover o documento antigo.
+// Vazamentos JÁ registrados mantêm o ID antigo no nome (ex: SID-EQ1-VAZ001) — só o campo
+// interno "cidade" é atualizado, então filtros e relatórios passam a funcionar
+// corretamente; apenas o texto do ID antigo continua com a sigla anterior.
+async function confirmarMigrarPrefixo(idx) {
+  const c = S.cidades[idx];
+  if (!c) return;
+  const novoPrefixo = document.getElementById('prefixo-edit-' + idx).value.trim().toUpperCase();
+  if (!novoPrefixo) { toast('Informe o novo prefixo'); return; }
+  if (novoPrefixo === c.prefixo) { toast('O prefixo já é esse'); return; }
+  if (S.cidades.find(c2 => c2.id === novoPrefixo)) { toast('Já existe uma cidade com esse prefixo'); return; }
+
+  const qtdVazamentos = S.leaks.filter(l => l.cidade === c.prefixo).length;
+  const qtdCamadas = [...(S.leafletLayers.dmc||[]), ...(S.leafletLayers.redes||[])].filter(l => l.cidade === c.prefixo).length;
+  const aviso = `Migrar "${c.prefixo}" para "${novoPrefixo}"?\n\n` +
+    `${qtdVazamentos} vazamento(s) e ${qtdCamadas} camada(s) serão atualizados.\n` +
+    `Vazamentos já existentes mantêm o ID antigo (ex: ${c.prefixo}-EQ1-VAZ001) — só a cidade vinculada é corrigida.\n\n` +
+    `Esta operação não pode ser desfeita automaticamente.`;
+  if (!confirm(aviso)) return;
+
+  toast('Migrando... isso pode levar alguns segundos');
+  const { db, doc, setDoc, getDoc } = window.FB;
+
+  // 1) Cria a cidade nova com o prefixo atualizado, copiando todos os dados
+  const cidadeNova = { ...c, id: novoPrefixo, prefixo: novoPrefixo };
+  await setDoc(doc(db, 'cidades', novoPrefixo), cidadeNova);
+
+  // 2) Migra a sequência de numeração (para os próximos IDs continuarem de onde estavam)
+  const seqSnap = await getDoc(doc(db, 'meta', 'sequencias'));
+  if (seqSnap.exists() && seqSnap.data()[c.prefixo] !== undefined) {
+    await setDoc(doc(db, 'meta', 'sequencias'), { [novoPrefixo]: seqSnap.data()[c.prefixo] }, { merge:true });
+  }
+
+  // 3) Atualiza todos os vazamentos vinculados (campo "cidade", mantendo o ID/nome do documento)
+  const leaksParaMigrar = S.leaks.filter(l => l.cidade === c.prefixo);
+  for (const l of leaksParaMigrar) {
+    await setDoc(doc(db, 'leaks', l.id), { cidade: novoPrefixo }, { merge:true });
+  }
+
+  // 4) Atualiza todas as camadas (DMC e Redes) vinculadas
+  const camadasParaMigrar = [...(S.leafletLayers.dmc||[]), ...(S.leafletLayers.redes||[])].filter(l => l.cidade === c.prefixo);
+  for (const item of camadasParaMigrar) {
+    await setDoc(doc(db, 'camadas', item.id), { cidade: novoPrefixo }, { merge:true });
+  }
+
+  // 5) Atualiza usuários que tinham essa cidade fixa no perfil
+  const usuariosParaMigrar = (S.usuarios||[]).filter(u => u.cidade === c.prefixo);
+  for (const u of usuariosParaMigrar) {
+    await setDoc(doc(db, 'usuarios', u.uid), { cidade: novoPrefixo }, { merge:true });
+  }
+
+  // 6) Remove a cidade antiga (por último, só depois de tudo migrado com sucesso)
+  await setDoc(doc(db, 'cidades', c.prefixo), { removida:true }, { merge:true });
+
+  toast(`✓ Migração concluída: ${c.prefixo} → ${novoPrefixo}`);
 }
 
 function editarWACidade(cidIdx, waIdx, valor) {
@@ -3566,9 +3720,15 @@ async function salvarCidade() {
   if(!nome||!pref){toast('Nome e prefixo são obrigatórios');return;}
   if(!wa.length){toast('Adicione pelo menos um número WhatsApp');return;}
   if(S.cidades.find(c=>c.id===pref)){toast('Já existe uma cidade com esse prefixo');return;}
+  // A coordenada é usada para sugerir automaticamente a cidade certa pelo GPS no campo.
+  // Se ficar em branco, a cidade herdaria silenciosamente o centro de Criciúma (valor
+  // padrão antigo) — o que faria o GPS escolher errado perto de qualquer fronteira entre
+  // cidades. Por isso agora exigimos a coordenada explicitamente.
+  if(!coordsRaw){toast('Informe a coordenada do centro da cidade (necessária para a sugestão automática por GPS)');return;}
+  const p=coordsRaw.split(',').map(s=>parseFloat(s.trim()));
+  if(p.length!==2||isNaN(p[0])||isNaN(p[1])){toast('Coordenada inválida — use o formato: -28.6775, -49.3680');return;}
+  const coords=p;
   const dmcs=dmcsRaw?dmcsRaw.split('\n').map(s=>s.trim()).filter(Boolean):['DMC-01'];
-  let coords=[-28.6775,-49.3680];
-  if(coordsRaw){const p=coordsRaw.split(',').map(s=>parseFloat(s.trim()));if(p.length===2&&!isNaN(p[0]))coords=p;}
   const novaCidade={id:pref,nome,prefixo:pref,regional:regional||'',dmcs,wa,coords};
   await salvarCidadeFirestore(novaCidade);
   await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','sequencias'), { [pref]: 0 }, { merge:true });
@@ -3624,11 +3784,62 @@ async function salvarConfig(){
 // ================================================================
 // RELATÓRIOS
 // ================================================================
+function popularSelectDMCRelatorio() {
+  const cid = document.getElementById('rep-cidade').value;
+  const sel = document.getElementById('rep-dmc');
+  if (!sel) return;
+  const c = S.cidades.find(c => c.id === cid);
+  sel.innerHTML = '<option value="">Todos os DMCs</option>' +
+    (c ? c.dmcs.map(d => `<option value="${d}">${d}</option>`).join('') : '');
+}
+
+// Mostra/esconde os campos de data personalizada conforme o período escolhido
+document.addEventListener('change', e => {
+  if (e.target && e.target.id === 'rep-periodo') {
+    const personalizado = e.target.value === 'personalizado';
+    document.getElementById('rep-data-inicio').classList.toggle('hidden', !personalizado);
+    document.getElementById('rep-data-fim').classList.toggle('hidden', !personalizado);
+  }
+});
+
+// Verifica se a data de um vazamento cai dentro do período escolhido no relatório
+function dataNoPeriodoRelatorio(l, periodo) {
+  if (!periodo) return true;
+  if (periodo === 'personalizado') {
+    const ini = document.getElementById('rep-data-inicio').value;
+    const fim = document.getElementById('rep-data-fim').value;
+    if (!ini && !fim) return true;
+    const d = dataDoLeak(l);
+    if (!d) return true;
+    if (ini && d < new Date(ini)) return false;
+    if (fim && d > new Date(fim + 'T23:59:59')) return false;
+    return true;
+  }
+  if (periodo === 'mes') {
+    const d = dataDoLeak(l);
+    if (!d) return true;
+    const hoje = new Date();
+    return d.getMonth() === hoje.getMonth() && d.getFullYear() === hoje.getFullYear();
+  }
+  return dataNoPeriodo(l, periodo); // reaproveita hoje/ontem/semana, já implementados para a Lista
+}
+
 function gerarRelatorio() {
+  const fRegional=document.getElementById('rep-regional').value;
   const fc=document.getElementById('rep-cidade').value;
+  const fdmc=document.getElementById('rep-dmc').value;
   const fe=document.getElementById('rep-equipe').value;
   const fs=document.getElementById('rep-sev').value;
-  const filtered=S.leaks.filter(l=>(!fc||l.cidade===fc)&&(!fe||l.equipe===fe)&&(!fs||l.severidade===fs));
+  const fp=document.getElementById('rep-periodo').value;
+  const cidadesDaRegional = fRegional ? new Set(S.cidades.filter(c=>c.regional===fRegional).map(c=>c.id)) : null;
+
+  const filtered=S.leaks.filter(l=>
+    (!cidadesDaRegional || cidadesDaRegional.has(l.cidade)) &&
+    (!fc||l.cidade===fc) && (!fdmc||l.dmc===fdmc) &&
+    (!fe||l.equipe===fe) && (!fs||l.severidade===fs) &&
+    dataNoPeriodoRelatorio(l, fp)
+  );
+  const total = filtered.length || 1; // evita divisão por zero nos percentuais
   const alta=filtered.filter(l=>l.severidade==='alta').length;
   const media=filtered.filter(l=>l.severidade==='media').length;
   const baixa=filtered.filter(l=>l.severidade==='baixa').length;
@@ -3636,9 +3847,16 @@ function gerarRelatorio() {
   // Por cidade
   const porCidade={};
   filtered.forEach(l=>{const c=S.cidades.find(c=>c.id===l.cidade);const nome=c?c.nome:l.cidade;porCidade[nome]=(porCidade[nome]||0)+1;});
-  // Por tipo
+  // Por regional — percentual de vazamentos por regional (item 1.3 do pedido)
+  const porRegional={};
+  filtered.forEach(l=>{
+    const c=S.cidades.find(c=>c.id===l.cidade);
+    const nome=c?.regional || 'Sem regional';
+    porRegional[nome]=(porRegional[nome]||0)+1;
+  });
+  // Por tipo — agora também com percentual
   const porTipo={};
-  filtered.forEach(l=>{porTipo[l.tipo]=(porTipo[l.tipo]||0)+1;});
+  filtered.forEach(l=>{porTipo[l.tipo||'(sem tipo)']=(porTipo[l.tipo||'(sem tipo)']||0)+1;});
   // Por equipe
   const porEquipe={};
   filtered.forEach(l=>{const e=S.equipes.find(e=>e.id===l.equipe);const nome=e?e.nome:l.equipe;porEquipe[nome]=(porEquipe[nome]||0)+1;});
@@ -3657,10 +3875,12 @@ function gerarRelatorio() {
     </tr>`;
   }).join('');
 
+  const periodoLabel = {hoje:'Hoje',ontem:'Ontem',semana:'Esta semana',mes:'Este mês',personalizado:'Período personalizado'}[fp] || 'Qualquer data';
+
   document.getElementById('report-content').innerHTML=`
     <div class="report-header">
       <h2>Relatório de Vazamentos — GeoFon</h2>
-      <p>${fc?(S.cidades.find(c=>c.id===fc)?.nome||fc):'Todas as cidades'} · Gerado em ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</p>
+      <p>${fc?(S.cidades.find(c=>c.id===fc)?.nome||fc):(fRegional||'Todas as cidades')} · ${periodoLabel} · Gerado em ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</p>
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
       <div class="stat-card"><span class="num">${filtered.length}</span><div class="lbl">Total</div></div>
@@ -3668,14 +3888,20 @@ function gerarRelatorio() {
       <div class="stat-card"><span class="num" style="color:#EF9F27">${media}</span><div class="lbl">Média</div></div>
       <div class="stat-card"><span class="num" style="color:#639922">${baixa}</span><div class="lbl">Baixa</div></div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
       <div>
-        <div class="report-section-title">Por cidade</div>
-        <table class="data-table">${Object.entries(porCidade).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td><td style="color:var(--text2);text-align:right">${Math.round(v/filtered.length*100)}%</td></tr>`).join('')}</table>
+        <div class="report-section-title">Por regional</div>
+        <table class="data-table">${Object.entries(porRegional).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td><td style="color:var(--text2);text-align:right">${Math.round(v/total*100)}%</td></tr>`).join('')}</table>
       </div>
       <div>
+        <div class="report-section-title">Por cidade</div>
+        <table class="data-table">${Object.entries(porCidade).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td><td style="color:var(--text2);text-align:right">${Math.round(v/total*100)}%</td></tr>`).join('')}</table>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div>
         <div class="report-section-title">Por tipo</div>
-        <table class="data-table">${Object.entries(porTipo).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td></tr>`).join('')}</table>
+        <table class="data-table">${Object.entries(porTipo).map(([k,v])=>`<tr><td>${k}</td><td style="font-weight:600;text-align:right">${v}</td><td style="color:var(--text2);text-align:right">${Math.round(v/total*100)}%</td></tr>`).join('')}</table>
       </div>
       <div>
         <div class="report-section-title">Por equipe</div>

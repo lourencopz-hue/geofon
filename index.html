@@ -1459,6 +1459,10 @@ function iniciarSincronizacaoFirestore() {
     S.geofones = snap.docs.map(d => d.data()).filter(g => !g.removido);
     renderConfigGeofones();
     popularSelectGeofoneEquipe();
+    // Sem isso, o select de "Geofone padrão" dentro de cada equipe JÁ CADASTRADA só
+    // mostrava os geofones que existiam quando a tela foi aberta por último — cadastrar
+    // um geofone novo não atualizava essa lista até trocar de aba manualmente.
+    renderConfigEquipes();
   });
 
   // Configurações gerais e preferências de exibição (meta/config) — sincronizadas em
@@ -1854,21 +1858,32 @@ function iniciarSincronizacaoCamadas() {
       if (l.removida) return;
       const tipo = l.tipo === 'redes' ? 'redes' : 'dmc';
       const existente = metadadosAnteriores[docSnap.id];
-      // Mantém a geometria já carregada (lg/_geojson) se essa camada já tinha sido aberta antes;
-      // senão, fica null até o usuário pedir para visualizar.
+      // Mantém a geometria já carregada (lgField/lgPC/_geojson) se essa camada já tinha
+      // sido aberta antes; senão, fica null até o usuário pedir para visualizar.
       const item = {
         id: docSnap.id, nome: l.nome, cidade: l.cidade || '',
         validada: l.validada !== false, criadoPorNome: l.criadoPorNome || '', criadoPor: l.criadoPor || '',
         visible: estaVisivelLocalmente(docSnap.id),
-        lg: existente ? existente.lg : null,
+        lgField: existente ? existente.lgField : null,
+        lgPC: existente ? existente.lgPC : null,
         _geojson: existente ? existente._geojson : null,
         _carregando: false
       };
       S.leafletLayers[tipo].push(item);
       // Se este dispositivo já tinha marcado como visível e a geometria ainda não foi
-      // carregada (ex.: acabou de logar), carrega agora automaticamente.
-      if (item.visible && !item.lg) carregarGeometriaCamada(tipo, item.id);
-      else if (item.visible && item.lg) { if (mapField && !mapField.hasLayer(item.lg)) item.lg.addTo(mapField); if (mapPC && !mapPC.hasLayer(item.lg)) item.lg.addTo(mapPC); }
+      // carregada (ex.: acabou de logar), carrega agora automaticamente. Se já estava
+      // carregada mas ficou fora de algum mapa (ex.: mapa PC criado depois), reanexa.
+      if (item.visible && !item._geojson) {
+        carregarGeometriaCamada(tipo, item.id);
+      } else if (item.visible && item._geojson) {
+        if (mapField && item.lgField && !mapField.hasLayer(item.lgField)) item.lgField.addTo(mapField);
+        if (mapPC && item.lgPC && !mapPC.hasLayer(item.lgPC)) item.lgPC.addTo(mapPC);
+      } else if (!item.visible) {
+        // Garante remoção em qualquer mapa, mesmo que o snapshot tenha disparado por
+        // outro motivo (ex.: alguém validou outra camada) — sem isso, uma camada que
+        // deveria estar oculta podia permanecer "fantasma" visível.
+        removerGeometriaDoMapa(item);
+      }
       if (tipo === 'dmc' && item._geojson) sincronizarDMCsCidade(item._geojson, l.cidade);
     });
 
@@ -3750,10 +3765,10 @@ function centralizarEmGeoJSON(geojson) {
 async function carregarGeometriaCamada(tipo, camadaId) {
   const item = (S.leafletLayers[tipo]||[]).find(i => i.id === camadaId);
   if (!item || item._carregando) return;
-  if (item.lg && item._geojson) {
-    // Já carregada nesta sessão — só reanexa ao(s) mapa(s)
-    if (mapField && !mapField.hasLayer(item.lg)) item.lg.addTo(mapField);
-    if (mapPC && !mapPC.hasLayer(item.lg)) item.lg.addTo(mapPC);
+  if (item._geojson && (item.lgField || item.lgPC)) {
+    // Já carregada nesta sessão — só reanexa ao(s) mapa(s) que ainda não tiverem
+    if (mapField && item.lgField && !mapField.hasLayer(item.lgField)) item.lgField.addTo(mapField);
+    if (mapPC && item.lgPC && !mapPC.hasLayer(item.lgPC)) item.lgPC.addTo(mapPC);
     return;
   }
   item._carregando = true;
@@ -3768,9 +3783,12 @@ async function carregarGeometriaCamada(tipo, camadaId) {
     if (!geojson) return;
 
     const corPadrao = LAYER_STYLE[tipo];
-    const lg = L.geoJSON(geojson, {
-      // Usa a cor extraída do próprio KML (props._corKml) quando disponível;
-      // senão cai na cor padrão fixa por tipo (azul para DMC, verde para redes).
+    // IMPORTANTE: o Leaflet não deve ter a mesma instância de layer compartilhada entre
+    // dois mapas diferentes — cada mapa tem seu próprio zoom/projeção, e uma única
+    // instância "disputada" entre os dois causa remoção inconsistente e desalinhamento
+    // visual ao dar zoom (o sintoma relatado: camada que "não fica oculta" e aparece
+    // "deslocada"). Por isso criamos UMA instância de L.geoJSON por mapa.
+    const criarLayer = () => L.geoJSON(geojson, {
       style: (ft) => {
         const corKml = ft.properties && ft.properties._corKml;
         return corKml ? { ...corPadrao, color: corKml, fillColor: corKml } : corPadrao;
@@ -3782,9 +3800,10 @@ async function carregarGeometriaCamada(tipo, camadaId) {
       },
       onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||l.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
     });
-    item.lg = lg; item._geojson = geojson;
-    if (mapField) lg.addTo(mapField);
-    if (mapPC) lg.addTo(mapPC);
+
+    item._geojson = geojson;
+    if (mapField) { item.lgField = criarLayer(); item.lgField.addTo(mapField); }
+    if (mapPC)    { item.lgPC = criarLayer(); item.lgPC.addTo(mapPC); }
     if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
   } finally {
     item._carregando = false;
@@ -3792,8 +3811,8 @@ async function carregarGeometriaCamada(tipo, camadaId) {
 }
 
 function removerGeometriaDoMapa(item) {
-  if (!item.lg) return;
-  [mapField, mapPC].filter(Boolean).forEach(m => { if (m.hasLayer(item.lg)) m.removeLayer(item.lg); });
+  if (item.lgField && mapField && mapField.hasLayer(item.lgField)) mapField.removeLayer(item.lgField);
+  if (item.lgPC && mapPC && mapPC.hasLayer(item.lgPC)) mapPC.removeLayer(item.lgPC);
 }
 
 // Liga/desliga a visibilidade — decisão 100% local deste dispositivo (localStorage),
@@ -3807,6 +3826,7 @@ function toggleCamadaIndividual(tipo, idx) {
   else removerGeometriaDoMapa(item);
   renderDMCPanel();
   renderRedesPanel();
+  invalidateSizeDosMapas();
 }
 
 function toggleAllDMC(vis) {
@@ -3817,6 +3837,7 @@ function toggleAllDMC(vis) {
     else removerGeometriaDoMapa(item);
   });
   renderDMCPanel();
+  invalidateSizeDosMapas();
 }
 function toggleAllRedes(vis) {
   (S.leafletLayers.redes||[]).forEach(item => {
@@ -3826,6 +3847,18 @@ function toggleAllRedes(vis) {
     else removerGeometriaDoMapa(item);
   });
   renderRedesPanel();
+  invalidateSizeDosMapas();
+}
+
+// Força o Leaflet a recalcular as dimensões do mapa e reposicionar corretamente todas
+// as camadas — proteção extra contra o desalinhamento visual relatado ao dar zoom
+// depois de ligar/desligar camadas (efeito colateral comum quando o SVG renderer do
+// Leaflet não recebe um "empurrão" para revalidar logo após mudanças de layer).
+function invalidateSizeDosMapas() {
+  setTimeout(() => {
+    if (mapField) mapField.invalidateSize();
+    if (mapPC) mapPC.invalidateSize();
+  }, 50);
 }
 
 function openDMCPanel() {
@@ -4367,7 +4400,17 @@ async function adicionarDMCManual(cidadeId) {
 function renderConfigCidades() {
   const el=document.getElementById('config-cidades');
   if(!el) return;
-  el.innerHTML=S.cidades.map((c,i)=>{
+  // Ordena por Regional (sem regional fica no fim) e depois por nome — mas os botões
+  // de editar/remover usam o ÍNDICE ORIGINAL no array S.cidades, então criamos os pares
+  // [cidade, índiceOriginal] antes de ordenar, em vez de reordenar o array em si.
+  const comIndice = S.cidades.map((c,i) => [c,i]);
+  comIndice.sort((a,b) => {
+    const regA = a[0].regional || 'ZZZ_sem_regional';
+    const regB = b[0].regional || 'ZZZ_sem_regional';
+    if (regA !== regB) return regA.localeCompare(regB);
+    return a[0].nome.localeCompare(b[0].nome);
+  });
+  el.innerHTML=comIndice.map(([c,i])=>{
     // Alerta visual se a cidade está usando a coordenada "fantasma" padrão antiga
     // (centro de Criciúma) sem ser a própria Criciúma — sinal de que nunca foi ajustada.
     const coordsSuspeitas = c.coords && c.coords[0]===-28.6775 && c.coords[1]===-49.3680 && c.prefixo !== 'CIA';

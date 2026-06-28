@@ -467,6 +467,12 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               <label>Rua <span id="reg-rua-status" style="font-size:10.5px;color:var(--text3);font-weight:400"></span></label>
               <input type="text" id="reg-rua" placeholder="Identificando pelo GPS...">
             </div>
+            <div class="field">
+              <label>Geofone utilizado <span id="reg-geofone-status" style="font-size:10.5px;color:var(--teal);font-weight:400"></span></label>
+              <select id="reg-geofone">
+                <option value="">Não informado</option>
+              </select>
+            </div>
           </div>
 
           <div class="section-title" style="margin-top:14px">Dados do vazamento</div>
@@ -671,6 +677,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
   <!-- PC: RELATÓRIOS -->
   <div class="panel" id="reports">
+    <div style="display:flex;gap:4px;padding:8px 14px 0;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0">
+      <button class="toggle-btn active" id="rep-tab-vazamentos" onclick="trocarAbaRelatorio('vazamentos')">Vazamentos</button>
+      <button class="toggle-btn" id="rep-tab-campanhas" onclick="trocarAbaRelatorio('campanhas')">Campanhas</button>
+      <button class="toggle-btn" id="rep-tab-campanha-dmc" onclick="trocarAbaRelatorio('campanha-dmc')">Campanha por DMC</button>
+    </div>
     <div style="padding:12px 14px;display:flex;gap:8px;flex-wrap:wrap;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0">
       <select style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="rep-regional" onchange="onFiltroRegionalChange('rep-regional','rep-cidade')">
         <option value="">Todas as regionais</option>
@@ -700,7 +711,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </select>
       <input type="date" id="rep-data-inicio" class="hidden" style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
       <input type="date" id="rep-data-fim" class="hidden" style="font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
-      <button class="btn sm primary" onclick="gerarRelatorio()"><i class="ti ti-chart-bar"></i>Gerar</button>
+      <button class="btn sm primary" id="rep-btn-gerar" onclick="gerarRelatorio()"><i class="ti ti-chart-bar"></i>Gerar</button>
       <button class="btn sm success" onclick="exportarCSV()"><i class="ti ti-table-export"></i>CSV</button>
       <button class="btn sm" onclick="window.print()"><i class="ti ti-printer"></i>Imprimir / PDF</button>
     </div>
@@ -745,6 +756,18 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <div id="config-tipos"></div>
         <button class="btn sm" onclick="adicionarTipoManual()">
           <i class="ti ti-plus"></i> Adicionar tipo de vazamento
+        </button>
+      </div>
+      <div class="section">
+        <div class="section-title">Geofones cadastrados</div>
+        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+            Cada equipe pode ter um geofone vinculado, que já vem pré-selecionado no registro de vazamento — pode ser trocado pela equipe se necessário.
+          </p>
+        </div>
+        <div id="config-geofones"></div>
+        <button class="btn sm" onclick="adicionarGeofoneManual()">
+          <i class="ti ti-plus"></i> Adicionar geofone
         </button>
       </div>
       <div class="section">
@@ -837,6 +860,12 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <div class="field">
       <label>Número WhatsApp do responsável (com DDI+DDD)</label>
       <input type="text" id="ne-wa" placeholder="5548999990001">
+    </div>
+    <div class="field">
+      <label>Geofone padrão <span style="color:var(--text3);font-weight:400">(pré-seleciona no registro, pode trocar)</span></label>
+      <select id="ne-geofone">
+        <option value="">Sem geofone padrão</option>
+      </select>
     </div>
     <button class="btn primary btn-block" onclick="salvarEquipe()">
       <i class="ti ti-check"></i> Salvar equipe
@@ -1031,12 +1060,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
     <!-- ESTADO 2: campanha em andamento (minha) -->
     <div id="campanha-andamento-wrap" class="hidden">
-      <div class="card" style="background:var(--purple-l);text-align:center;margin-bottom:14px">
-        <div style="font-size:11px;color:var(--purple);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Em andamento</div>
+      <div class="card" style="background:var(--purple-l);text-align:center;margin-bottom:14px" id="campanha-card-status">
+        <div style="font-size:11px;color:var(--purple);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px" id="campanha-status-label">Em andamento</div>
         <div style="font-size:18px;font-weight:700;color:var(--purple)" id="campanha-nome-atual">—</div>
         <div style="font-size:12px;color:var(--text2);margin-top:6px" id="campanha-tempo-atual">00:00</div>
         <div style="font-size:11px;color:var(--text2)" id="campanha-distancia-atual">0 m percorridos</div>
       </div>
+      <button class="btn btn-block" id="btn-pausar-campanha" onclick="alternarPausaCampanha()" style="margin-bottom:8px">
+        <i class="ti ti-player-pause"></i> Pausar campanha
+      </button>
       <button class="btn danger btn-block" onclick="confirmarFinalizarCampanha()">
         <i class="ti ti-player-stop"></i> Finalizar campanha
       </button>
@@ -1203,6 +1235,7 @@ const S = {
   userDoc: null,      // { role: 'admin'|'supervisor'|'tecnico'|'pendente', cidade, equipe }
   usuarios: [],       // lista de usuários (só admin carrega)
   tiposVazamento: [], // [{id, nome, servicoPadrao}]
+  geofones: [], // [{id, nome, equipePadrao}]
   servicos: [],       // [{id, codigo, descricao}] ex: {codigo:'5110', descricao:'Conserto originado de geofone'}
   // Quais campos aparecem no popup do mapa / card de detalhes. "foto" sempre é tentada
   // primeiro (se existir), os demais campos são exibidos na ordem desta lista.
@@ -1226,7 +1259,7 @@ let fMarkers = [], pcMarkers = [], heatLayer = null;
 // tecnico    -> só registra vazamentos da própria cidade/equipe
 // pendente   -> aguardando aprovação do admin
 
-let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null, unsubCampanhas = null;
+let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null, unsubCampanhas = null, unsubGeofones = null;
 
 function fazerLoginGoogle() {
   const statusEl = document.getElementById('login-status');
@@ -1420,6 +1453,14 @@ function iniciarSincronizacaoFirestore() {
     renderConfigServicos();
   });
 
+  // Geofones cadastrados — cada equipe pode ter um vinculado (pré-seleção no registro)
+  if (unsubGeofones) unsubGeofones();
+  unsubGeofones = onSnapshot(collection(db, 'geofones'), snap => {
+    S.geofones = snap.docs.map(d => d.data()).filter(g => !g.removido);
+    renderConfigGeofones();
+    popularSelectGeofoneEquipe();
+  });
+
   // Configurações gerais e preferências de exibição (meta/config) — sincronizadas em
   // tempo real, para que uma mudança feita pelo admin reflita em todos os dispositivos.
   if (unsubMetaConfig) unsubMetaConfig();
@@ -1481,7 +1522,16 @@ function iniciarSincronizacaoFirestore() {
 // a página) — religa os intervalos de checkpoint/relógio e atualiza o botão da toolbar.
 function restaurarCampanhaPropria(id, dados) {
   const inicioMs = dados.iniciadoEm?.toMillis ? dados.iniciadoEm.toMillis() : Date.now();
-  S.campanhaAtual = { id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: pontosDoCampo(dados), inicioMs, programadaId: dados.programadaOrigemId||null };
+  S.campanhaAtual = {
+    id, nome: dados.nome, dmc: dados.dmc, cidade: dados.cidade, pontos: pontosDoCampo(dados), inicioMs,
+    programadaId: dados.programadaOrigemId||null,
+    pausada: dados.pausada || false,
+    pausadoAcumuladoMs: dados.pausadoAcumuladoMs || 0,
+    // Se estava pausada antes de recarregar, reabre a contagem da pausa atual a partir de agora
+    // (uma pequena imprecisão é aceitável aqui — a alternativa exigiria guardar o timestamp exato
+    // do início da pausa no servidor, o que tornaria a lógica desproporcionalmente mais complexa)
+    pausaIniciadaEmMs: dados.pausada ? Date.now() : null
+  };
   const btn = document.getElementById('btn-campanha');
   if (btn) { btn.style.background = 'var(--purple)'; btn.style.color = '#fff'; }
   const label = document.getElementById('btn-campanha-label');
@@ -1578,6 +1628,57 @@ function renderConfigTipos() {
         <i class="ti ti-trash" style="font-size:12px"></i>
       </button>
     </div>`).join('') || '<p style="font-size:11.5px;color:var(--text2)">Nenhum tipo cadastrado.</p>';
+}
+
+// ================================================================
+// GEOFONES — cadastro e vínculo com equipe (pré-seleção no registro)
+// ================================================================
+function renderConfigGeofones() {
+  const el = document.getElementById('config-geofones');
+  if (!el) return;
+  el.innerHTML = S.geofones.map(g => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="text" value="${g.nome}" onchange="editarGeofone('${g.id}','nome',this.value)"
+        style="flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+      <button onclick="removerGeofone('${g.id}')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
+        <i class="ti ti-trash" style="font-size:12px"></i>
+      </button>
+    </div>`).join('') || '<p style="font-size:11.5px;color:var(--text2)">Nenhum geofone cadastrado.</p>';
+}
+
+async function adicionarGeofoneManual() {
+  const nome = prompt('Nome/modelo do geofone (ex: SeBa Dynatronic, Fluid Detector):');
+  if (!nome || !nome.trim()) return;
+  const nomeNormalizado = nome.trim();
+  if (S.geofones.find(g => g.nome.toLowerCase() === nomeNormalizado.toLowerCase())) {
+    toast('Já existe um geofone com esse nome');
+    return;
+  }
+  const id = 'geofone_' + Date.now();
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'geofones',id), { id, nome: nomeNormalizado });
+  toast('Geofone adicionado');
+}
+async function editarGeofone(id, campo, valor) {
+  const g = S.geofones.find(g => g.id === id);
+  if (!g) return;
+  g[campo] = valor.trim();
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'geofones',id), g);
+  toast('Geofone atualizado');
+}
+async function removerGeofone(id) {
+  if (!confirm('Remover este geofone?')) return;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'geofones',id), { removido:true }, { merge:true });
+  toast('Geofone removido');
+}
+
+// Preenche o select de geofone padrão dentro do cadastro de equipe
+function popularSelectGeofoneEquipe() {
+  const sel = document.getElementById('ne-geofone');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Sem geofone padrão</option>' +
+    S.geofones.map(g => `<option value="${g.id}">${g.nome}</option>`).join('');
+  if (cur) sel.value = cur;
 }
 
 // Checkboxes para escolher quais campos aparecem no popup do mapa / lista.
@@ -2009,6 +2110,23 @@ function renderCampanhasProgramadasCelular() {
 function atualizarPainelCampanhaAndamento() {
   if (!S.campanhaAtual) return;
   document.getElementById('campanha-nome-atual').textContent = S.campanhaAtual.nome;
+  const btn = document.getElementById('btn-pausar-campanha');
+  const statusEl = document.getElementById('campanha-status-label');
+  const cardEl = document.getElementById('campanha-card-status');
+  const nomeEl = document.getElementById('campanha-nome-atual');
+  if (S.campanhaAtual.pausada) {
+    btn.innerHTML = '<i class="ti ti-player-play"></i> Retomar campanha';
+    statusEl.textContent = 'Pausada';
+    cardEl.style.background = 'var(--amber-l)';
+    statusEl.style.color = 'var(--amber)';
+    nomeEl.style.color = 'var(--amber)';
+  } else {
+    btn.innerHTML = '<i class="ti ti-player-pause"></i> Pausar campanha';
+    statusEl.textContent = 'Em andamento';
+    cardEl.style.background = 'var(--purple-l)';
+    statusEl.style.color = 'var(--purple)';
+    nomeEl.style.color = 'var(--purple)';
+  }
 }
 
 async function iniciarCampanha() {
@@ -2103,6 +2221,7 @@ async function efetivamenteIniciarCampanha({ nome, dmc, cidade, programadaId }) 
 // periodicamente (salvarCheckpointCampanha), não a cada leitura de GPS.
 function registrarPontoNaCampanha() {
   if (!S.campanhaAtual || !S.pos) return;
+  if (S.campanhaAtual.pausada) return; // pausada: não acumula trajeto novo
   const ultimo = S.campanhaAtual.pontos[S.campanhaAtual.pontos.length - 1];
   // Só adiciona se moveu o suficiente (evita acumular pontos idênticos parado no lugar)
   if (ultimo) {
@@ -2124,14 +2243,56 @@ async function salvarCheckpointCampanha() {
 
 function atualizarRelogioCampanha() {
   if (!S.campanhaAtual) return;
-  const seg = Math.floor((Date.now() - S.campanhaAtual.inicioMs) / 1000);
+  // Desconta do cronômetro qualquer tempo que já ficou pausado, e o tempo da pausa
+  // atual em andamento (se houver) — assim "pausa pro almoço" não conta como trabalho.
+  const pausadoAcumuladoMs = S.campanhaAtual.pausadoAcumuladoMs || 0;
+  const pausaAtualMs = S.campanhaAtual.pausada ? (Date.now() - S.campanhaAtual.pausaIniciadaEmMs) : 0;
+  const seg = Math.floor((Date.now() - S.campanhaAtual.inicioMs - pausadoAcumuladoMs - pausaAtualMs) / 1000);
   const mm = String(Math.floor(seg/60)).padStart(2,'0');
-  const ss = String(seg%60).padStart(2,'0');
+  const ss = String(Math.max(0,seg)%60).padStart(2,'0');
   const elTempo = document.getElementById('campanha-tempo-atual');
   if (elTempo) elTempo.textContent = mm + ':' + ss;
   const dist = distanciaTotalPercurso(S.campanhaAtual.pontos);
   const elDist = document.getElementById('campanha-distancia-atual');
   if (elDist) elDist.textContent = (dist < 1000 ? Math.round(dist) + ' m' : (dist/1000).toFixed(2) + ' km') + ' percorridos';
+}
+
+// Pausa ou retoma a campanha atual. Pode ser feito quantas vezes for preciso (ex.:
+// pausa pro almoço, retoma de tarde) — o tempo pausado é descontado do cronômetro,
+// e o trajeto para de crescer enquanto pausada. Os colegas veem a linha "congelada"
+// com indicação visual de pausada (estilo tracejado mais claro).
+async function alternarPausaCampanha() {
+  if (!S.campanhaAtual) return;
+  const btn = document.getElementById('btn-pausar-campanha');
+  const statusEl = document.getElementById('campanha-status-label');
+  const cardEl = document.getElementById('campanha-card-status');
+
+  if (!S.campanhaAtual.pausada) {
+    // Pausar agora
+    S.campanhaAtual.pausada = true;
+    S.campanhaAtual.pausaIniciadaEmMs = Date.now();
+    btn.innerHTML = '<i class="ti ti-player-play"></i> Retomar campanha';
+    statusEl.textContent = 'Pausada';
+    cardEl.style.background = 'var(--amber-l)';
+    statusEl.style.color = 'var(--amber)';
+    document.getElementById('campanha-nome-atual').style.color = 'var(--amber)';
+  } else {
+    // Retomar agora — soma o tempo dessa pausa ao acumulado total
+    const duracaoPausaMs = Date.now() - S.campanhaAtual.pausaIniciadaEmMs;
+    S.campanhaAtual.pausadoAcumuladoMs = (S.campanhaAtual.pausadoAcumuladoMs || 0) + duracaoPausaMs;
+    S.campanhaAtual.pausada = false;
+    btn.innerHTML = '<i class="ti ti-player-pause"></i> Pausar campanha';
+    statusEl.textContent = 'Em andamento';
+    cardEl.style.background = 'var(--purple-l)';
+    statusEl.style.color = 'var(--purple)';
+    document.getElementById('campanha-nome-atual').style.color = 'var(--purple)';
+  }
+
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.id), {
+    pausada: S.campanhaAtual.pausada,
+    pausadoAcumuladoMs: S.campanhaAtual.pausadoAcumuladoMs || 0
+  }, { merge:true });
+  toast(S.campanhaAtual.pausada ? '⏸ Campanha pausada' : '▶ Campanha retomada');
 }
 
 function confirmarFinalizarCampanha() {
@@ -2143,8 +2304,17 @@ function confirmarFinalizarCampanha() {
 async function finalizarCampanha() {
   if (!S.campanhaAtual) return;
   await salvarCheckpointCampanha(); // garante que o último trecho não se perca
+
+  // Calcula e grava a distância final e a duração efetiva (descontando pausas) —
+  // dados usados depois nos relatórios de campanha, sem precisar reprocessar o
+  // trajeto inteiro a cada vez que um relatório for gerado.
+  const distanciaFinalM = distanciaTotalPercurso(S.campanhaAtual.pontos);
+  const pausadoTotalMs = S.campanhaAtual.pausadoAcumuladoMs || 0;
+  const duracaoEfetivaMs = Math.max(0, Date.now() - S.campanhaAtual.inicioMs - pausadoTotalMs);
+
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.id), {
-    ativa: false, finalizadoEm: window.FB.serverTimestamp()
+    ativa: false, finalizadoEm: window.FB.serverTimestamp(),
+    distanciaFinalM, duracaoEfetivaMs
   }, { merge:true });
 
   // Se essa campanha veio de uma programação, marca a programação como concluída
@@ -2202,6 +2372,35 @@ function pontosDoCampo(dados) {
   return dados.pontos || [];
 }
 
+// Calcula a extensão (em metros) de todas as linhas de rede vinculadas a uma cidade,
+// somando o comprimento de cada LineString do GeoJSON já carregado em memória
+// (S.leafletLayers.redes). Usado no Relatório de Campanha por DMC, para comparar
+// "quanto da rede daquele setor já foi percorrido" com o total existente.
+// Nota: a camada de rede é vinculada à CIDADE, não a um DMC específico (mesma estrutura
+// já usada em todo o app) — por isso o cálculo é por cidade, servindo de referência
+// para os DMCs dela.
+function extensaoRedeMetros(cidadeId) {
+  let totalM = 0;
+  (S.leafletLayers.redes || []).forEach(item => {
+    if (cidadeId && item.cidade !== cidadeId) return;
+    if (!item._geojson || !item._geojson.features) return;
+    item._geojson.features.forEach(ft => {
+      if (!ft.geometry) return;
+      const coordsPorLinha = ft.geometry.type === 'LineString' ? [ft.geometry.coordinates]
+        : ft.geometry.type === 'MultiLineString' ? ft.geometry.coordinates
+        : null;
+      if (!coordsPorLinha) return;
+      coordsPorLinha.forEach(linha => {
+        for (let i=1; i<linha.length; i++) {
+          // GeoJSON guarda [lng,lat] — invertido em relação ao [lat,lng] usado no resto do app
+          totalM += distanciaMetros(linha[i-1][1], linha[i-1][0], linha[i][1], linha[i][0]);
+        }
+      });
+    });
+  });
+  return totalM;
+}
+
 // Cor padrão por usuário, usada só se o admin ainda não tiver definido uma cor
 // específica em Usuários e Permissões — garante que sempre exista alguma cor,
 // determinística (mesmo uid sempre gera a mesma cor) para não mudar a cada sessão.
@@ -2236,17 +2435,22 @@ function redesenharCampanhasNoMapa() {
     if (!pontos || pontos.length < 2) return;
     const cor = dados.cor || corPadraoPorUid(dados.usuarioUid);
     const ehMinha = dados.usuarioUid === S.user?.uid;
-    const estilo = { color: cor, weight: ehMinha ? 5 : 4, opacity: dados.ativa ? 0.9 : 0.5, dashArray: dados.ativa ? null : '6,5' };
+    // Pausada: linha mais clara e tracejada, sinalizando "parada" sem desaparecer do mapa
+    const estilo = dados.pausada
+      ? { color: cor, weight: ehMinha ? 5 : 4, opacity: 0.45, dashArray: '3,8' }
+      : { color: cor, weight: ehMinha ? 5 : 4, opacity: dados.ativa ? 0.9 : 0.5, dashArray: dados.ativa ? null : '6,5' };
 
     if (!S.campanhasPolylines[id]) S.campanhasPolylines[id] = {};
     [{ mapa: mapField, chave: 'field' }, { mapa: mapPC, chave: 'pc' }].forEach(({ mapa, chave }) => {
       if (!mapa) return;
+      const statusTxt = dados.pausada ? ' · pausada' : (dados.ativa ? ' · em andamento' : ' · finalizada');
       if (S.campanhasPolylines[id][chave]) {
         S.campanhasPolylines[id][chave].setLatLngs(pontos);
         S.campanhasPolylines[id][chave].setStyle(estilo);
+        S.campanhasPolylines[id][chave].setPopupContent('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + statusTxt + '</small>');
       } else {
         const linha = L.polyline(pontos, estilo).addTo(mapa);
-        linha.bindPopup('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + (dados.ativa ? ' · em andamento' : ' · finalizada') + '</small>');
+        linha.bindPopup('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + statusTxt + '</small>');
         S.campanhasPolylines[id][chave] = linha;
       }
     });
@@ -2808,6 +3012,20 @@ function abrirComplementacao(leakId) {
   S.photosBase64 = [];
   renderPhotos();
 
+  // Geofone: usa o que já estiver salvo no ponto; senão, pré-seleciona o padrão da
+  // equipe que registrou (a equipe ainda pode trocar se usou um aparelho diferente)
+  const selGeofone = document.getElementById('reg-geofone');
+  const geofoneStatus = document.getElementById('reg-geofone-status');
+  selGeofone.innerHTML = '<option value="">Não informado</option>' +
+    S.geofones.map(g => `<option value="${g.id}">${g.nome}</option>`).join('');
+  if (l.geofone) {
+    selGeofone.value = l.geofone;
+    geofoneStatus.textContent = '';
+  } else if (eq && eq.geofonePadrao) {
+    selGeofone.value = eq.geofonePadrao;
+    geofoneStatus.textContent = '(padrão da equipe — pode trocar)';
+  }
+
   const horasRestantes = l.editavelAte ? Math.max(0, Math.round((l.editavelAte - Date.now())/3600000)) : null;
   const prazoEl = document.getElementById('reg-prazo-edicao');
   if (prazoEl) {
@@ -2840,6 +3058,7 @@ async function salvarPonto() {
   const obs = document.getElementById('reg-obs').value;
   const diam = document.getElementById('reg-diam').value;
   const rua = document.getElementById('reg-rua').value.trim();
+  const geofoneId = document.getElementById('reg-geofone').value;
   if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
 
   const id = S._pontoEmEdicao.id;
@@ -2849,9 +3068,11 @@ async function salvarPonto() {
   const servico = servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '';
   const temFotosNovas = S.photosBase64 && S.photosBase64.length > 0;
 
+  // O geofone é registrado para fins de relatório/histórico — não entra na mensagem
+  // de WhatsApp (que já tem informação suficiente para a equipe que vai consertar).
   const atualizacao = {
     dmc, tipo, servico, severidade: S.sevAtual,
-    desc: obs, diam: diam || null, rua: rua || null,
+    desc: obs, diam: diam || null, rua: rua || null, geofone: geofoneId || null,
     pendenteComplementacao: false
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), atualizacao, { merge:true });
@@ -4347,6 +4568,13 @@ function renderConfigEquipes() {
             style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
         </div>
         <div class="field" style="margin-bottom:8px">
+          <label style="font-size:10.5px">Geofone padrão</label>
+          <select onchange="editarEquipeCampo(${i},'geofonePadrao',this.value)" style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+            <option value="">Sem geofone padrão</option>
+            ${S.geofones.map(g=>`<option value="${g.id}" ${e.geofonePadrao===g.id?'selected':''}>${g.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:8px">
           <label style="font-size:10.5px">Código <span style="color:var(--text3);font-weight:400">(usado no ID dos vazamentos)</span></label>
           <div style="display:flex;gap:6px">
             <input type="text" id="codigo-equipe-edit-${i}" value="${e.codigo}" maxlength="6"
@@ -4477,15 +4705,17 @@ async function salvarEquipe() {
   const nome=document.getElementById('ne-nome').value.trim();
   const cod=document.getElementById('ne-codigo').value.trim().toUpperCase();
   const wa=document.getElementById('ne-wa').value.trim();
+  const geofonePadrao=document.getElementById('ne-geofone').value;
   if(!nome||!cod){toast('Preencha nome e código da equipe');return;}
   if(S.equipes.find(e=>e.id===cod)){toast('Já existe uma equipe com esse código');return;}
   // Equipes não têm mais cidade fixa — atendem toda a região. O campo "cidade" só
   // permanece no documento por compatibilidade com dados antigos, mas não é mais usado.
-  const novaEquipe={id:cod,nome,codigo:cod,wa};
+  const novaEquipe={id:cod,nome,codigo:cod,wa,geofonePadrao};
   await salvarEquipeFirestore(novaEquipe);
   closeModal('modal-equipe');
   toast('Equipe "' + cod + '" adicionada!');
   ['ne-nome','ne-codigo','ne-wa'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('ne-geofone').value='';
 }
 
 async function removerCidade(i){
@@ -4559,7 +4789,34 @@ function dataNoPeriodoRelatorio(l, periodo) {
   return dataNoPeriodo(l, periodo); // reaproveita hoje/ontem/semana, já implementados para a Lista
 }
 
+// Aba de relatório ativa — controla qual relatório "Gerar" produz
+S.abaRelatorioAtiva = 'vazamentos';
+
+function trocarAbaRelatorio(aba) {
+  S.abaRelatorioAtiva = aba;
+  ['vazamentos','campanhas','campanha-dmc'].forEach(a => {
+    document.getElementById('rep-tab-' + a).classList.toggle('active', a === aba);
+  });
+  // Os filtros de severidade/equipe só fazem sentido no relatório de Vazamentos —
+  // escondemos nos relatórios de campanha para não confundir (período/regional/
+  // cidade/DMC continuam valendo para os três relatórios).
+  document.getElementById('rep-equipe').classList.toggle('hidden', aba !== 'vazamentos');
+  document.getElementById('rep-sev').classList.toggle('hidden', aba !== 'vazamentos');
+  document.getElementById('report-content').innerHTML = `
+    <div style="text-align:center;padding:50px 20px;color:var(--text2)">
+      <i class="ti ti-chart-bar" style="font-size:44px;display:block;margin-bottom:12px;opacity:.4"></i>
+      <p style="font-size:13px">Selecione os filtros acima e clique em "Gerar"</p>
+    </div>`;
+}
+
+// Dispatcher: decide qual relatório gerar com base na aba ativa
 function gerarRelatorio() {
+  if (S.abaRelatorioAtiva === 'campanhas') return gerarRelatorioCampanhas();
+  if (S.abaRelatorioAtiva === 'campanha-dmc') return gerarRelatorioCampanhaPorDMC();
+  return gerarRelatorioVazamentos();
+}
+
+function gerarRelatorioVazamentos() {
   const fRegional=document.getElementById('rep-regional').value;
   const fc=document.getElementById('rep-cidade').value;
   const fdmc=document.getElementById('rep-dmc').value;
@@ -4648,6 +4905,175 @@ function gerarRelatorio() {
       <table class="data-table">
         <thead><tr><th>ID</th><th>Cidade</th><th>DMC</th><th>Tipo</th><th>Severidade</th><th>Equipe</th><th>Coordenadas</th><th>Data</th></tr></thead>
         <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+}
+
+// Helpers de tempo/distância para os relatórios de campanha
+function formatarDuracaoMs(ms) {
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return h > 0 ? `${h}h${String(m).padStart(2,'0')}` : `${m}min`;
+}
+function formatarDistanciaM(m) {
+  return m < 1000 ? Math.round(m) + ' m' : (m/1000).toFixed(2) + ' km';
+}
+// Retorna o timestamp (ms) de início/fim de uma campanha, com fallback seguro caso
+// o Firestore Timestamp ainda não tenha sido materializado no objeto local
+function msDoCampo(campo) {
+  return campo?.toMillis ? campo.toMillis() : (typeof campo === 'number' ? campo : null);
+}
+
+// RELATÓRIO 1 — Foco em campanhas: lista cada campanha realizada no período, com
+// tempo efetivo (descontando pausas), distância percorrida e vazamentos encontrados
+// na mesma cidade/DMC durante a janela de tempo da campanha.
+function gerarRelatorioCampanhas() {
+  const fRegional=document.getElementById('rep-regional').value;
+  const fc=document.getElementById('rep-cidade').value;
+  const fdmc=document.getElementById('rep-dmc').value;
+  const fp=document.getElementById('rep-periodo').value;
+  const cidadesDaRegional = fRegional ? new Set(S.cidades.filter(c=>c.regional===fRegional).map(c=>c.id)) : null;
+
+  // Só campanhas de EXECUÇÃO real (não as "programadas" sem trajeto) e já finalizadas
+  const campanhas = Object.values(S.campanhasAtivas).filter(c => !c.programada && !c.ativa);
+
+  const filtradas = campanhas.filter(c => {
+    if (cidadesDaRegional && c.cidade && !cidadesDaRegional.has(c.cidade)) return false;
+    if (fc && c.cidade !== fc) return false;
+    if (fdmc && c.dmc !== fdmc) return false;
+    const inicioMs = msDoCampo(c.iniciadoEm);
+    if (!inicioMs) return true; // sem data reconhecível, não filtra fora por engano
+    return dataNoPeriodoRelatorio({ data: new Date(inicioMs).toLocaleDateString('pt-BR') }, fp);
+  });
+
+  let distanciaTotalM = 0, duracaoTotalMs = 0;
+  const linhas = filtradas.map(c => {
+    const inicioMs = msDoCampo(c.iniciadoEm);
+    const fimMs = msDoCampo(c.finalizadoEm);
+    const duracaoMs = c.duracaoEfetivaMs || (fimMs && inicioMs ? fimMs - inicioMs : 0);
+    const distanciaM = c.distanciaFinalM || distanciaTotalPercurso(pontosDoCampo(c));
+    distanciaTotalM += distanciaM;
+    duracaoTotalMs += duracaoMs;
+
+    // Vazamentos encontrados: registrados na mesma cidade/DMC, durante a janela da campanha
+    const vazamentos = S.leaks.filter(l => {
+      if (l.cidade !== c.cidade) return false;
+      if (c.dmc && l.dmc !== c.dmc) return false;
+      const lMs = msDoCampo(l.criadoEm);
+      if (!lMs || !inicioMs) return false;
+      return lMs >= inicioMs && (!fimMs || lMs <= fimMs);
+    });
+
+    return { c, inicioMs, fimMs, duracaoMs, distanciaM, qtdVazamentos: vazamentos.length };
+  });
+
+  const tableRows = linhas.map(({c, inicioMs, duracaoMs, distanciaM, qtdVazamentos}) => `
+    <tr>
+      <td>${c.nome}</td>
+      <td>${c.usuarioNome||'—'}</td>
+      <td>${inicioMs ? new Date(inicioMs).toLocaleDateString('pt-BR') : '—'}</td>
+      <td>${formatarDuracaoMs(duracaoMs)}</td>
+      <td>${formatarDistanciaM(distanciaM)}</td>
+      <td style="text-align:center">${qtdVazamentos}</td>
+    </tr>`).join('');
+
+  const periodoLabel = {hoje:'Hoje',ontem:'Ontem',semana:'Esta semana',mes:'Este mês',personalizado:'Período personalizado'}[fp] || 'Qualquer data';
+
+  document.getElementById('report-content').innerHTML = `
+    <div class="report-header">
+      <h2>Relatório de Campanhas — GeoFon</h2>
+      <p>${fc?(S.cidades.find(c=>c.id===fc)?.nome||fc):(fRegional||'Todas as cidades')} · ${periodoLabel} · Gerado em ${new Date().toLocaleDateString('pt-BR')}</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
+      <div class="stat-card"><span class="num">${linhas.length}</span><div class="lbl">Campanhas</div></div>
+      <div class="stat-card"><span class="num">${formatarDistanciaM(distanciaTotalM)}</span><div class="lbl">Extensão total</div></div>
+      <div class="stat-card"><span class="num">${formatarDuracaoMs(duracaoTotalMs)}</span><div class="lbl">Tempo total efetivo</div></div>
+    </div>
+    <div class="report-section-title">Campanhas no período</div>
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>Campanha</th><th>Geofonador</th><th>Data</th><th>Tempo</th><th>Extensão</th><th>Vazamentos</th></tr></thead>
+        <tbody>${tableRows || '<tr><td colspan="6" style="text-align:center;color:var(--text2)">Nenhuma campanha encontrada para este filtro</td></tr>'}</tbody>
+      </table>
+    </div>`;
+}
+
+// RELATÓRIO 2 — Campanha por DMC: agrupa todas as campanhas já feitas em cada
+// DMC/área, somando o tempo total investido e a extensão percorrida, e comparando
+// com a extensão real da rede (calculada do KML) para estimar cobertura. Também
+// mostra quantas equipes diferentes já passaram por ali.
+function gerarRelatorioCampanhaPorDMC() {
+  const fRegional=document.getElementById('rep-regional').value;
+  const fc=document.getElementById('rep-cidade').value;
+  const fdmc=document.getElementById('rep-dmc').value;
+  const fp=document.getElementById('rep-periodo').value;
+  const cidadesDaRegional = fRegional ? new Set(S.cidades.filter(c=>c.regional===fRegional).map(c=>c.id)) : null;
+
+  const campanhas = Object.values(S.campanhasAtivas).filter(c => !c.programada && !c.ativa);
+  const filtradas = campanhas.filter(c => {
+    if (cidadesDaRegional && c.cidade && !cidadesDaRegional.has(c.cidade)) return false;
+    if (fc && c.cidade !== fc) return false;
+    if (fdmc && c.dmc !== fdmc) return false;
+    const inicioMs = msDoCampo(c.iniciadoEm);
+    if (!inicioMs) return true;
+    return dataNoPeriodoRelatorio({ data: new Date(inicioMs).toLocaleDateString('pt-BR') }, fp);
+  });
+
+  // Agrupa por chave cidade+DMC (ou cidade+nome, se for campanha livre sem DMC)
+  const grupos = {};
+  filtradas.forEach(c => {
+    const chave = c.cidade + '::' + (c.dmc || c.nome);
+    if (!grupos[chave]) grupos[chave] = { cidade: c.cidade, dmc: c.dmc, nome: c.nome, campanhas: [], equipesUids: new Set() };
+    const inicioMs = msDoCampo(c.iniciadoEm);
+    const fimMs = msDoCampo(c.finalizadoEm);
+    const duracaoMs = c.duracaoEfetivaMs || (fimMs && inicioMs ? fimMs - inicioMs : 0);
+    const distanciaM = c.distanciaFinalM || distanciaTotalPercurso(pontosDoCampo(c));
+    grupos[chave].campanhas.push({ inicioMs, duracaoMs, distanciaM });
+    if (c.usuarioUid) grupos[chave].equipesUids.add(c.usuarioUid);
+  });
+
+  const linhas = Object.values(grupos).map(g => {
+    const c = S.cidades.find(c => c.id === g.cidade);
+    const qtd = g.campanhas.length;
+    const duracaoMediaMs = g.campanhas.reduce((s,x)=>s+x.duracaoMs,0) / qtd;
+    const distanciaTotalM = g.campanhas.reduce((s,x)=>s+x.distanciaM,0);
+    const ultimaMs = Math.max(...g.campanhas.map(x => x.inicioMs || 0));
+    const extensaoRedeM = extensaoRedeMetros(g.cidade);
+    const coberturaPct = extensaoRedeM > 0 ? Math.min(100, Math.round(distanciaTotalM / extensaoRedeM * 100)) : null;
+    return { g, c, qtd, duracaoMediaMs, distanciaTotalM, ultimaMs, extensaoRedeM, coberturaPct };
+  });
+  linhas.sort((a,b) => b.ultimaMs - a.ultimaMs);
+
+  const tableRows = linhas.map(({g, c, qtd, duracaoMediaMs, distanciaTotalM, ultimaMs, extensaoRedeM, coberturaPct}) => `
+    <tr>
+      <td>${g.nome}</td>
+      <td>${c?c.nome:g.cidade}</td>
+      <td style="text-align:center">${qtd}</td>
+      <td style="text-align:center">${g.equipesUids.size}</td>
+      <td>${formatarDuracaoMs(duracaoMediaMs)}</td>
+      <td>${formatarDistanciaM(distanciaTotalM)}</td>
+      <td>${extensaoRedeM > 0 ? formatarDistanciaM(extensaoRedeM) : '—'}</td>
+      <td>${coberturaPct !== null ? coberturaPct + '%' : '—'}</td>
+      <td style="white-space:nowrap">${ultimaMs ? new Date(ultimaMs).toLocaleDateString('pt-BR') : '—'}</td>
+    </tr>`).join('');
+
+  const periodoLabel = {hoje:'Hoje',ontem:'Ontem',semana:'Esta semana',mes:'Este mês',personalizado:'Período personalizado'}[fp] || 'Qualquer data';
+
+  document.getElementById('report-content').innerHTML = `
+    <div class="report-header">
+      <h2>Relatório de Campanha por DMC — GeoFon</h2>
+      <p>${fc?(S.cidades.find(c=>c.id===fc)?.nome||fc):(fRegional||'Todas as cidades')} · ${periodoLabel} · Gerado em ${new Date().toLocaleDateString('pt-BR')}</p>
+    </div>
+    <div class="card" style="background:var(--blue-l);margin-bottom:14px">
+      <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+        A extensão de rede é calculada a partir do KML de rede carregado para a cidade. A cobertura é uma estimativa (extensão percorrida ÷ extensão de rede) — pode passar de 100% se houve repetição de trechos.
+      </p>
+    </div>
+    <div class="report-section-title">DMCs / áreas com campanha no período</div>
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>DMC / Área</th><th>Cidade</th><th>Campanhas</th><th>Equipes</th><th>Tempo médio</th><th>Extensão percorrida</th><th>Extensão de rede</th><th>Cobertura</th><th>Última campanha</th></tr></thead>
+        <tbody>${tableRows || '<tr><td colspan="9" style="text-align:center;color:var(--text2)">Nenhum DMC com campanha para este filtro</td></tr>'}</tbody>
       </table>
     </div>`;
 }

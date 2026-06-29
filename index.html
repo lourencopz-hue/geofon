@@ -2104,20 +2104,29 @@ function toggleCampanhaLivreForm() {
 function renderCampanhasProgramadasCelular() {
   const el = document.getElementById('campanhas-programadas-celular-list');
   if (!el) return;
-  const programadas = Object.entries(S.campanhasAtivas).filter(([id,c]) => c.programada && c.status === 'pendente');
+  // Mostra campanhas pendentes (ninguém entrou ainda) E em andamento (já tem gente,
+  // mas outros técnicos ainda podem aderir — útil para dividir um DMC grande entre
+  // a equipe). Só esconde quando o admin/supervisor marcar como 'concluida'.
+  const programadas = Object.entries(S.campanhasAtivas).filter(([id,c]) => c.programada && c.status !== 'concluida');
   if (!programadas.length) {
     el.innerHTML = '<p style="font-size:11.5px;color:var(--text2);text-align:center;padding:12px">Nenhuma campanha programada pelo gestor.</p>';
     return;
   }
   el.innerHTML = programadas.map(([id, c]) => {
     const equipesTxt = (c.equipesDesignadas||[]).length ? c.equipesDesignadas.join(', ') : 'Qualquer equipe';
+    const jaParticipo = (c.participantes||[]).some(p => p.uid === S.user?.uid);
+    const qtdParticipantes = (c.participantes||[]).length;
+    const infoParticipantes = qtdParticipantes
+      ? `<div class="lmeta" style="color:var(--purple)">${qtdParticipantes} já aderiram${jaParticipo?' (incluindo você)':''}</div>`
+      : '';
     return `<div class="leak-item" onclick="iniciarCampanhaProgramada('${id}')" style="cursor:pointer">
       <div class="leak-dot media"></div>
       <div class="leak-info">
         <div class="lid">${c.nome}</div>
         <div class="lmeta">${equipesTxt}</div>
+        ${infoParticipantes}
       </div>
-      <span class="badge blue"><i class="ti ti-player-play" style="font-size:11px"></i> Iniciar</span>
+      <span class="badge blue"><i class="ti ti-player-play" style="font-size:11px"></i> ${jaParticipo ? 'Aderir de novo' : 'Aderir'}</span>
     </div>`;
   }).join('');
 }
@@ -2210,11 +2219,20 @@ async function efetivamenteIniciarCampanha({ nome, dmc, cidade, programadaId }) 
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', id), dados);
 
-  // Se veio de uma campanha programada, marca a programação como "em andamento"
-  // (status visível no painel do desktop, sem precisar abrir o mapa)
+  // Se veio de uma campanha programada, registra essa execução na lista de execuções
+  // dela (várias pessoas podem aderir à mesma campanha programada, cada uma com seu
+  // próprio trajeto — útil para dividir um DMC grande entre a equipe). O status só
+  // muda para 'em_andamento' na primeira adesão; a programação continua aparecendo
+  // na lista do celular para outros técnicos entrarem também.
   if (programadaId) {
-    await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', programadaId), {
-      status: 'em_andamento', execucaoId: id, iniciadaPor: S.user?.nome || S.user?.email || ''
+    const progRef = window.FB.doc(window.FB.db, 'campanhas', programadaId);
+    const progSnap = await window.FB.getDoc(progRef);
+    const progDados = progSnap.exists() ? progSnap.data() : {};
+    const execucoesAnteriores = progDados.execucoesIds || [];
+    await window.FB.setDoc(progRef, {
+      status: 'em_andamento',
+      execucoesIds: execucoesAnteriores.concat([id]),
+      participantes: (progDados.participantes || []).concat([{ uid: S.user?.uid||'', nome: S.user?.nome || S.user?.email || '' }])
     }, { merge:true });
   }
 
@@ -2332,13 +2350,11 @@ async function finalizarCampanha() {
     distanciaFinalM, duracaoEfetivaMs
   }, { merge:true });
 
-  // Se essa campanha veio de uma programação, marca a programação como concluída
-  // (status visível pro admin no painel do desktop)
-  if (S.campanhaAtual.programadaId) {
-    await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', S.campanhaAtual.programadaId), {
-      status: 'concluida'
-    }, { merge:true });
-  }
+  // Nota: a programação de origem NÃO é marcada como concluída automaticamente aqui —
+  // como agora vários técnicos podem aderir à mesma campanha programada (dividindo um
+  // DMC grande entre a equipe), um único técnico finalizar seu trajeto não significa
+  // que a campanha toda terminou. Quem decide isso é o admin/supervisor, manualmente,
+  // no painel de Campanhas do desktop (botão "Marcar concluída").
 
   if (campanhaIntervaloSalvar) { clearInterval(campanhaIntervaloSalvar); campanhaIntervaloSalvar = null; }
   if (campanhaIntervaloRelogio) { clearInterval(campanhaIntervaloRelogio); campanhaIntervaloRelogio = null; }
@@ -2594,16 +2610,28 @@ function renderCampanhasProgramadasDesktop() {
     const equipesTxt = (c.equipesDesignadas||[]).length
       ? c.equipesDesignadas.map(eid => S.equipes.find(e=>e.id===eid)?.codigo || eid).join(', ')
       : 'Qualquer equipe';
+    const participantes = c.participantes || [];
+    const participantesTxt = participantes.length
+      ? participantes.map(p => p.nome).join(', ')
+      : null;
     return `<div class="card" style="margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;font-weight:600;flex:1">${c.nome}</span>
         <span class="badge ${cor}">${label}</span>
       </div>
-      <div style="font-size:11px;color:var(--text2)">Equipes: ${equipesTxt}</div>
-      ${c.iniciadaPor ? `<div style="font-size:11px;color:var(--text2)">Iniciada por: ${c.iniciadaPor}</div>` : ''}
-      <button class="btn danger sm" style="margin-top:8px" onclick="removerCampanhaProgramada('${id}')"><i class="ti ti-trash"></i> Remover</button>
+      <div style="font-size:11px;color:var(--text2)">Equipes designadas: ${equipesTxt}</div>
+      ${participantesTxt ? `<div style="font-size:11px;color:var(--purple);margin-top:3px"><i class="ti ti-users" style="font-size:11px"></i> Aderiram (${participantes.length}): ${participantesTxt}</div>` : ''}
+      <div style="display:flex;gap:6px;margin-top:8px">
+        ${c.status !== 'concluida' ? `<button class="btn success sm" onclick="marcarCampanhaProgramadaConcluida('${id}')"><i class="ti ti-check"></i> Marcar concluída</button>` : ''}
+        <button class="btn danger sm" onclick="removerCampanhaProgramada('${id}')"><i class="ti ti-trash"></i> Remover</button>
+      </div>
     </div>`;
   }).join('');
+}
+
+async function marcarCampanhaProgramadaConcluida(id) {
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'campanhas', id), { status: 'concluida' }, { merge:true });
+  toast('Campanha marcada como concluída');
 }
 
 async function removerCampanhaProgramada(id) {
@@ -3103,11 +3131,18 @@ async function salvarPonto() {
     fotosParaWhatsapp = await baixarFotosComoBase64(S._pontoEmEdicao.fotosUrls);
   }
 
+  // IMPORTANTE: captura as fotos já existentes AGORA, antes de disparar o upload e
+  // antes de voltarParaListaRegistro() zerar S._pontoEmEdicao. O upload de múltiplas
+  // fotos pode levar mais de um segundo (são enviadas uma por vez); sem essa cópia
+  // local, quando o .then() abaixo executasse, S._pontoEmEdicao já estaria null —
+  // o que travava o setDoc com um erro silencioso e fazia as fotos nunca serem
+  // gravadas no vazamento (o upload em si funcionava, só a gravação da URL falhava).
+  const fotosExistentesAntes = S._pontoEmEdicao.fotosUrls || [];
+
   if (temFotosNovas) {
     enviarFotosParaStorage(id).then(async urls => {
-      const fotosExistentes = S._pontoEmEdicao.fotosUrls || [];
-      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: fotosExistentes.concat(urls) }, { merge:true });
-    });
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: fotosExistentesAntes.concat(urls) }, { merge:true });
+    }).catch(err => console.warn('Erro ao salvar fotos do vazamento ' + id + ':', err));
   }
 
   S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, rua, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };

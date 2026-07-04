@@ -3986,26 +3986,37 @@ function detectCidadeFromName(nome) {
 
 // Grava a camada inteira (com o GeoJSON) como um documento no Firestore.
 // onSnapshot (iniciarSincronizacaoCamadas) detecta o NOVO METADADO automaticamente em
-// todos os dispositivos; a geometria (geojsonStr) só é baixada por quem pedir para ver
-// (ver carregarGeometriaCamada). Retorna o id gerado, para quem chamou marcar visível localmente.
+// todos os dispositivos; a geometria (agora um arquivo no Storage, não mais um campo
+// dentro do documento) só é baixada por quem pedir para ver (ver carregarGeometriaCamada).
+// Retorna o id gerado, para quem chamou marcar visível localmente.
 async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
-  const { db, doc, setDoc, serverTimestamp } = window.FB;
+  const { db, doc, setDoc, serverTimestamp, storage, ref, uploadString, getDownloadURL } = window.FB;
   const id = 'camada_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
   const geojsonStr = JSON.stringify(geojson);
-  if (geojsonStr.length > 900000) {
-    toast('⚠️ Arquivo muito grande para salvar na nuvem (limite ~900KB). Simplifique o KML.');
+
+  // A geometria vai pro Storage (arquivo .json), não mais como texto dentro do
+  // documento do Firestore — o Firestore tem limite de 1MB por documento, que
+  // obrigava a dividir redes grandes em vários arquivos menores antes de subir.
+  // No Storage o limite é bem mais folgado (25MB, configurado no storage.rules),
+  // então dá pra subir o arquivo inteiro de uma vez.
+  let geojsonUrl;
+  try {
+    const fileRef = ref(storage, `camadas/${id}.json`);
+    await uploadString(fileRef, geojsonStr, 'raw', { contentType: 'application/json' });
+    geojsonUrl = await getDownloadURL(fileRef);
+  } catch(err) {
+    console.warn('Erro ao enviar geometria da camada para o Storage:', err);
+    toast('⚠️ Erro ao salvar a geometria no Storage — tente novamente');
     return null;
   }
+
   const role = S.userDoc?.role;
   // Camadas incluídas por Admin/Supervisor já entram validadas; as de Técnico ficam
   // pendentes até alguém de nível superior confirmar (mas já aparecem no mapa de quem
   // optar por vê-las — a validação é um aviso de revisão, não um bloqueio de uso).
   const validada = (role === 'admin' || role === 'supervisor');
-  // O Firestore não aceita arrays dentro de arrays (formato nativo do GeoJSON).
-  // Por isso guardamos o GeoJSON inteiro como texto (string) e convertemos de volta ao ler.
-  // Nota: não existe mais campo "visible" aqui — visibilidade é decisão local de cada dispositivo.
   await setDoc(doc(db, 'camadas', id), {
-    tipo, nome, cidade: cidadeId || '', geojsonStr,
+    tipo, nome, cidade: cidadeId || '', geojsonUrl,
     criadoEm: serverTimestamp(), criadoPor: S.user?.uid || '',
     criadoPorNome: S.user?.nome || S.user?.email || '',
     validada
@@ -4047,8 +4058,21 @@ async function carregarGeometriaCamada(tipo, camadaId) {
     if (!snap.exists()) { toast('Camada não encontrada'); return; }
     const l = snap.data();
     let geojson = null;
-    try { geojson = l.geojsonStr ? JSON.parse(l.geojsonStr) : (l.geojson || null); }
-    catch(e) { toast('Erro ao ler geometria da camada'); return; }
+    try {
+      if (l.geojsonUrl) {
+        // Formato novo: geometria é um arquivo no Storage — busca o conteúdo dele.
+        const resp = await fetch(l.geojsonUrl);
+        if (!resp.ok) throw new Error('Falha ao baixar geometria (HTTP ' + resp.status + ')');
+        geojson = await resp.json();
+      } else if (l.geojsonStr) {
+        // Formato antigo (camadas criadas antes da mudança pro Storage): ainda funciona,
+        // a geometria continua vindo direto do texto salvo no próprio documento.
+        geojson = JSON.parse(l.geojsonStr);
+      } else if (l.geojson) {
+        geojson = l.geojson;
+      }
+    }
+    catch(e) { toast('Erro ao ler geometria da camada'); console.warn(e); return; }
     if (!geojson) return;
 
     const corPadrao = LAYER_STYLE[tipo];

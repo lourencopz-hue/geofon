@@ -2491,7 +2491,9 @@ function extensaoRedeMetros(cidadeId) {
 // Cor padrão por usuário, usada só se o admin ainda não tiver definido uma cor
 // específica em Usuários e Permissões — garante que sempre exista alguma cor,
 // determinística (mesmo uid sempre gera a mesma cor) para não mudar a cada sessão.
-const CORES_CAMPANHA_PADRAO = ['#534AB7','#0F6E56','#BA7517','#A32D2D','#185FA5','#3B6D11','#C0388A','#5F5E5A'];
+// Nenhuma cor aqui repete o teal usado pelas camadas de Rede (#0F6E56) — evita que o
+// trajeto de um técnico fique parecido com uma linha de tubulação no mapa.
+const CORES_CAMPANHA_PADRAO = ['#534AB7','#D6336C','#BA7517','#A32D2D','#185FA5','#2F9E44','#C0388A','#5F5E5A'];
 function corPadraoPorUid(uid) {
   if (!uid) return CORES_CAMPANHA_PADRAO[0];
   let hash = 0;
@@ -2518,26 +2520,25 @@ function redesenharCampanhasNoMapa() {
   });
   // Mesma limpeza para os ícones de posição atual dos técnicos
   Object.keys(S.campanhasMarcadores).forEach(id => {
-    if (!S.campanhasAtivas[id]) {
-      const marcadores = S.campanhasMarcadores[id];
-      [mapField, mapPC].filter(Boolean).forEach(m => {
-        const chave = m === mapField ? 'field' : 'pc';
-        if (marcadores[chave] && m.hasLayer(marcadores[chave])) m.removeLayer(marcadores[chave]);
-      });
-      delete S.campanhasMarcadores[id];
-    }
+    if (!S.campanhasAtivas[id]) removerMarcadorTecnico(id);
   });
 
   Object.entries(S.campanhasAtivas).forEach(([id, dados]) => {
     const pontos = pontosDoCampo(dados);
-    atualizarMarcadorTecnico(id, dados, pontos);
+    // O ícone de posição só faz sentido enquanto a campanha está em campo (rodando
+    // ou pausada) — depois de encerrada, o técnico não está mais lá, então o ícone
+    // é removido (a linha do trajeto continua, só o "boneco" some).
+    if (dados.ativa) atualizarMarcadorTecnico(id, dados, pontos);
+    else removerMarcadorTecnico(id);
     if (!pontos || pontos.length < 2) return;
     const cor = dados.cor || corPadraoPorUid(dados.usuarioUid);
     const ehMinha = dados.usuarioUid === S.user?.uid;
-    // Pausada: linha mais clara e tracejada, sinalizando "parada" sem desaparecer do mapa
+    // Trajeto do técnico usa traço pontilhado arredondado (bolinhas), bem diferente do
+    // traço fino e reto usado pelas camadas de rede — antes os dois podiam ficar quase
+    // idênticos (mesma cor/estilo tracejado), confundindo trajeto de campanha com tubulação.
     const estilo = dados.pausada
-      ? { color: cor, weight: ehMinha ? 5 : 4, opacity: 0.45, dashArray: '3,8' }
-      : { color: cor, weight: ehMinha ? 5 : 4, opacity: dados.ativa ? 0.9 : 0.5, dashArray: dados.ativa ? null : '6,5' };
+      ? { color: cor, weight: (ehMinha ? 6 : 5), opacity: 0.5, dashArray: '1,11', lineCap: 'round', lineJoin: 'round' }
+      : { color: cor, weight: (ehMinha ? 6 : 5), opacity: dados.ativa ? 0.95 : 0.4, dashArray: dados.ativa ? '1,11' : '2,9', lineCap: 'round', lineJoin: 'round' };
 
     if (!S.campanhasPolylines[id]) S.campanhasPolylines[id] = {};
     [{ mapa: mapField, chave: 'field' }, { mapa: mapPC, chave: 'pc' }].forEach(({ mapa, chave }) => {
@@ -2568,6 +2569,18 @@ function iconTecnico(cor, pausada, ehMinha) {
     </div>`,
     className:'', iconSize:[tam,tam], iconAnchor:[tam/2, tam]
   });
+}
+
+// Remove o ícone de posição do técnico dos dois mapas (usado quando a campanha
+// termina ou deixa de existir — o ícone não deve persistir depois de encerrada).
+function removerMarcadorTecnico(id) {
+  const marcadores = S.campanhasMarcadores[id];
+  if (!marcadores) return;
+  [mapField, mapPC].filter(Boolean).forEach(m => {
+    const chave = m === mapField ? 'field' : 'pc';
+    if (marcadores[chave] && m.hasLayer(marcadores[chave])) m.removeLayer(marcadores[chave]);
+  });
+  delete S.campanhasMarcadores[id];
 }
 
 // Desenha (ou move) o ícone de posição atual do técnico — sempre no último ponto
@@ -3607,7 +3620,14 @@ async function enviarFotosParaStorageDireto(leakId, fotosBase64) {
   const urls = [];
   for (let i = 0; i < fotosBase64.length; i++) {
     try {
-      const caminho = `vazamentos/${leakId}/foto_${i+1}.jpg`;
+      // Nome de arquivo ÚNICO (timestamp + índice + sufixo aleatório) — antes usava
+      // "foto_1.jpg", "foto_2.jpg"... contando só as fotos DESTE upload. Se o registro
+      // rápido enviasse uma foto e, em seguida, a complementação enviasse outra, as duas
+      // geravam "foto_1.jpg" e a segunda SOBRESCREVIA o arquivo da primeira no Storage —
+      // invalidando o link já salvo dela (a foto ficava com ícone quebrado no grid/popup,
+      // mesmo com a URL correta gravada no Firestore). Um nome único elimina esse choque.
+      const sufixo = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const caminho = `vazamentos/${leakId}/foto_${sufixo}_${i+1}.jpg`;
       const fileRef = ref(storage, caminho);
       await uploadString(fileRef, fotosBase64[i], 'data_url');
       const url = await getDownloadURL(fileRef);

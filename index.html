@@ -1219,6 +1219,44 @@ window.dispatchEvent(new Event('firebase-ready'));
 
 <script>
 // ================================================================
+// DMC — modelo de dados (cada cidade tem uma lista de DMCs)
+// ================================================================
+// Nome fixo da região "sem DMC definido" — sempre existe em toda cidade, serve de
+// opção "catch-all" nos seletores (ex.: ponto fora de qualquer polígono de DMC
+// carregado, ou cidade que ainda não tem nenhum DMC cadastrado).
+const DMC_SEM_DMC = 'Sem DMC';
+
+// Cidades antigas guardavam c.dmcs como array de STRINGS simples (só o nome).
+// Agora cada DMC é um OBJETO com mais campos (sigla, ligações, situação, extensão de
+// rede etc. — vindos da planilha de controle ou calculados pelo app). Esta função
+// aceita os dois formatos e sempre devolve o objeto completo, com os campos que
+// faltarem preenchidos como null — assim, dado antigo no Firestore continua
+// funcionando sem precisar de uma migração manual separada.
+function normalizarDMC(d) {
+  if (typeof d === 'string') {
+    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null };
+  }
+  return {
+    nome: d.nome || '', sigla: d.sigla || '', ligacoes: (d.ligacoes ?? null),
+    situacao: d.situacao || null, extensaoRede: (d.extensaoRede ?? null),
+    extensaoPercorrida: (d.extensaoPercorrida ?? null), codigoGis: (d.codigoGis ?? null),
+    ultimaAtualizacao: d.ultimaAtualizacao || null
+  };
+}
+// Normaliza todos os DMCs de uma cidade e garante que "Sem DMC" sempre exista nela.
+function normalizarDMCsCidade(c) {
+  c.dmcs = (c.dmcs || []).map(normalizarDMC);
+  if (!c.dmcs.some(d => d.nome === DMC_SEM_DMC)) c.dmcs.push(normalizarDMC(DMC_SEM_DMC));
+  return c;
+}
+// Situações que permitem cadastrar pontos/vazamentos nesse DMC — combinado que só
+// "em Estudo" bloqueia (ainda não instalado). DMC sem situação definida (dado antigo,
+// ou "Sem DMC") também é liberado, pra não travar cadastros por falta de informação.
+function dmcPermiteCadastro(d) {
+  return d.situacao !== 'em Estudo';
+}
+
+// ================================================================
 // ESTADO GLOBAL
 // ================================================================
 const S = {
@@ -1400,7 +1438,7 @@ function iniciarSincronizacaoFirestore() {
     if (!todas.length && S.userDoc.role === 'admin') {
       criarDadosIniciais();
     } else {
-      S.cidades = ativas;
+      S.cidades = ativas.map(normalizarDMCsCidade);
     }
     populateSelects();
     renderConfigCidades();
@@ -1950,7 +1988,7 @@ function sincronizarDMCsCidade(geojson, cidadeId) {
   const c = S.cidades.find(c => c.id === cidadeId);
   if (!c) return;
   let mudou = false;
-  lista.forEach(n => { if (!c.dmcs.includes(n)) { c.dmcs.push(n); mudou = true; } });
+  lista.forEach(n => { if (!c.dmcs.some(d => d.nome === n)) { c.dmcs.push(normalizarDMC(n)); mudou = true; } });
   if (mudou) salvarCidadeFirestore(c);
   const regCid = document.getElementById('reg-cidade');
   if (regCid && regCid.value) onCidadeChange();
@@ -2125,7 +2163,7 @@ function abrirPainelCampanha() {
   const sel = document.getElementById('campanha-dmc');
   sel.innerHTML = '<option value="">Campanha livre (sem DMC)</option>' +
     S.cidades.flatMap(c => c.dmcs.map(d => ({c,d})))
-      .map(({c,d}) => `<option value="${c.id}::${d}">${c.prefixo} - ${d}</option>`).join('');
+      .map(({c,d}) => `<option value="${c.id}::${d.nome}">${c.prefixo} - ${d.nome}</option>`).join('');
 
   // Reseta o formulário de campanha livre a cada abertura — começa fechado
   document.getElementById('campanha-livre-form-wrap').classList.add('hidden');
@@ -2670,7 +2708,7 @@ function popularSelectDMCProgramacao() {
   const sel = document.getElementById('prog-dmc');
   const c = S.cidades.find(c => c.id === cid);
   sel.innerHTML = '<option value="">Campanha livre (sem DMC)</option>' +
-    (c ? c.dmcs.map(d => `<option value="${d}">${d}</option>`).join('') : '');
+    (c ? c.dmcs.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('') : '');
 }
 
 function renderProgEquipesCheckboxes() {
@@ -3041,7 +3079,10 @@ function onCidadeChange() {
   const dmc = document.getElementById('reg-dmc');
   while (dmc.options.length > 0) dmc.remove(0);
   if (c) {
-    c.dmcs.forEach(d => { const o = document.createElement('option'); o.textContent = d; dmc.appendChild(o); });
+    // Só mostra DMCs liberados para cadastro (situação != "em Estudo") — "Sem DMC"
+    // sempre aparece, é a opção de catch-all quando o ponto não pertence a nenhum DMC.
+    c.dmcs.filter(d => dmcPermiteCadastro(d) || d.nome === DMC_SEM_DMC)
+      .forEach(d => { const o = document.createElement('option'); o.textContent = d.nome; o.value = d.nome; dmc.appendChild(o); });
   } else {
     const o = document.createElement('option'); o.textContent = 'Selecione a cidade primeiro'; dmc.appendChild(o);
   }
@@ -3066,7 +3107,7 @@ function quickCidadeChange() {
   // DMC do modo completo (só relevante se a seção estiver expandida, mas já populamos sempre)
   const c = S.cidades.find(c => c.id === cid);
   const selDmc = document.getElementById('quick-dmc');
-  if (selDmc) selDmc.innerHTML = '<option value="">Selecione o DMC...</option>' + (c?.dmcs||[]).map(d => `<option value="${d}">${d}</option>`).join('');
+  if (selDmc) selDmc.innerHTML = '<option value="">Selecione o DMC...</option>' + (c?.dmcs||[]).filter(d => dmcPermiteCadastro(d) || d.nome === DMC_SEM_DMC).map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
   updateIdPreviewQuick();
 }
 
@@ -3160,7 +3201,7 @@ function abrirComplementacao(leakId) {
 
   const c = S.cidades.find(c=>c.id===l.cidade);
   const selDmc = document.getElementById('reg-dmc');
-  selDmc.innerHTML = (c?.dmcs||[]).map(d => `<option value="${d}" ${d===l.dmc?'selected':''}>${d}</option>`).join('');
+  selDmc.innerHTML = (c?.dmcs||[]).map(d => `<option value="${d.nome}" ${d.nome===l.dmc?'selected':''}>${d.nome}</option>`).join('');
 
   popularSelectTipos();
   popularSelectServicos();
@@ -3502,7 +3543,7 @@ async function confirmarQuick() {
   const id = await proximoIdSequencial(cid, eq.codigo);
   const now=new Date();
   const c=S.cidades.find(c=>c.id===cid);
-  const dmcPadrao = dmcEscolhido || c?.dmcs[0]||'-';
+  const dmcPadrao = dmcEscolhido || c?.dmcs[0]?.nome || DMC_SEM_DMC;
   const temFoto = !!S.quickPhotoBase64;
 
   const tipoObj = S.tiposVazamento.find(t => t.id === tipoId);
@@ -4589,7 +4630,7 @@ function renderManage() {
           <span style="font-size:11px;color:var(--text2);margin-left:auto">${S.leaks.filter(l=>l.cidade===c.id).length} vazamentos</span>
           <i class="ti ti-chevron-down" id="chev-${c.id}" style="font-size:14px;color:var(--text2)"></i>
         </div>
-        <div style="font-size:11px;color:var(--text2);margin-top:5px" id="dmcs-resumo-${c.id}">DMCs: ${c.dmcs.join(', ')}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:5px" id="dmcs-resumo-${c.id}">${resumoDMCsTexto(c)}</div>
         <div id="dmcs-edit-${c.id}" class="hidden" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
           <div style="display:flex;flex-direction:column;gap:5px" id="dmcs-list-${c.id}"></div>
           <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarDMCManual('${c.id}')">
@@ -4622,6 +4663,16 @@ function renderManage() {
   }
 }
 
+// Texto-resumo usado no cabeçalho de cada cidade na aba Gestão — conta quantos DMCs
+// existem e quantos já estão liberados pra cadastro (situação diferente de "em Estudo").
+function resumoDMCsTexto(c) {
+  const reais = c.dmcs.filter(d => d.nome !== DMC_SEM_DMC);
+  const liberados = reais.filter(dmcPermiteCadastro).length;
+  return reais.length
+    ? `${reais.length} DMC(s) — ${liberados} liberado(s) para cadastro`
+    : 'Nenhum DMC cadastrado ainda';
+}
+
 // Edição de DMCs existentes (aba Gestão)
 function toggleEditarDMCs(cidadeId) {
   const div = document.getElementById('dmcs-edit-' + cidadeId);
@@ -4632,46 +4683,84 @@ function toggleEditarDMCs(cidadeId) {
   if (abrindo) renderDMCsEditaveis(cidadeId);
 }
 
+const SITUACOES_DMC = ['em Operação', 'em Instalação', 'em Estudo', 'Dividir DMC'];
+
 function renderDMCsEditaveis(cidadeId) {
   const c = S.cidades.find(c => c.id === cidadeId);
   const el = document.getElementById('dmcs-list-' + cidadeId);
   if (!c || !el) return;
-  el.innerHTML = c.dmcs.map((d, i) => `
-    <div style="display:flex;gap:6px;align-items:center">
-      <input type="text" value="${d}" onchange="editarDMCNome('${cidadeId}',${i},this.value)"
-        style="flex:1;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
-      <button onclick="removerDMC('${cidadeId}',${i})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
-        <i class="ti ti-trash" style="font-size:12px"></i>
-      </button>
-    </div>`).join('');
+  el.innerHTML = c.dmcs.map((d, i) => {
+    const ehSemDMC = d.nome === DMC_SEM_DMC;
+    // "Sem DMC" é uma região fixa do sistema (catch-all) — nome e situação não fazem
+    // sentido nela, e ela não pode ser removida (toda cidade precisa ter essa opção).
+    if (ehSemDMC) {
+      return `<div style="display:flex;align-items:center;gap:6px;padding:6px 9px;background:var(--bg2);border-radius:var(--radius);font-size:11.5px;color:var(--text2)">
+        <i class="ti ti-map-pin-off" style="font-size:13px"></i> Sem DMC <span style="margin-left:auto;font-size:10px">(fixo — usado quando o ponto não pertence a nenhum DMC)</span>
+      </div>`;
+    }
+    return `
+    <div class="card" style="padding:8px;background:var(--bg2)">
+      <div style="display:flex;gap:6px;margin-bottom:5px">
+        <input type="text" value="${d.nome}" placeholder="Nome do DMC" onchange="editarCampoDMC('${cidadeId}',${i},'nome',this.value)"
+          style="flex:1;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+        <button onclick="removerDMC('${cidadeId}',${i})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red);flex-shrink:0">
+          <i class="ti ti-trash" style="font-size:12px"></i>
+        </button>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:5px">
+        <input type="text" value="${d.sigla||''}" placeholder="Sigla (ex: BDN-DMC-Alinea)" onchange="editarCampoDMC('${cidadeId}',${i},'sigla',this.value)"
+          style="flex:1;padding:5px 8px;font-size:11px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+        <select onchange="editarCampoDMC('${cidadeId}',${i},'situacao',this.value)"
+          style="width:130px;padding:5px 6px;font-size:11px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <option value="">Situação: —</option>
+          ${SITUACOES_DMC.map(s => `<option value="${s}" ${d.situacao===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;font-size:10.5px;color:var(--text2)">
+        <label style="display:flex;align-items:center;gap:4px">Ligações:
+          <input type="number" value="${d.ligacoes ?? ''}" placeholder="—" onchange="editarCampoDMC('${cidadeId}',${i},'ligacoes',this.value?Number(this.value):null)"
+            style="width:64px;padding:3px 5px;font-size:11px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+        </label>
+        <span title="Extensão real da rede — calculada a partir da camada de Rede recortada pelo polígono do DMC (em breve); até lá, é aproximada pela extensão percorrida em campanhas.">
+          Extensão: ${d.extensaoRede ? d.extensaoRede.toLocaleString('pt-BR') + 'm' : (d.extensaoPercorrida ? '~' + Math.round(d.extensaoPercorrida).toLocaleString('pt-BR') + 'm (aprox.)' : '—')}
+        </span>
+      </div>
+    </div>`;
+  }).join('');
 }
 
-async function editarDMCNome(cidadeId, idx, novoNome) {
+async function editarCampoDMC(cidadeId, idx, campo, valor) {
   const c = S.cidades.find(c => c.id === cidadeId);
-  if (!c) return;
-  const nomeAntigo = c.dmcs[idx];
-  novoNome = novoNome.trim();
-  if (!novoNome) { renderDMCsEditaveis(cidadeId); return; }
-  c.dmcs[idx] = novoNome;
-  await salvarCidadeFirestore(c);
-  // Atualiza também os vazamentos já registrados com o DMC antigo (mantém histórico consistente)
-  const leaksParaAtualizar = S.leaks.filter(l => l.cidade === cidadeId && l.dmc === nomeAntigo);
-  for (const l of leaksParaAtualizar) {
-    await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',l.id), { dmc:novoNome }, { merge:true });
+  if (!c || !c.dmcs[idx]) return;
+  if (campo === 'nome') {
+    valor = valor.trim();
+    if (!valor) { renderDMCsEditaveis(cidadeId); return; }
+    const nomeAntigo = c.dmcs[idx].nome;
+    c.dmcs[idx].nome = valor;
+    await salvarCidadeFirestore(c);
+    // Atualiza também os vazamentos já registrados com o DMC antigo (mantém histórico consistente)
+    const leaksParaAtualizar = S.leaks.filter(l => l.cidade === cidadeId && l.dmc === nomeAntigo);
+    for (const l of leaksParaAtualizar) {
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',l.id), { dmc:valor }, { merge:true });
+    }
+    toast('DMC atualizado' + (leaksParaAtualizar.length ? ' (' + leaksParaAtualizar.length + ' vazamento(s) também atualizados)' : ''));
+  } else {
+    c.dmcs[idx][campo] = valor;
+    await salvarCidadeFirestore(c);
+    toast('DMC atualizado');
   }
-  document.getElementById('dmcs-resumo-'+cidadeId).textContent = 'DMCs: ' + c.dmcs.join(', ');
-  toast('DMC atualizado' + (leaksParaAtualizar.length ? ' (' + leaksParaAtualizar.length + ' vazamento(s) também atualizados)' : ''));
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
 }
 
 async function removerDMC(cidadeId, idx) {
   const c = S.cidades.find(c => c.id === cidadeId);
   if (!c) return;
-  if (c.dmcs.length <= 1) { toast('A cidade precisa ter ao menos 1 DMC'); return; }
-  if (!confirm('Remover "' + c.dmcs[idx] + '" da lista? Vazamentos já registrados com esse DMC não serão alterados.')) return;
+  if (c.dmcs[idx].nome === DMC_SEM_DMC) { toast('"Sem DMC" é uma região fixa do sistema e não pode ser removida'); return; }
+  if (!confirm('Remover "' + c.dmcs[idx].nome + '" da lista? Vazamentos já registrados com esse DMC não serão alterados.')) return;
   c.dmcs.splice(idx, 1);
   await salvarCidadeFirestore(c);
   renderDMCsEditaveis(cidadeId);
-  document.getElementById('dmcs-resumo-'+cidadeId).textContent = 'DMCs: ' + c.dmcs.join(', ');
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
   toast('DMC removido da lista');
 }
 
@@ -4680,10 +4769,13 @@ async function adicionarDMCManual(cidadeId) {
   if (!c) return;
   const nome = prompt('Nome do novo DMC:');
   if (!nome || !nome.trim()) return;
-  c.dmcs.push(nome.trim());
+  // Insere antes do "Sem DMC" (que fica sempre por último, como opção de catch-all)
+  const semDmcIdx = c.dmcs.findIndex(d => d.nome === DMC_SEM_DMC);
+  const novoDMC = normalizarDMC(nome.trim());
+  if (semDmcIdx >= 0) c.dmcs.splice(semDmcIdx, 0, novoDMC); else c.dmcs.push(novoDMC);
   await salvarCidadeFirestore(c);
   renderDMCsEditaveis(cidadeId);
-  document.getElementById('dmcs-resumo-'+cidadeId).textContent = 'DMCs: ' + c.dmcs.join(', ');
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
   toast('DMC adicionado');
 }
 
@@ -5091,7 +5183,7 @@ function popularSelectDMCRelatorio() {
   if (!sel) return;
   const c = S.cidades.find(c => c.id === cid);
   sel.innerHTML = '<option value="">Todos os DMCs</option>' +
-    (c ? c.dmcs.map(d => `<option value="${d}">${d}</option>`).join('') : '');
+    (c ? c.dmcs.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('') : '');
 }
 
 // Mostra/esconde os campos de data personalizada conforme o período escolhido

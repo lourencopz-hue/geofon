@@ -836,7 +836,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <textarea id="nc-dmcs" placeholder="DMC-01 Centro&#10;DMC-02 Leste&#10;DMC-03 Norte"></textarea>
     </div>
     <div class="field">
-      <label>Contatos WhatsApp <span style="color:var(--text3);font-weight:400">(com DDI+DDD, ex: 5548999990001)</span></label>
+      <label>Contatos WhatsApp <span style="color:var(--text3);font-weight:400">(número com DDI+DDD, ex: 5548999990001, OU link de convite de grupo, ex: https://chat.whatsapp.com/ABC123)</span></label>
       <div id="nc-wa-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
       <button class="btn sm" onclick="addWAField()" style="width:100%;justify-content:center">
         <i class="ti ti-plus"></i> Adicionar contato
@@ -990,11 +990,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
       Deseja notificar a equipe de <strong id="wa-confirm-cidade">—</strong> agora por WhatsApp?
     </p>
-    <!-- Aparece só quando o ponto tem foto: avisa que a foto será anexada automaticamente -->
+    <!-- Aparece só quando o ponto tem foto: avisa o que vai acontecer ao notificar -->
     <div id="wa-confirm-foto-wrap" class="hidden" style="text-align:left;margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:8px;background:var(--blue-l);border-radius:var(--radius-lg);padding:10px 12px">
         <i class="ti ti-photo" style="color:var(--blue);font-size:16px;flex-shrink:0"></i>
-        <span style="font-size:11.5px;color:var(--blue-d)">Ao notificar, a foto será enviada junto — escolha o contato/grupo do WhatsApp quando o compartilhamento abrir.</span>
+        <span style="font-size:11.5px;color:var(--blue-d)">O texto vai direto para os números cadastrados. Pra foto, escolha o contato/grupo no seletor que abrir junto.</span>
       </div>
     </div>
     <div style="display:flex;gap:8px">
@@ -3067,7 +3067,10 @@ function updateContatosPreview(c) {
   if (!el) return; // elemento não existe mais nesta tela (removido na reestruturação do fluxo)
   if (!c) { el.textContent = 'Selecione cidade e equipe para ver os contatos de envio.'; return; }
   el.innerHTML = `<strong style="font-size:11px;color:var(--text2)">Contatos da cidade ${c.nome}:</strong><br>` +
-    c.wa.map(w => `<span style="font-family:monospace;font-size:12px">+${w}</span>`).join('<br>');
+    c.wa.map(w => ehGrupoWhatsApp(w)
+      ? `<span style="font-family:monospace;font-size:12px"><i class="ti ti-users" style="font-size:11px"></i> Grupo</span>`
+      : `<span style="font-family:monospace;font-size:12px">+${w}</span>`
+    ).join('<br>');
 }
 
 // ================================================================
@@ -3298,12 +3301,15 @@ function abrirPerguntaWhatsApp(pontoSalvo) {
 }
 
 // Compartilha a foto via Web Share API (abre o seletor nativo — a pessoa escolhe o
-// contato/grupo do WhatsApp na hora). Retorna true/false conforme conseguiu ou não
-// disparar o compartilhamento, para quem chama decidir o que avisar em seguida.
+// contato/grupo do WhatsApp na hora). Ação independente: pode ser feita antes, depois
+// ou nunca, sem afetar o envio do texto pelo botão "Notificar".
 async function compartilharFotoDoModal() {
   const ponto = S._ultimoPontoSalvo;
-  if (!ponto || !ponto.fotosBase64 || !ponto.fotosBase64.length) return false;
-  if (!navigator.share || !navigator.canShare) return false;
+  if (!ponto || !ponto.fotosBase64 || !ponto.fotosBase64.length) { toast('Nenhuma foto para compartilhar'); return; }
+  if (!navigator.share || !navigator.canShare) {
+    toast('💡 Este navegador não compartilha arquivos — abra a galeria e envie manualmente no WhatsApp');
+    return;
+  }
   try {
     const arquivos = ponto.fotosBase64.map((b64, i) => {
       const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
@@ -3313,12 +3319,10 @@ async function compartilharFotoDoModal() {
       const blob = new Blob([arr], {type:mime});
       return new File([blob], 'vazamento_' + ponto.id + '_' + (i+1) + '.jpg', {type:mime});
     });
-    if (!navigator.canShare({ files: arquivos })) return false;
+    if (!navigator.canShare({ files: arquivos })) { toast('💡 Este navegador não compartilha arquivos — abra a galeria e envie manualmente no WhatsApp'); return; }
     await navigator.share({ title:'Vazamento ' + ponto.id, files: arquivos });
-    return true;
   } catch(e) {
-    // Usuário cancelou o compartilhamento — não é erro, só segue sem a foto
-    return false;
+    // Usuário cancelou o compartilhamento — não é erro, só não faz nada
   }
 }
 
@@ -3327,20 +3331,19 @@ function pularNotificacaoWhatsApp() {
   S._ultimoPontoSalvo = null;
 }
 
-// Um único toque em "Notificar" agora cuida de tudo: se o ponto tem foto, abre
-// primeiro o compartilhamento nativo (a pessoa escolhe o contato/grupo do WhatsApp);
-// assim que ela volta desse compartilhamento (ou se o navegador não suportar
-// compartilhar arquivos), o texto com os detalhes é aberto em seguida — sem depender
-// de lembrar de tocar num botão separado antes.
+// "Notificar" abre DIRETO a conversa de cada número cadastrado com o texto do
+// vazamento — E, se houver foto, dispara o compartilhamento nativo dela ao MESMO
+// TEMPO (sem esperar um terminar pro outro começar). Isso resolve o problema anterior:
+// quando o texto esperava o compartilhamento da foto terminar, o navegador suspendia
+// a página ao abrir o seletor de contato do WhatsApp e o texto nunca saía depois.
+// Disparando os dois juntos, o texto vai direto pros números cadastrados (sem pedir
+// contato) enquanto a foto abre o seletor nativo — que exige escolher o contato ali,
+// isso não dá pra evitar, é uma restrição do próprio WhatsApp/navegador.
 async function confirmarNotificacaoWhatsApp() {
   closeModal('modal-wa-confirm');
   const ponto = S._ultimoPontoSalvo;
   if (ponto) {
-    const temFotos = ponto.fotosBase64 && ponto.fotosBase64.length > 0;
-    if (temFotos) {
-      const compartilhou = await compartilharFotoDoModal();
-      if (!compartilhou) toast('💡 Não foi possível anexar a foto automaticamente — envie-a manualmente na conversa');
-    }
+    if (ponto.fotosBase64 && ponto.fotosBase64.length) compartilharFotoDoModal(); // não espera (roda em paralelo)
     enviarWhatsAppDoponto(ponto);
     // Marca o ponto como notificado — vira o indicador visual (ícone do WhatsApp) na
     // lista de "Registrar", para a equipe saber rapidamente quais já foram avisados.
@@ -3700,11 +3703,31 @@ function enviarWhatsAppDoponto(ponto) {
 
   const msg = encodeURIComponent(texto);
 
-  // Abre direto a conversa com CADA número cadastrado, sem pedir pra escolher contato —
-  // o número já vem do cadastro da cidade (Configurações).
-  c.wa.forEach((num, i) => {
-    setTimeout(() => window.open('https://wa.me/' + num + '?text=' + msg, '_blank'), i * 800);
+  // Cada entrada pode ser um NÚMERO (abre direto a conversa, com o texto já preenchido —
+  // wa.me suporta isso só para conversas individuais) ou o LINK DE CONVITE DE UM GRUPO
+  // (chat.whatsapp.com/...). Grupo não tem o mesmo recurso de texto pré-preenchido — essa
+  // é uma limitação do próprio WhatsApp, não do app — então pra grupo a gente copia o texto
+  // pra área de transferência e abre o link do grupo, faltando só colar.
+  c.wa.forEach((destino, i) => {
+    setTimeout(() => {
+      if (ehGrupoWhatsApp(destino)) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(texto).then(() => {
+            toast('📋 Texto copiado — cole no grupo que vai abrir');
+          }).catch(() => {});
+        }
+        window.open(destino, '_blank');
+      } else {
+        window.open('https://wa.me/' + destino + '?text=' + msg, '_blank');
+      }
+    }, i * 800);
   });
+}
+
+// Identifica se um contato cadastrado é um link de convite de GRUPO do WhatsApp
+// (ex.: https://chat.whatsapp.com/ABC123) em vez de um número de telefone.
+function ehGrupoWhatsApp(destino) {
+  return /chat\.whatsapp\.com/i.test(destino || '');
 }
 
 // ================================================================
@@ -4647,7 +4670,7 @@ function renderConfigCidades() {
         <div style="display:flex;flex-direction:column;gap:4px">
           ${c.wa.map((w,wi)=>`
             <div style="display:flex;align-items:center;gap:6px">
-              <i class="ti ti-brand-whatsapp" style="color:#25D366;font-size:14px"></i>
+              <i class="ti ${ehGrupoWhatsApp(w)?'ti-users':'ti-brand-whatsapp'}" style="color:#25D366;font-size:14px" title="${ehGrupoWhatsApp(w)?'Link de grupo':'Número individual'}"></i>
               <input type="text" value="${w}" onchange="editarWACidade(${i},${wi},this.value)"
                 style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
               <button onclick="removerWACidade(${i},${wi})" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 7px;cursor:pointer;color:var(--red)"><i class="ti ti-x" style="font-size:11px"></i></button>
@@ -4893,7 +4916,7 @@ function addWAField(value) {
   const idx = list.children.length;
   const div = document.createElement('div');
   div.style.cssText = 'display:flex;gap:6px;align-items:center';
-  div.innerHTML = '<input type="text" class="nc-wa-item" placeholder="5548999990001" style="flex:1;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" value="' + (value||'') + '">' +
+  div.innerHTML = '<input type="text" class="nc-wa-item" placeholder="5548999990001 ou link do grupo" style="flex:1;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" value="' + (value||'') + '">' +
     '<button onclick="this.parentElement.remove()" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red);flex-shrink:0"><i class="ti ti-x"></i></button>';
   list.appendChild(div);
 }

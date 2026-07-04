@@ -990,12 +990,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
       Deseja notificar a equipe de <strong id="wa-confirm-cidade">—</strong> agora por WhatsApp?
     </p>
-    <!-- Aparece só quando o ponto tem foto: avisa o que vai acontecer ao notificar -->
-    <div id="wa-confirm-foto-wrap" class="hidden" style="text-align:left;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:8px;background:var(--blue-l);border-radius:var(--radius-lg);padding:10px 12px">
-        <i class="ti ti-photo" style="color:var(--blue);font-size:16px;flex-shrink:0"></i>
-        <span style="font-size:11.5px;color:var(--blue-d)">O texto vai direto para os números cadastrados. Pra foto, escolha o contato/grupo no seletor que abrir junto.</span>
-      </div>
+    <!-- Aparece só quando o ponto tem foto: botão dedicado e independente pra fotos -->
+    <div id="wa-confirm-foto-wrap" class="hidden" style="margin-bottom:10px">
+      <button class="btn sm" style="width:100%;justify-content:center;background:var(--blue-l);color:var(--blue-d);border-color:transparent" onclick="compartilharFotoDoModal()">
+        <i class="ti ti-photo"></i> Enviar foto(s) por WhatsApp
+      </button>
     </div>
     <div style="display:flex;gap:8px">
       <button class="btn" style="flex:1;justify-content:center" onclick="pularNotificacaoWhatsApp()">
@@ -1490,6 +1489,10 @@ function iniciarSincronizacaoFirestore() {
     // os checkboxes aparecem com os valores padrão definidos em S.camposPopup.
     renderConfigCamposPopup();
     renderConfigCamposWhatsApp();
+    // Redesenha os pop-ups dos mapas com a config atualizada — assim a mudança aparece
+    // em tempo real em TODOS os dispositivos conectados, não só em quem alterou.
+    addFieldMarkers();
+    refreshPCMap();
   });
 
   // Campanhas de geofonamento — sincronizadas em tempo real, para que toda a equipe
@@ -1716,6 +1719,9 @@ function renderConfigCamposPopup() {
 async function toggleCampoPopup(campo, valor) {
   S.camposPopup[campo] = valor;
   await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposPopup: S.camposPopup }, { merge:true });
+  // Não precisa redesenhar os mapas aqui manualmente — o listener de meta/config
+  // (onSnapshot) recebe essa própria gravação de volta e já cuida de redesenhar os
+  // pop-ups dos dois mapas, tanto neste dispositivo quanto em todos os outros conectados.
   toast('Preferência de exibição atualizada');
 }
 
@@ -2884,13 +2890,15 @@ function popupHtml(l) {
   partes.push(`<div style="font-family:monospace;font-weight:700;color:var(--blue);font-size:13px;margin-bottom:4px">${l.id}</div>`);
 
   if (l.fotosUrls && l.fotosUrls.length) {
+    const fotosData = encodeURIComponent(JSON.stringify(l.fotosUrls));
     if (l.fotosUrls.length === 1) {
-      partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:320px;max-height:240px;object-fit:cover;border-radius:8px;margin-bottom:6px;display:block;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" onclick="abrirFotoAmpliada('${l.fotosUrls[0]}')">`);
+      partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:320px;max-height:240px;object-fit:cover;border-radius:8px;margin-bottom:6px;display:block;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" data-fotos="${fotosData}" data-idx="0" onclick="abrirFotoAmpliada(this)">`);
     } else {
       // Mais de uma foto: mostra todas em uma faixa horizontal com rolagem, em vez
-      // de só a primeira — cada miniatura abre ampliada ao tocar.
-      const miniaturas = l.fotosUrls.map(url => `
-        <img src="${url}" alt="Foto do vazamento" style="width:88px;height:88px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" onclick="abrirFotoAmpliada('${url}')">`).join('');
+      // de só a primeira — cada miniatura abre ampliada ao tocar, com setas pra
+      // passar entre elas sem precisar voltar no pop-up.
+      const miniaturas = l.fotosUrls.map((url, idx) => `
+        <img src="${url}" alt="Foto do vazamento" style="width:88px;height:88px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" data-fotos="${fotosData}" data-idx="${idx}" onclick="abrirFotoAmpliada(this)">`).join('');
       partes.push(`<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:6px;max-width:320px;padding-bottom:2px">${miniaturas}</div>`);
       partes.push(`<div style="font-size:10px;color:#888;margin-top:-4px;margin-bottom:6px">${l.fotosUrls.length} fotos</div>`);
     }
@@ -3256,14 +3264,15 @@ async function salvarPonto() {
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), atualizacao, { merge:true });
   toast(`✓ Ponto ${id} atualizado!`);
 
-  // Fotos para o WhatsApp: prioriza fotos NOVAS adicionadas agora (já em base64, prontas
-  // para compartilhar). Se não houver foto nova mas o ponto já tinha foto (ex.: tirada no
-  // "Novo Ponto" rápido), busca essa foto existente a partir da URL do Storage e converte
-  // para base64 — sem isso, o compartilhamento não tem um arquivo real para enviar.
+  // Fotos para o WhatsApp: SEMPRE junta as fotos que o ponto já tinha (ex.: tirada no
+  // "Novo Ponto" rápido, já salva no Storage) COM as fotos novas adicionadas agora aqui em
+  // "Registrar" — antes, se houvesse foto nova, as fotos antigas eram ignoradas; por isso
+  // o compartilhamento saía faltando a foto do registro rápido.
   let fotosParaWhatsapp = (S.photosBase64||[]).slice();
-  if (!fotosParaWhatsapp.length && S._pontoEmEdicao.fotosUrls && S._pontoEmEdicao.fotosUrls.length) {
-    toast('Preparando foto para compartilhar...');
-    fotosParaWhatsapp = await baixarFotosComoBase64(S._pontoEmEdicao.fotosUrls);
+  if (S._pontoEmEdicao.fotosUrls && S._pontoEmEdicao.fotosUrls.length) {
+    toast('Preparando fotos para compartilhar...');
+    const fotosExistentes = await baixarFotosComoBase64(S._pontoEmEdicao.fotosUrls);
+    fotosParaWhatsapp = fotosExistentes.concat(fotosParaWhatsapp);
   }
 
   if (temFotosNovas) {
@@ -3331,19 +3340,14 @@ function pularNotificacaoWhatsApp() {
   S._ultimoPontoSalvo = null;
 }
 
-// "Notificar" abre DIRETO a conversa de cada número cadastrado com o texto do
-// vazamento — E, se houver foto, dispara o compartilhamento nativo dela ao MESMO
-// TEMPO (sem esperar um terminar pro outro começar). Isso resolve o problema anterior:
-// quando o texto esperava o compartilhamento da foto terminar, o navegador suspendia
-// a página ao abrir o seletor de contato do WhatsApp e o texto nunca saía depois.
-// Disparando os dois juntos, o texto vai direto pros números cadastrados (sem pedir
-// contato) enquanto a foto abre o seletor nativo — que exige escolher o contato ali,
-// isso não dá pra evitar, é uma restrição do próprio WhatsApp/navegador.
+// "Notificar" volta a ser só o texto — abre direto a conversa de cada número
+// cadastrado, sem envolver foto nenhuma. O envio de foto agora é uma ação totalmente
+// separada, pelo botão "Enviar foto(s) por WhatsApp" (compartilharFotoDoModal), que a
+// pessoa aciona quando quiser — nenhuma das duas ações depende ou espera a outra.
 async function confirmarNotificacaoWhatsApp() {
   closeModal('modal-wa-confirm');
   const ponto = S._ultimoPontoSalvo;
   if (ponto) {
-    if (ponto.fotosBase64 && ponto.fotosBase64.length) compartilharFotoDoModal(); // não espera (roda em paralelo)
     enviarWhatsAppDoponto(ponto);
     // Marca o ponto como notificado — vira o indicador visual (ícone do WhatsApp) na
     // lista de "Registrar", para a equipe saber rapidamente quais já foram avisados.
@@ -3806,14 +3810,65 @@ function zoomLeak(lat, lng) {
 // antes ia direto para o mapa sem mostrar nada primeiro.
 // Abre a foto em tela cheia (lightbox simples) — usado tanto no popup do mapa
 // quanto no modal de detalhes da Lista, quando se quer ver a foto bem maior.
-function abrirFotoAmpliada(url) {
+// Abre a foto em tela cheia (lightbox), com setas pra passar pra próxima/anterior
+// quando o ponto tem mais de uma foto — sem precisar fechar e clicar em outra
+// miniatura no pop-up. Aceita o <img> clicado (lê data-fotos e data-idx dele).
+function abrirFotoAmpliada(origem) {
+  let urls, indice;
+  if (typeof origem === 'string') { urls = [origem]; indice = 0; } // chamada antiga, com url direta
+  else { urls = JSON.parse(decodeURIComponent(origem.dataset.fotos)); indice = parseInt(origem.dataset.idx, 10) || 0; }
+
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out';
-  overlay.onclick = () => overlay.remove();
+
   const img = document.createElement('img');
-  img.src = url;
   img.style.cssText = 'max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.4)';
+
+  const contador = document.createElement('div');
+  contador.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);color:#fff;font-size:13px;background:rgba(0,0,0,.4);padding:4px 12px;border-radius:20px';
+
+  function render() {
+    img.src = urls[indice];
+    contador.textContent = (indice+1) + ' / ' + urls.length;
+    contador.style.display = urls.length > 1 ? 'block' : 'none';
+  }
+  function mudar(delta, ev) {
+    if (ev) ev.stopPropagation();
+    indice = (indice + delta + urls.length) % urls.length;
+    render();
+  }
+
+  overlay.onclick = () => overlay.remove();
+  overlay.appendChild(contador);
   overlay.appendChild(img);
+
+  if (urls.length > 1) {
+    const btnStyle = 'position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;border:none;font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer';
+    const btnPrev = document.createElement('button');
+    btnPrev.innerHTML = '<i class="ti ti-chevron-left"></i>';
+    btnPrev.style.cssText = btnStyle + ';left:12px';
+    btnPrev.onclick = (ev) => mudar(-1, ev);
+    const btnNext = document.createElement('button');
+    btnNext.innerHTML = '<i class="ti ti-chevron-right"></i>';
+    btnNext.style.cssText = btnStyle + ';right:12px';
+    btnNext.onclick = (ev) => mudar(1, ev);
+    overlay.appendChild(btnPrev);
+    overlay.appendChild(btnNext);
+
+    // Setas do teclado também funcionam, pra quem usa no desktop
+    const onKey = (ev) => {
+      if (ev.key === 'ArrowLeft') mudar(-1);
+      else if (ev.key === 'ArrowRight') mudar(1);
+      else if (ev.key === 'Escape') overlay.remove();
+    };
+    document.addEventListener('keydown', onKey);
+    const observer = new MutationObserver(() => {
+      if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey); observer.disconnect(); }
+    });
+    observer.observe(document.body, { childList:true });
+  }
+
+  render();
   document.body.appendChild(overlay);
 }
 

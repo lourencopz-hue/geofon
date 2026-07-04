@@ -52,6 +52,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg2)}
 .gps-bar{display:flex;align-items:center;gap:8px;padding:7px 14px;background:var(--teal-l);border-bottom:1px solid rgba(15,110,86,.15);font-size:11.5px;color:var(--teal);flex-shrink:0}
 .gps-dot{width:7px;height:7px;border-radius:50%;background:var(--teal);flex-shrink:0;animation:gpspulse 1.5s infinite}
 @keyframes gpspulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+@keyframes minhaposicaoRipple{0%{opacity:.55;transform:scale(.3)}100%{opacity:0;transform:scale(1)}}
+.minha-posicao-ripple{width:46px;height:46px;border-radius:50%;background:var(--purple);animation:minhaposicaoRipple 1s ease-out infinite}
 
 /* MAP */
 .map-toolbar{display:flex;gap:6px;padding:8px 10px;flex-wrap:wrap;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
@@ -780,6 +782,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <div id="config-campos-popup"></div>
       </div>
       <div class="section">
+        <div class="section-title">Mensagem de notificação por WhatsApp</div>
+        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+            Escolha quais informações entram no texto enviado por WhatsApp ao notificar a equipe de um vazamento.
+          </p>
+        </div>
+        <div id="config-campos-whatsapp"></div>
+      </div>
+      <div class="section">
         <div class="section-title">Configurações gerais</div>
         <div class="card">
           <div class="field">
@@ -979,18 +990,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
       Deseja notificar a equipe de <strong id="wa-confirm-cidade">—</strong> agora por WhatsApp?
     </p>
-    <!-- Aparece só quando o ponto tem foto: ordem clara, passo 1 antes do passo 2 -->
+    <!-- Aparece só quando o ponto tem foto: avisa que a foto será anexada automaticamente -->
     <div id="wa-confirm-foto-wrap" class="hidden" style="text-align:left;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:8px;background:var(--blue-l);border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:10px 12px;border-bottom:1px solid rgba(24,95,165,.15)">
-        <span style="background:var(--blue);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</span>
-        <span style="font-size:11.5px;color:var(--blue-d);flex:1">Compartilhe a foto primeiro</span>
-        <button class="btn sm" style="background:var(--bg)" onclick="compartilharFotoDoModal()">
-          <i class="ti ti-share"></i> Compartilhar
-        </button>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:0 0 var(--radius-lg) var(--radius-lg);padding:8px 12px">
-        <span style="background:var(--gray);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</span>
-        <span style="font-size:11px;color:var(--text2)">Depois toque em "Notificar" abaixo, com o texto</span>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--blue-l);border-radius:var(--radius-lg);padding:10px 12px">
+        <i class="ti ti-photo" style="color:var(--blue);font-size:16px;flex-shrink:0"></i>
+        <span style="font-size:11.5px;color:var(--blue-d)">Ao notificar, a foto será enviada junto — escolha o contato/grupo do WhatsApp quando o compartilhamento abrir.</span>
       </div>
     </div>
     <div style="display:flex;gap:8px">
@@ -1181,7 +1185,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
-  serverTimestamp, query, orderBy
+  serverTimestamp, query, orderBy, arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {
   getStorage, ref, uploadString, getDownloadURL, deleteObject
@@ -1206,7 +1210,7 @@ const provider = new GoogleAuthProvider();
 window.FB = {
   auth, db, provider, storage,
   signInWithPopup, signOut, onAuthStateChanged,
-  doc, getDoc, setDoc, collection, onSnapshot, serverTimestamp, query, orderBy,
+  doc, getDoc, setDoc, collection, onSnapshot, serverTimestamp, query, orderBy, arrayUnion,
   ref, uploadString, getDownloadURL, deleteObject
 };
 
@@ -1241,9 +1245,13 @@ const S = {
   // primeiro (se existir), os demais campos são exibidos na ordem desta lista.
   // Configurável em Configurações → Exibição (renderConfigCamposPopup).
   camposPopup: { data:true, severidade:true, tipo:true, dmc:false, servico:false, desc:false, diam:false, rua:false },
+  // Quais campos entram na mensagem de WhatsApp enviada ao notificar a equipe.
+  // Todos ligados por padrão, para manter o comportamento atual quem já usa o app.
+  camposWhatsApp: { rua:true, dmc:true, tipo:true, servico:true, diam:true, severidade:true, equipe:true, obs:true, localizacao:true, data:true },
   campanhaAtual: null,      // { id, dmc, nomeLivre, pontos:[[lat,lng],...], inicioMs } — minha campanha em andamento
   campanhasAtivas: {},      // { campanhaId: {dados do Firestore} } — campanhas de TODOS os usuários (incluindo a própria)
   campanhasPolylines: {},   // { campanhaId: L.Polyline } — referências de desenho no mapa, por mapa (field/pc)
+  campanhasMarcadores: {},  // { campanhaId: { field: L.Marker, pc: L.Marker } } — ícone da posição ATUAL de cada técnico em campanha
 };
 
 
@@ -1474,12 +1482,14 @@ function iniciarSincronizacaoFirestore() {
       if (dados.org !== undefined) S.config.org = dados.org;
       if (dados.gps !== undefined) S.config.gps = dados.gps;
       if (dados.camposPopup) S.camposPopup = { ...S.camposPopup, ...dados.camposPopup };
+      if (dados.camposWhatsApp) S.camposWhatsApp = { ...S.camposWhatsApp, ...dados.camposWhatsApp };
       const cfgOrgEl = document.getElementById('cfg-org'); if (cfgOrgEl) cfgOrgEl.value = S.config.org || '';
       const cfgGpsEl = document.getElementById('cfg-gps'); if (cfgGpsEl) cfgGpsEl.value = S.config.gps || 20;
     }
     // Renderiza sempre — mesmo que o documento ainda não exista no Firestore (1ª vez),
     // os checkboxes aparecem com os valores padrão definidos em S.camposPopup.
     renderConfigCamposPopup();
+    renderConfigCamposWhatsApp();
   });
 
   // Campanhas de geofonamento — sincronizadas em tempo real, para que toda a equipe
@@ -1707,6 +1717,30 @@ async function toggleCampoPopup(campo, valor) {
   S.camposPopup[campo] = valor;
   await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposPopup: S.camposPopup }, { merge:true });
   toast('Preferência de exibição atualizada');
+}
+
+// Mesma ideia do bloco acima, mas para os campos que entram na MENSAGEM DE WHATSAPP
+// enviada ao notificar a equipe (Rua virou "Endereço" no texto para não repetir "Rua"
+// quando o valor já vem do Google Maps com "Rua" incluso no nome).
+const CAMPOS_WHATSAPP_LABELS = {
+  rua: 'Endereço', dmc: 'DMC / Setor', tipo: 'Tipo de vazamento', servico: 'Código de serviço',
+  diam: 'Diâmetro estimado', severidade: 'Severidade', equipe: 'Equipe', obs: 'Observações',
+  localizacao: 'Link do mapa', data: 'Data e hora'
+};
+function renderConfigCamposWhatsApp() {
+  const el = document.getElementById('config-campos-whatsapp');
+  if (!el) return;
+  const cfg = S.camposWhatsApp || {};
+  el.innerHTML = Object.entries(CAMPOS_WHATSAPP_LABELS).map(([campo, label]) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+      <input type="checkbox" ${cfg[campo] ? 'checked' : ''} onchange="toggleCampoWhatsApp('${campo}', this.checked)" style="width:16px;height:16px;cursor:pointer">
+      ${label}
+    </label>`).join('');
+}
+async function toggleCampoWhatsApp(campo, valor) {
+  S.camposWhatsApp[campo] = valor;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposWhatsApp: S.camposWhatsApp }, { merge:true });
+  toast('Preferência de mensagem do WhatsApp atualizada');
 }
 
 async function editarServico(id, campo, valor) {
@@ -2041,8 +2075,30 @@ function setGPSText(txt, acc) {
   ['gps-coords','reg-gps-coords'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = txt; });
   ['gps-acc','reg-gps-acc'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = acc||''; });
 }
+// Centraliza o mapa na posição atual e acende um ícone pulsante por alguns segundos
+// no ponto exato — facilita achar "onde eu estou" no meio de vários outros marcadores
+// (vazamentos, colegas de campanha) no mapa.
+let _minhaPosicaoMarcador = null;
+let _minhaPosicaoTimeout = null;
 function centerMyPosition() {
-  if (S.pos && mapField) mapField.setView([S.pos.lat, S.pos.lng], 17);
+  if (!S.pos || !mapField) return;
+  mapField.setView([S.pos.lat, S.pos.lng], 17);
+  destacarMinhaPosicaoNoMapa(mapField);
+}
+function destacarMinhaPosicaoNoMapa(mapa) {
+  if (!S.pos) return;
+  if (_minhaPosicaoMarcador) { mapa.removeLayer(_minhaPosicaoMarcador); _minhaPosicaoMarcador = null; }
+  if (_minhaPosicaoTimeout) clearTimeout(_minhaPosicaoTimeout);
+  const icon = L.divIcon({
+    html: '<div class="minha-posicao-ripple"></div>',
+    className:'', iconSize:[46,46], iconAnchor:[23,23]
+  });
+  _minhaPosicaoMarcador = L.marker([S.pos.lat, S.pos.lng], { icon, zIndexOffset: 1000, interactive:false }).addTo(mapa);
+  // Some sozinho depois de alguns segundos — é só um destaque temporário, não deve
+  // permanecer no mapa como se fosse um marcador permanente.
+  _minhaPosicaoTimeout = setTimeout(() => {
+    if (_minhaPosicaoMarcador) { mapa.removeLayer(_minhaPosicaoMarcador); _minhaPosicaoMarcador = null; }
+  }, 4000);
 }
 
 // ================================================================
@@ -2460,9 +2516,21 @@ function redesenharCampanhasNoMapa() {
       delete S.campanhasPolylines[id];
     }
   });
+  // Mesma limpeza para os ícones de posição atual dos técnicos
+  Object.keys(S.campanhasMarcadores).forEach(id => {
+    if (!S.campanhasAtivas[id]) {
+      const marcadores = S.campanhasMarcadores[id];
+      [mapField, mapPC].filter(Boolean).forEach(m => {
+        const chave = m === mapField ? 'field' : 'pc';
+        if (marcadores[chave] && m.hasLayer(marcadores[chave])) m.removeLayer(marcadores[chave]);
+      });
+      delete S.campanhasMarcadores[id];
+    }
+  });
 
   Object.entries(S.campanhasAtivas).forEach(([id, dados]) => {
     const pontos = pontosDoCampo(dados);
+    atualizarMarcadorTecnico(id, dados, pontos);
     if (!pontos || pontos.length < 2) return;
     const cor = dados.cor || corPadraoPorUid(dados.usuarioUid);
     const ehMinha = dados.usuarioUid === S.user?.uid;
@@ -2485,6 +2553,48 @@ function redesenharCampanhasNoMapa() {
         S.campanhasPolylines[id][chave] = linha;
       }
     });
+  });
+}
+
+// Ícone de "pessoa" usado para marcar a posição atual de cada técnico em campanha —
+// diferente do ponto de vazamento (bolinha colorida), pra não confundir os dois no mapa.
+function iconTecnico(cor, pausada, ehMinha) {
+  const tam = ehMinha ? 34 : 30;
+  return L.divIcon({
+    html: `<div style="width:${tam}px;height:${tam}px;border-radius:50% 50% 50% 0;background:${cor};
+      transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.45);
+      opacity:${pausada ? 0.55 : 1};display:flex;align-items:center;justify-content:center">
+      <i class="ti ti-walk" style="transform:rotate(45deg);color:#fff;font-size:${ehMinha?15:13}px"></i>
+    </div>`,
+    className:'', iconSize:[tam,tam], iconAnchor:[tam/2, tam]
+  });
+}
+
+// Desenha (ou move) o ícone de posição atual do técnico — sempre no último ponto
+// do trajeto registrado. Roda junto com redesenharCampanhasNoMapa, a cada atualização
+// do listener de campanhas, então a posição de cada colega aparece atualizada em
+// tempo real (dentro do intervalo de gravação do trajeto).
+function atualizarMarcadorTecnico(id, dados, pontos) {
+  if (!pontos || !pontos.length) return;
+  const ultimo = pontos[pontos.length - 1];
+  const cor = dados.cor || corPadraoPorUid(dados.usuarioUid);
+  const ehMinha = dados.usuarioUid === S.user?.uid;
+  const statusTxt = dados.pausada ? ' · pausada' : (dados.ativa ? ' · em campo agora' : ' · finalizada');
+  const popupTxt = '<b>' + (dados.usuarioNome||'Técnico') + '</b><br><small>' + dados.nome + statusTxt + '</small>';
+
+  if (!S.campanhasMarcadores[id]) S.campanhasMarcadores[id] = {};
+  [{ mapa: mapField, chave: 'field' }, { mapa: mapPC, chave: 'pc' }].forEach(({ mapa, chave }) => {
+    if (!mapa) return;
+    const icon = iconTecnico(cor, dados.pausada, ehMinha);
+    if (S.campanhasMarcadores[id][chave]) {
+      S.campanhasMarcadores[id][chave].setLatLng(ultimo);
+      S.campanhasMarcadores[id][chave].setIcon(icon);
+      S.campanhasMarcadores[id][chave].setPopupContent(popupTxt);
+    } else {
+      const marcador = L.marker(ultimo, { icon, zIndexOffset: 500 }).addTo(mapa);
+      marcador.bindPopup(popupTxt);
+      S.campanhasMarcadores[id][chave] = marcador;
+    }
   });
 }
 
@@ -2761,13 +2871,22 @@ function popupHtml(l) {
   partes.push(`<div style="font-family:monospace;font-weight:700;color:var(--blue);font-size:13px;margin-bottom:4px">${l.id}</div>`);
 
   if (l.fotosUrls && l.fotosUrls.length) {
-    partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:320px;max-height:240px;object-fit:cover;border-radius:8px;margin-bottom:6px;display:block;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" onclick="abrirFotoAmpliada('${l.fotosUrls[0]}')">`);
+    if (l.fotosUrls.length === 1) {
+      partes.push(`<img src="${l.fotosUrls[0]}" alt="Foto do vazamento" style="width:100%;max-width:320px;max-height:240px;object-fit:cover;border-radius:8px;margin-bottom:6px;display:block;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" onclick="abrirFotoAmpliada('${l.fotosUrls[0]}')">`);
+    } else {
+      // Mais de uma foto: mostra todas em uma faixa horizontal com rolagem, em vez
+      // de só a primeira — cada miniatura abre ampliada ao tocar.
+      const miniaturas = l.fotosUrls.map(url => `
+        <img src="${url}" alt="Foto do vazamento" style="width:88px;height:88px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:zoom-in" loading="lazy" onerror="this.style.display='none'" onclick="abrirFotoAmpliada('${url}')">`).join('');
+      partes.push(`<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:6px;max-width:320px;padding-bottom:2px">${miniaturas}</div>`);
+      partes.push(`<div style="font-size:10px;color:#888;margin-top:-4px;margin-bottom:6px">${l.fotosUrls.length} fotos</div>`);
+    }
   }
 
   if (cfg.tipo && l.tipo) partes.push(`<div style="font-size:12.5px;font-weight:500">${l.tipo}</div>`);
   if (cfg.severidade) partes.push(`<span style="color:${c};font-weight:700;font-size:11.5px">${l.severidade.toUpperCase()}</span>`);
   if (cfg.dmc && l.dmc) partes.push(`<div style="font-size:11.5px;color:#555">DMC: ${l.dmc}</div>`);
-  if (cfg.rua && l.rua) partes.push(`<div style="font-size:11.5px;color:#555">Rua: ${l.rua}</div>`);
+  if (cfg.rua && l.rua) partes.push(`<div style="font-size:11.5px;color:#555">Endereço: ${l.rua}</div>`);
   if (cfg.servico && l.servico) partes.push(`<div style="font-size:11px;color:#666">${l.servico}</div>`);
   if (cfg.diam && l.diam) partes.push(`<div style="font-size:11px;color:#666">Ø ${l.diam}mm</div>`);
   if (cfg.desc && l.desc) partes.push(`<div style="font-size:11px;color:#666;margin-top:3px">${l.desc}</div>`);
@@ -3131,17 +3250,15 @@ async function salvarPonto() {
     fotosParaWhatsapp = await baixarFotosComoBase64(S._pontoEmEdicao.fotosUrls);
   }
 
-  // IMPORTANTE: captura as fotos já existentes AGORA, antes de disparar o upload e
-  // antes de voltarParaListaRegistro() zerar S._pontoEmEdicao. O upload de múltiplas
-  // fotos pode levar mais de um segundo (são enviadas uma por vez); sem essa cópia
-  // local, quando o .then() abaixo executasse, S._pontoEmEdicao já estaria null —
-  // o que travava o setDoc com um erro silencioso e fazia as fotos nunca serem
-  // gravadas no vazamento (o upload em si funcionava, só a gravação da URL falhava).
-  const fotosExistentesAntes = S._pontoEmEdicao.fotosUrls || [];
-
   if (temFotosNovas) {
+    // Usa arrayUnion em vez de ler S._pontoEmEdicao.fotosUrls e concatenar localmente.
+    // O snapshot local pode estar desatualizado (ex.: a foto do "Novo Ponto" rápido
+    // ainda não terminou de subir quando este formulário foi aberto), o que fazia essa
+    // gravação apagar a foto do registro rápido em vez de somar as duas. Com arrayUnion,
+    // a gravação é feita no servidor de forma atômica, então não importa a ordem em
+    // que as duas gravações cheguem — nenhuma foto se perde.
     enviarFotosParaStorage(id).then(async urls => {
-      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: fotosExistentesAntes.concat(urls) }, { merge:true });
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: window.FB.arrayUnion(...urls) }, { merge:true });
     }).catch(err => console.warn('Erro ao salvar fotos do vazamento ' + id + ':', err));
   }
 
@@ -3167,26 +3284,28 @@ function abrirPerguntaWhatsApp(pontoSalvo) {
   openModal('modal-wa-confirm');
 }
 
-// Compartilha a foto diretamente a partir do modal — ação explícita e visível,
-// sem depender de um botão temporário que poderia passar despercebido.
+// Compartilha a foto via Web Share API (abre o seletor nativo — a pessoa escolhe o
+// contato/grupo do WhatsApp na hora). Retorna true/false conforme conseguiu ou não
+// disparar o compartilhamento, para quem chama decidir o que avisar em seguida.
 async function compartilharFotoDoModal() {
   const ponto = S._ultimoPontoSalvo;
-  if (!ponto || !ponto.fotosBase64 || !ponto.fotosBase64.length) { toast('Nenhuma foto para compartilhar'); return; }
-  if (!navigator.share) {
-    toast('💡 Este navegador não compartilha arquivos — abra a galeria e envie manualmente no WhatsApp');
-    return;
-  }
+  if (!ponto || !ponto.fotosBase64 || !ponto.fotosBase64.length) return false;
+  if (!navigator.share || !navigator.canShare) return false;
   try {
-    const b64 = ponto.fotosBase64[0];
-    const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
-    const byteStr = atob(b64.split(',')[1]);
-    const arr = new Uint8Array(byteStr.length);
-    for (let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
-    const blob = new Blob([arr], {type:mime});
-    const file = new File([blob], 'vazamento_' + ponto.id + '.jpg', {type:mime});
-    await navigator.share({ title:'Vazamento ' + ponto.id, files:[file] });
+    const arquivos = ponto.fotosBase64.map((b64, i) => {
+      const mime = b64.split(';')[0].split(':')[1] || 'image/jpeg';
+      const byteStr = atob(b64.split(',')[1]);
+      const arr = new Uint8Array(byteStr.length);
+      for (let j=0;j<byteStr.length;j++) arr[j]=byteStr.charCodeAt(j);
+      const blob = new Blob([arr], {type:mime});
+      return new File([blob], 'vazamento_' + ponto.id + '_' + (i+1) + '.jpg', {type:mime});
+    });
+    if (!navigator.canShare({ files: arquivos })) return false;
+    await navigator.share({ title:'Vazamento ' + ponto.id, files: arquivos });
+    return true;
   } catch(e) {
-    // Usuário cancelou o compartilhamento — não é erro, só não faz nada
+    // Usuário cancelou o compartilhamento — não é erro, só segue sem a foto
+    return false;
   }
 }
 
@@ -3195,14 +3314,25 @@ function pularNotificacaoWhatsApp() {
   S._ultimoPontoSalvo = null;
 }
 
+// Um único toque em "Notificar" agora cuida de tudo: se o ponto tem foto, abre
+// primeiro o compartilhamento nativo (a pessoa escolhe o contato/grupo do WhatsApp);
+// assim que ela volta desse compartilhamento (ou se o navegador não suportar
+// compartilhar arquivos), o texto com os detalhes é aberto em seguida — sem depender
+// de lembrar de tocar num botão separado antes.
 async function confirmarNotificacaoWhatsApp() {
   closeModal('modal-wa-confirm');
-  if (S._ultimoPontoSalvo) {
-    enviarWhatsAppDoponto(S._ultimoPontoSalvo);
+  const ponto = S._ultimoPontoSalvo;
+  if (ponto) {
+    const temFotos = ponto.fotosBase64 && ponto.fotosBase64.length > 0;
+    if (temFotos) {
+      const compartilhou = await compartilharFotoDoModal();
+      if (!compartilhou) toast('💡 Não foi possível anexar a foto automaticamente — envie-a manualmente na conversa');
+    }
+    enviarWhatsAppDoponto(ponto);
     // Marca o ponto como notificado — vira o indicador visual (ícone do WhatsApp) na
     // lista de "Registrar", para a equipe saber rapidamente quais já foram avisados.
     try {
-      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',S._ultimoPontoSalvo.id), { notificadoWhatsApp:true }, { merge:true });
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',ponto.id), { notificadoWhatsApp:true }, { merge:true });
     } catch(e) { console.warn('Não foi possível marcar como notificado:', e); }
   }
   S._ultimoPontoSalvo = null;
@@ -3379,9 +3509,13 @@ async function confirmarQuick() {
 
   if (temFoto) {
     const fotoSalva = S.quickPhotoBase64;
+    // Usa arrayUnion em vez de sobrescrever fotosUrls: se o usuário for direto para
+    // "Registrar" (complementação) e salvar uma segunda foto antes deste upload
+    // terminar, os dois gravam ao mesmo tempo — com arrayUnion nenhuma das duas
+    // gravações apaga a foto da outra (era exatamente esse o bug relatado).
     enviarFotosParaStorageDireto(id, [fotoSalva]).then(urls => {
-      window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls:urls }, { merge:true });
-    });
+      window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: window.FB.arrayUnion(...urls) }, { merge:true });
+    }).catch(err => console.warn('Erro ao salvar foto rápida do vazamento ' + id + ':', err));
   }
 
   S._ultimoPontoSalvo = {
@@ -3513,33 +3647,35 @@ async function baixarFotosComoBase64(urls) {
 // ================================================================
 // Envia notificação de WhatsApp para um ponto que JÁ foi salvo no mapa.
 // Recebe o objeto retornado por salvarPonto() (id, cidade, dados, fotosBase64).
-// A foto (se houver) já foi oferecida para compartilhamento explícito ANTES desta
-// função ser chamada (ver botão "Compartilhar foto agora" no modal de confirmação),
-// então aqui só cuidamos de abrir o WhatsApp com o texto para os números cadastrados.
+// A foto (se houver) já foi oferecida para compartilhamento automático ANTES desta
+// função ser chamada (ver confirmarNotificacaoWhatsApp), então aqui só cuidamos de
+// abrir o WhatsApp com o texto para os números cadastrados.
 function enviarWhatsAppDoponto(ponto) {
   const c = S.cidades.find(c => c.id === ponto.cidade);
   if (!c) { toast('Cidade não encontrada'); return; }
   if (!c.wa || !c.wa.length) { toast('Nenhum número WhatsApp cadastrado para esta cidade'); return; }
   const eq = S.equipes.find(e => e.id === ponto.equipeId);
   const maps = 'https://maps.google.com/?q=' + ponto.lat + ',' + ponto.lng;
-  const temFotos = ponto.fotosBase64 && ponto.fotosBase64.length > 0;
+  const cfg = S.camposWhatsApp || {};
 
   const texto =
     '🚨 *VAZAMENTO DETECTADO — GeoFon*\n\n' +
     '🆔 *ID:* ' + ponto.id + '\n' +
     '🏙️ *Cidade:* ' + c.nome + '\n' +
-    (ponto.rua ? '🛣️ *Rua:* ' + ponto.rua + '\n' : '') +
-    '🗂️ *DMC:* ' + ponto.dmc + '\n' +
-    '🔧 *Tipo:* ' + ponto.tipo + '\n' +
-    (ponto.servico ? '🛠️ *Serviço:* ' + ponto.servico + '\n' : '') +
-    (ponto.diam ? '📏 *Diâmetro est.:* ' + ponto.diam + 'mm\n' : '') +
-    '⚠️ *Severidade:* ' + ponto.severidade.toUpperCase() + '\n' +
-    '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' +
-    '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' +
+    // Rótulo "Endereço" (e não "Rua") porque ponto.rua já vem pronto do Google Maps
+    // (que costuma incluir "Rua" no próprio nome) — "Rua: Rua Fulano" ficava repetido.
+    (cfg.rua && ponto.rua ? '🛣️ *Endereço:* ' + ponto.rua + '\n' : '') +
+    (cfg.dmc !== false ? '🗂️ *DMC:* ' + ponto.dmc + '\n' : '') +
+    (cfg.tipo !== false ? '🔧 *Tipo:* ' + ponto.tipo + '\n' : '') +
+    (cfg.servico !== false && ponto.servico ? '🛠️ *Serviço:* ' + ponto.servico + '\n' : '') +
+    (cfg.diam !== false && ponto.diam ? '📏 *Diâmetro est.:* ' + ponto.diam + 'mm\n' : '') +
+    (cfg.severidade !== false ? '⚠️ *Severidade:* ' + ponto.severidade.toUpperCase() + '\n' : '') +
+    (cfg.equipe !== false ? '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' : '') +
+    (cfg.obs !== false ? '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' : '\n') +
     // O link fica dentro de uma frase (não solto numa linha própria) para o WhatsApp
     // não gerar o card grande de prévia de mapa — continua clicável, só não "ocupa a tela".
-    '📍 Toque para abrir no mapa: ' + maps + ' .\n' +
-    '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') +
+    (cfg.localizacao !== false ? '📍 Toque para abrir no mapa: ' + maps + ' .\n' : '') +
+    (cfg.data !== false ? '🕐 *Data/Hora:* ' + new Date().toLocaleString('pt-BR') : '') +
     '\n\n_Enviado via GeoFon_';
 
   const msg = encodeURIComponent(texto);

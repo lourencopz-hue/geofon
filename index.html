@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif}
@@ -661,6 +662,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px" onclick="openModalCidade()">
           <i class="ti ti-plus"></i> Adicionar cidade
         </button>
+        <button class="btn" style="width:100%;justify-content:center;margin-top:6px" onclick="document.getElementById('up-dmc-xlsx').click()">
+          <i class="ti ti-file-spreadsheet"></i> Importar planilha de DMCs (.xlsx)
+        </button>
+        <input type="file" id="up-dmc-xlsx" accept=".xlsx,.xls" style="display:none" onchange="handleImportarPlanilhaDMCs(this)">
+        <p style="font-size:10px;color:var(--text3);margin-top:4px">
+          Atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado.
+        </p>
         <hr class="section-divider" style="margin:16px 0">
         <div class="section-title">Carregar arquivos KML / GeoJSON</div>
         <div class="upload-zone" onclick="document.getElementById('up-pc').click()">
@@ -4777,6 +4785,144 @@ async function adicionarDMCManual(cidadeId) {
   renderDMCsEditaveis(cidadeId);
   document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
   toast('DMC adicionado');
+}
+
+// ================================================================
+// IMPORTAÇÃO DE PLANILHA (.xlsx) — Ligações/Situação dos DMCs
+// ================================================================
+// Normaliza texto pra comparação (maiúsculas, sem espaço nas pontas) — usado tanto
+// pra achar a coluna certa no cabeçalho quanto pra casar município/DMC com o que já
+// existe no app, sem se importar com maiúscula/minúscula ou espaço sobrando.
+function normTxt(v) { return (v==null ? '' : String(v)).trim().toUpperCase(); }
+
+// Acha o índice da coluna cujo cabeçalho contém um dos textos candidatos (comparação
+// tolerante a espaço/maiúscula — o arquivo real tinha, por exemplo, "Ligações " com
+// espaço sobrando no fim).
+function acharColuna(headerRow, candidatos) {
+  for (let i = 0; i < headerRow.length; i++) {
+    const h = normTxt(headerRow[i]);
+    if (candidatos.some(cand => h === normTxt(cand))) return i;
+  }
+  return -1;
+}
+
+function handleImportarPlanilhaDMCs(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+      await processarPlanilhaDMCs(wb);
+    } catch(err) {
+      toast('Erro ao ler planilha: ' + (err.message||err));
+      console.warn(err);
+    }
+  };
+  reader.readAsArrayBuffer(f);
+  input.value = '';
+}
+
+async function processarPlanilhaDMCs(wb) {
+  // 1) Acha a aba com os dados de DMC (procura pelo cabeçalho "Sigla DMC" em vez de
+  // depender do nome da aba, que pode variar de planilha pra planilha).
+  let abaDMCs = null, headerDMCs = null, linhasDMCs = null;
+  for (const nomeAba of wb.SheetNames) {
+    const linhas = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { header: 1, raw: true, defval: null });
+    if (!linhas.length) continue;
+    const idx = acharColuna(linhas[0], ['Sigla DMC']);
+    if (idx >= 0) { abaDMCs = nomeAba; headerDMCs = linhas[0]; linhasDMCs = linhas.slice(1); break; }
+  }
+  if (!linhasDMCs) { toast('Não encontrei a coluna "Sigla DMC" em nenhuma aba da planilha'); return; }
+
+  // 2) Acha (opcionalmente) a aba de referência Município → Sigla do município, pra
+  // conseguir casar com o prefixo (c.prefixo) já usado no app. Se essa aba não existir
+  // ou o município não for achado nela, cai pra comparação direta pelo NOME da cidade.
+  let mapaMunicipioSigla = {};
+  for (const nomeAba of wb.SheetNames) {
+    const linhas = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { header: 1, raw: true, defval: null });
+    if (!linhas.length) continue;
+    const idxMun = acharColuna(linhas[0], ['Municipio', 'Município']);
+    const idxSigla = acharColuna(linhas[0], ['Sigla']);
+    if (idxMun >= 0 && idxSigla >= 0) {
+      linhas.slice(1).forEach(l => { if (l[idxMun] && l[idxSigla]) mapaMunicipioSigla[normTxt(l[idxMun])] = normTxt(l[idxSigla]); });
+      break;
+    }
+  }
+
+  // 3) Índices das colunas que vamos realmente usar (o resto da planilha é ignorado,
+  // como combinamos: só Ligações, Situação, Sigla DMC, Nome DMC e Município importam).
+  const iMun = acharColuna(headerDMCs, ['Municipio', 'Município']);
+  const iNomeDMC = acharColuna(headerDMCs, ['Nome DMC']);
+  const iSiglaDMC = acharColuna(headerDMCs, ['Sigla DMC']);
+  const iLigacoes = acharColuna(headerDMCs, ['Ligações', 'Ligacoes']);
+  const iSituacao = acharColuna(headerDMCs, ['Situação', 'Situacao']);
+  if (iMun < 0 || iSiglaDMC < 0) { toast('A planilha precisa ter as colunas "Municipio" e "Sigla DMC"'); return; }
+
+  let atualizados = 0, adicionados = 0;
+  const ignoradas = []; // { linha, motivo }
+  const cidadesAlteradas = new Set();
+
+  linhasDMCs.forEach((linha, i) => {
+    const numLinha = i + 2; // +2 porque a linha 1 é cabeçalho e arrays começam em 0
+    const municipioRaw = linha[iMun];
+    const siglaDMCRaw = linha[iSiglaDMC];
+    if (!municipioRaw || !siglaDMCRaw) { ignoradas.push({linha:numLinha, motivo:'sem Município ou Sigla DMC'}); return; }
+
+    const municipioNorm = normTxt(municipioRaw);
+    // Casa a cidade: primeiro tenta pela Sigla (via aba de referência → c.prefixo);
+    // se não achou, tenta comparar direto o nome da cidade (tolerante a maiúscula/espaço).
+    const siglaMunicipio = mapaMunicipioSigla[municipioNorm];
+    let c = siglaMunicipio ? S.cidades.find(c => c.prefixo === siglaMunicipio) : null;
+    if (!c) c = S.cidades.find(c => normTxt(c.nome) === municipioNorm);
+    if (!c) { ignoradas.push({linha:numLinha, motivo:'município "' + municipioRaw + '" não encontrado no app'}); return; }
+
+    const siglaDMC = String(siglaDMCRaw).trim();
+    const nomeDMCPlanilha = (iNomeDMC>=0 && linha[iNomeDMC]) ? String(linha[iNomeDMC]).trim() : '';
+    const ligacoes = (iLigacoes>=0 && linha[iLigacoes]!=null && linha[iLigacoes]!=='') ? Number(linha[iLigacoes]) : null;
+    const situacao = (iSituacao>=0 && linha[iSituacao]) ? String(linha[iSituacao]).trim() : null;
+
+    // Casa o DMC dentro da cidade pela Sigla DMC (chave estável) — se não achar,
+    // é um DMC novo, ainda não cadastrado no app.
+    let dmc = c.dmcs.find(d => d.sigla && normTxt(d.sigla) === normTxt(siglaDMC));
+    if (dmc) {
+      // Já existe — SÓ atualiza os campos que vêm da planilha (ligações/situação).
+      // O nome do DMC não é sobrescrito aqui de propósito: ele pode já estar em uso
+      // em vazamentos registrados, e trocar sozinho quebraria esse vínculo.
+      if (ligacoes != null && !isNaN(ligacoes)) dmc.ligacoes = ligacoes;
+      if (situacao) dmc.situacao = situacao;
+      dmc.ultimaAtualizacao = new Date().toISOString();
+      atualizados++;
+    } else {
+      // Novo — usa o Nome DMC da planilha; se vier vazio, usa a própria Sigla DMC
+      // como nome (melhor que criar um DMC sem nenhum nome visível).
+      const novoDMC = normalizarDMC(nomeDMCPlanilha || siglaDMC);
+      novoDMC.sigla = siglaDMC;
+      if (ligacoes != null && !isNaN(ligacoes)) novoDMC.ligacoes = ligacoes;
+      if (situacao) novoDMC.situacao = situacao;
+      novoDMC.ultimaAtualizacao = new Date().toISOString();
+      const semDmcIdx = c.dmcs.findIndex(d => d.nome === DMC_SEM_DMC);
+      if (semDmcIdx >= 0) c.dmcs.splice(semDmcIdx, 0, novoDMC); else c.dmcs.push(novoDMC);
+      adicionados++;
+    }
+    cidadesAlteradas.add(c.id);
+  });
+
+  // Só grava no Firestore as cidades que realmente mudaram — nada é apagado, e
+  // cidades/DMCs que não apareceram na planilha ficam exatamente como estavam.
+  for (const cidadeId of cidadesAlteradas) {
+    const c = S.cidades.find(c => c.id === cidadeId);
+    if (c) await salvarCidadeFirestore(c);
+  }
+  renderManage();
+
+  let resumo = `✓ Importação concluída: ${atualizados} DMC(s) atualizado(s), ${adicionados} adicionado(s)`;
+  if (ignoradas.length) resumo += `, ${ignoradas.length} linha(s) ignorada(s)`;
+  toast(resumo);
+  if (ignoradas.length) {
+    console.warn('Linhas ignoradas na importação da planilha de DMCs:', ignoradas);
+    toast('⚠️ ' + ignoradas.length + ' linha(s) ignorada(s) — detalhes no console (F12)');
+  }
 }
 
 // ================================================================

@@ -667,7 +667,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         </button>
         <input type="file" id="up-dmc-xlsx" accept=".xlsx,.xls" style="display:none" onchange="handleImportarPlanilhaDMCs(this)">
         <p style="font-size:10px;color:var(--text3);margin-top:4px">
-          Atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado.
+          Atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado. Município novo é criado automaticamente com coordenada obtida por nome (marcada para conferência).
         </p>
         <hr class="section-divider" style="margin:16px 0">
         <div class="section-title">Carregar arquivos KML / GeoJSON</div>
@@ -4823,6 +4823,49 @@ function handleImportarPlanilhaDMCs(input) {
   input.value = '';
 }
 
+// Converte "ANANDA GARIBALDI" em "Ananda Garibaldi" — trata preposições comuns em
+// português (de/da/do/dos/das/e) em minúsculo, exceto quando é a primeira palavra.
+function capitalizarNomeMunicipio(nome) {
+  const conectores = new Set(['de','da','do','dos','das','e']);
+  return nome.trim().toLowerCase().split(/\s+/).map((p, i) => {
+    if (i > 0 && conectores.has(p)) return p;
+    return p.charAt(0).toUpperCase() + p.slice(1);
+  }).join(' ');
+}
+
+// Busca coordenada aproximada de um município por nome, usando o Nominatim
+// (OpenStreetMap) — o mesmo serviço gratuito que o app já usa pra geocodificação
+// reversa (endereço a partir de coordenada). Sem chave de API, mas com um limite de
+// uso de cortesia (~1 requisição/segundo), por isso quem chama essa função em lote
+// precisa espaçar as chamadas (ver processarPlanilhaDMCs).
+async function buscarCoordenadaPorNome(nomeMunicipio, estado) {
+  try {
+    const q = encodeURIComponent(`${nomeMunicipio}, ${estado}, Brasil`);
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1&countrycodes=br`;
+    const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+    if (!resp.ok) return null;
+    const dados = await resp.json();
+    if (!dados || !dados.length) return null;
+    return { lat: parseFloat(dados[0].lat), lng: parseFloat(dados[0].lon) };
+  } catch(e) {
+    console.warn('Falha ao geocodificar "' + nomeMunicipio + '":', e);
+    return null;
+  }
+}
+
+// Gera um prefixo de 3 letras disponível (não usado por nenhuma cidade já conhecida)
+// a partir do nome do município — usado só quando a planilha não tem a Sigla desse
+// município na aba de referência (fallback raro, a maioria vem da aba "Dados").
+function gerarPrefixoDisponivel(nome, mapaCidades) {
+  const base = normTxt(nome).replace(/[^A-Z]/g, '').slice(0, 3) || 'DMC';
+  if (!mapaCidades.has(base)) return base;
+  for (let n = 1; n < 100; n++) {
+    const tentativa = base.slice(0, 2) + n;
+    if (!mapaCidades.has(tentativa)) return tentativa;
+  }
+  return base + Date.now().toString(36).slice(-3).toUpperCase();
+}
+
 async function processarPlanilhaDMCs(wb) {
   // 1) Acha a aba com os dados de DMC (procura pelo cabeçalho "Sigla DMC" em vez de
   // depender do nome da aba, que pode variar de planilha pra planilha).
@@ -4853,15 +4896,70 @@ async function processarPlanilhaDMCs(wb) {
   // 3) Índices das colunas que vamos realmente usar (o resto da planilha é ignorado,
   // como combinamos: só Ligações, Situação, Sigla DMC, Nome DMC e Município importam).
   const iMun = acharColuna(headerDMCs, ['Municipio', 'Município']);
+  const iRegional = acharColuna(headerDMCs, ['Regional']);
   const iNomeDMC = acharColuna(headerDMCs, ['Nome DMC']);
   const iSiglaDMC = acharColuna(headerDMCs, ['Sigla DMC']);
   const iLigacoes = acharColuna(headerDMCs, ['Ligações', 'Ligacoes']);
   const iSituacao = acharColuna(headerDMCs, ['Situação', 'Situacao']);
   if (iMun < 0 || iSiglaDMC < 0) { toast('A planilha precisa ter as colunas "Municipio" e "Sigla DMC"'); return; }
 
+  // Mapa de trabalho local (id → objeto da cidade) — TUDO daqui pra frente lê/escreve
+  // só nesse mapa, nunca em S.cidades diretamente. Isso evita o mesmo problema que já
+  // corrigimos antes: o listener em tempo real do Firestore pode substituir S.cidades
+  // no meio do processo, e se dependêssemos dele aqui, cidades recém-criadas ou recém-
+  // -mutadas poderiam "sumir" antes de serem salvas.
+  const mapaCidades = new Map(S.cidades.map(c => [c.id, c]));
+  function achaCidadePorMunicipio(municipioRaw) {
+    const municipioNorm = normTxt(municipioRaw);
+    const siglaMunicipio = mapaMunicipioSigla[municipioNorm];
+    if (siglaMunicipio) {
+      for (const c of mapaCidades.values()) if (c.prefixo === siglaMunicipio) return c;
+    }
+    for (const c of mapaCidades.values()) if (normTxt(c.nome) === municipioNorm) return c;
+    return null;
+  }
+
+  // PASSO 1 — descobre quais municípios a planilha referencia que AINDA NÃO existem no
+  // app, e cria cada um automaticamente, buscando a coordenada por nome (Nominatim).
+  // A coordenada fica marcada como "automática" (ícone de alerta na Gestão de Cidades)
+  // até alguém confirmar/ajustar manualmente.
+  const municipiosNovos = new Map(); // municipioNorm -> { nomeOriginal, regional }
+  linhasDMCs.forEach(linha => {
+    const municipioRaw = linha[iMun];
+    if (!municipioRaw || achaCidadePorMunicipio(municipioRaw)) return;
+    const municipioNorm = normTxt(municipioRaw);
+    if (!municipiosNovos.has(municipioNorm)) {
+      municipiosNovos.set(municipioNorm, {
+        nomeOriginal: String(municipioRaw).trim(),
+        regional: (iRegional>=0 && linha[iRegional]) ? String(linha[iRegional]).trim().toUpperCase() : ''
+      });
+    }
+  });
+
+  const cidadesCriadas = [];
+  const falhasGeocodificacao = [];
+  if (municipiosNovos.size) toast('🔎 Buscando coordenadas de ' + municipiosNovos.size + ' município(s) novo(s)...');
+  for (const [municipioNorm, info] of municipiosNovos) {
+    const prefixo = mapaMunicipioSigla[municipioNorm] || gerarPrefixoDisponivel(info.nomeOriginal, mapaCidades);
+    const coord = await buscarCoordenadaPorNome(info.nomeOriginal, 'Santa Catarina');
+    if (!coord) { falhasGeocodificacao.push(info.nomeOriginal); continue; }
+    const novaCidade = normalizarDMCsCidade({
+      id: prefixo, nome: capitalizarNomeMunicipio(info.nomeOriginal), prefixo,
+      regional: info.regional, dmcs: [], wa: [],
+      coords: [coord.lat, coord.lng], coordsAutomaticas: true
+    });
+    mapaCidades.set(novaCidade.id, novaCidade);
+    cidadesCriadas.push(novaCidade);
+    // Respeita o limite de uso de cortesia do Nominatim (evita bloqueio por excesso
+    // de requisições — importante quando há vários municípios novos na mesma planilha).
+    await new Promise(r => setTimeout(r, 1100));
+  }
+
+  // PASSO 2 — processa cada linha de DMC normalmente (igual antes), agora com todas as
+  // cidades (as que já existiam + as recém-criadas) disponíveis em mapaCidades.
   let atualizados = 0, adicionados = 0;
   const ignoradas = []; // { linha, motivo }
-  const cidadesAlteradas = new Set();
+  const cidadesAlteradas = new Map();
 
   linhasDMCs.forEach((linha, i) => {
     const numLinha = i + 2; // +2 porque a linha 1 é cabeçalho e arrays começam em 0
@@ -4869,13 +4967,8 @@ async function processarPlanilhaDMCs(wb) {
     const siglaDMCRaw = linha[iSiglaDMC];
     if (!municipioRaw || !siglaDMCRaw) { ignoradas.push({linha:numLinha, motivo:'sem Município ou Sigla DMC'}); return; }
 
-    const municipioNorm = normTxt(municipioRaw);
-    // Casa a cidade: primeiro tenta pela Sigla (via aba de referência → c.prefixo);
-    // se não achou, tenta comparar direto o nome da cidade (tolerante a maiúscula/espaço).
-    const siglaMunicipio = mapaMunicipioSigla[municipioNorm];
-    let c = siglaMunicipio ? S.cidades.find(c => c.prefixo === siglaMunicipio) : null;
-    if (!c) c = S.cidades.find(c => normTxt(c.nome) === municipioNorm);
-    if (!c) { ignoradas.push({linha:numLinha, motivo:'município "' + municipioRaw + '" não encontrado no app'}); return; }
+    const c = achaCidadePorMunicipio(municipioRaw);
+    if (!c) { ignoradas.push({linha:numLinha, motivo:'não foi possível localizar/criar "' + municipioRaw + '" (falha na geocodificação)'}); return; }
 
     const siglaDMC = String(siglaDMCRaw).trim();
     const nomeDMCPlanilha = (iNomeDMC>=0 && linha[iNomeDMC]) ? String(linha[iNomeDMC]).trim() : '';
@@ -4905,20 +4998,28 @@ async function processarPlanilhaDMCs(wb) {
       if (semDmcIdx >= 0) c.dmcs.splice(semDmcIdx, 0, novoDMC); else c.dmcs.push(novoDMC);
       adicionados++;
     }
-    cidadesAlteradas.add(c.id);
+    cidadesAlteradas.set(c.id, c);
   });
 
-  // Só grava no Firestore as cidades que realmente mudaram — nada é apagado, e
-  // cidades/DMCs que não apareceram na planilha ficam exatamente como estavam.
-  for (const cidadeId of cidadesAlteradas) {
-    const c = S.cidades.find(c => c.id === cidadeId);
-    if (c) await salvarCidadeFirestore(c);
+  // Grava no Firestore: as cidades recém-criadas (passo 1) E as que tiveram DMC
+  // atualizado/adicionado (passo 2) — usando sempre a referência já em mãos, nunca
+  // buscando de novo em S.cidades (mesmo motivo explicado acima).
+  for (const c of cidadesCriadas) cidadesAlteradas.set(c.id, c);
+  for (const c of cidadesAlteradas.values()) {
+    await salvarCidadeFirestore(c);
   }
   renderManage();
 
   let resumo = `✓ Importação concluída: ${atualizados} DMC(s) atualizado(s), ${adicionados} adicionado(s)`;
+  if (cidadesCriadas.length) resumo += `, ${cidadesCriadas.length} cidade(s) nova(s) criada(s) automaticamente`;
   if (ignoradas.length) resumo += `, ${ignoradas.length} linha(s) ignorada(s)`;
   toast(resumo);
+  if (cidadesCriadas.length) {
+    toast('📍 Cidades criadas por coordenada automática: ' + cidadesCriadas.map(c=>c.nome).join(', ') + ' — confira o pino de cada uma na Gestão de Cidades');
+  }
+  if (falhasGeocodificacao.length) {
+    toast('⚠️ Não encontrei coordenada para: ' + falhasGeocodificacao.join(', ') + ' — cadastre essa(s) manualmente');
+  }
   if (ignoradas.length) {
     console.warn('Linhas ignoradas na importação da planilha de DMCs:', ignoradas);
     toast('⚠️ ' + ignoradas.length + ' linha(s) ignorada(s) — detalhes no console (F12)');
@@ -4952,6 +5053,7 @@ function renderConfigCidades() {
         ${c.regional?`<span class="badge gray">${c.regional}</span>`:''}
         <span style="font-size:13px;font-weight:600;flex:1">${c.nome}</span>
         ${coordsSuspeitas?'<i class="ti ti-alert-triangle" style="color:var(--amber);font-size:14px" title="Coordenada pode estar incorreta — confira"></i>':''}
+        ${c.coordsAutomaticas?'<i class="ti ti-map-pin-question" style="color:var(--blue);font-size:14px" title="Coordenada obtida automaticamente (busca por nome) — ainda não validada manualmente. Some sozinho quando alguém ajustar/confirmar a coordenada."></i>':''}
         <span style="font-size:10.5px;color:var(--text2)">${c.wa.length} contato(s)</span>
         <i class="ti ti-chevron-down" id="chev-cidade-${i}" style="font-size:14px;color:var(--text2);transition:transform .15s"></i>
       </div>
@@ -5021,6 +5123,9 @@ async function editarCoordsCidade(idx, valor) {
     return;
   }
   c.coords = partes;
+  // Editar manualmente conta como a "validação futura" da coordenada automática —
+  // o ícone de alerta correspondente some depois disso.
+  if (c.coordsAutomaticas) c.coordsAutomaticas = false;
   await salvarCidadeFirestore(c);
   toast('Coordenada atualizada');
 }

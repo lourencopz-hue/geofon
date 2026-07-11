@@ -3966,11 +3966,16 @@ function handleLayerUpload(input, tipo) {
           abrirPerguntaCidadeCamada(geojson, tipo, f.name);
         } else {
           const novoId = await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
-          // Quem sobe o arquivo já vê na hora (visibilidade é local a este dispositivo) —
-          // outros usuários continuam com a camada oculta até decidirem ativá-la.
-          if (novoId) definirVisibilidadeLocal(novoId, true);
-          toast('✓ "' + f.name + '" carregada e disponível para todos!');
-          centralizarEmGeoJSON(geojson);
+          // Só mostra sucesso se REALMENTE deu certo — antes, esse toast aparecia mesmo
+          // quando salvarCamadaFirestore falhava (novoId null), o que gerava os dois
+          // avisos contraditórios (erro + "carregada com sucesso") um em cima do outro.
+          if (novoId) {
+            // Quem sobe o arquivo já vê na hora (visibilidade é local a este dispositivo) —
+            // outros usuários continuam com a camada oculta até decidirem ativá-la.
+            definirVisibilidadeLocal(novoId, true);
+            toast('✓ "' + f.name + '" carregada e disponível para todos!');
+            centralizarEmGeoJSON(geojson);
+          }
         }
       } catch(err) {
         toast('Erro ao ler arquivo: ' + (err.message||err));
@@ -4018,9 +4023,11 @@ async function confirmarCidadeCamada() {
   const pend = S._camadaPendenteUpload;
   if (!pend) return;
   const novoId = await salvarCamadaFirestore(pend.geojson, pend.tipo, pend.nome, cidadeId);
-  if (novoId) definirVisibilidadeLocal(novoId, true);
-  toast('✓ "' + pend.nome + '" carregada e disponível para todos!');
-  centralizarEmGeoJSON(pend.geojson);
+  if (novoId) {
+    definirVisibilidadeLocal(novoId, true);
+    toast('✓ "' + pend.nome + '" carregada e disponível para todos!');
+    centralizarEmGeoJSON(pend.geojson);
+  }
   S._camadaPendenteUpload = null;
   closeModal('modal-camada-cidade');
 }
@@ -4055,7 +4062,10 @@ async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
     geojsonUrl = await getDownloadURL(fileRef);
   } catch(err) {
     console.warn('Erro ao enviar geometria da camada para o Storage:', err);
-    toast('⚠️ Erro ao salvar a geometria no Storage — tente novamente');
+    // Mostra o motivo real (ex.: "storage/unauthorized", "storage/quota-exceeded") em vez
+    // de só um aviso genérico — sem isso, fica quase impossível saber se é permissão,
+    // tamanho do arquivo, ou rede, sem abrir o console.
+    toast('⚠️ Erro ao salvar geometria: ' + (err.code || err.message || err));
     return null;
   }
 

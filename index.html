@@ -805,6 +805,18 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <div id="config-campos-whatsapp"></div>
       </div>
       <div class="section">
+        <div class="section-title">Cores da rede por diâmetro</div>
+        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+            Defina uma cor fixa para cada diâmetro (DN/DE) de rede. Funciona com KMLs onde o diâmetro está identificado pelo nome da pasta (ex.: "T_50" = 50mm) — comum em exportações de DWG/Civil3D. Quando existe uma regra para o diâmetro do trecho, ela tem prioridade sobre a cor original do arquivo — não precisa mais acertar a cor manualmente antes de exportar.
+          </p>
+        </div>
+        <div id="config-cores-diametro"></div>
+        <button class="btn sm" style="margin-top:8px" onclick="adicionarRegraCorDiametro()">
+          <i class="ti ti-plus"></i> Adicionar diâmetro
+        </button>
+      </div>
+      <div class="section">
         <div class="section-title">Configurações gerais</div>
         <div class="card">
           <div class="field">
@@ -1304,6 +1316,10 @@ const S = {
   // Quais campos entram na mensagem de WhatsApp enviada ao notificar a equipe.
   // Todos ligados por padrão, para manter o comportamento atual quem já usa o app.
   camposWhatsApp: { rua:true, dmc:true, tipo:true, servico:true, diam:true, severidade:true, equipe:true, obs:true, localizacao:true, data:true },
+  // Cor da rede por diâmetro (mm) — { "50": "#RRGGBB", "100": "#RRGGBB", ... }. Prioridade
+  // na hora de desenhar: cor por diâmetro (se o KML tiver o diâmetro identificável e
+  // houver uma regra aqui) > cor original do KML (_corKml) > cor padrão da camada.
+  coresPorDiametro: {},
   campanhaAtual: null,      // { id, dmc, nomeLivre, pontos:[[lat,lng],...], inicioMs } — minha campanha em andamento
   campanhasAtivas: {},      // { campanhaId: {dados do Firestore} } — campanhas de TODOS os usuários (incluindo a própria)
   campanhasPolylines: {},   // { campanhaId: L.Polyline } — referências de desenho no mapa, por mapa (field/pc)
@@ -1539,6 +1555,7 @@ function iniciarSincronizacaoFirestore() {
       if (dados.gps !== undefined) S.config.gps = dados.gps;
       if (dados.camposPopup) S.camposPopup = { ...S.camposPopup, ...dados.camposPopup };
       if (dados.camposWhatsApp) S.camposWhatsApp = { ...S.camposWhatsApp, ...dados.camposWhatsApp };
+      if (dados.coresPorDiametro) S.coresPorDiametro = dados.coresPorDiametro;
       const cfgOrgEl = document.getElementById('cfg-org'); if (cfgOrgEl) cfgOrgEl.value = S.config.org || '';
       const cfgGpsEl = document.getElementById('cfg-gps'); if (cfgGpsEl) cfgGpsEl.value = S.config.gps || 20;
     }
@@ -1546,10 +1563,12 @@ function iniciarSincronizacaoFirestore() {
     // os checkboxes aparecem com os valores padrão definidos em S.camposPopup.
     renderConfigCamposPopup();
     renderConfigCamposWhatsApp();
+    renderConfigCoresPorDiametro();
     // Redesenha os pop-ups dos mapas com a config atualizada — assim a mudança aparece
     // em tempo real em TODOS os dispositivos conectados, não só em quem alterou.
     addFieldMarkers();
     refreshPCMap();
+    redesenharCamadasComCorAtualizada();
   });
 
   // Campanhas de geofonamento — sincronizadas em tempo real, para que toda a equipe
@@ -1804,6 +1823,66 @@ async function toggleCampoWhatsApp(campo, valor) {
   S.camposWhatsApp[campo] = valor;
   await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposWhatsApp: S.camposWhatsApp }, { merge:true });
   toast('Preferência de mensagem do WhatsApp atualizada');
+}
+
+// Cor da rede por diâmetro — lista editável (diâmetro em mm + cor), ordenada do menor
+// pro maior diâmetro pra ficar mais fácil de conferir.
+function renderConfigCoresPorDiametro() {
+  const el = document.getElementById('config-cores-diametro');
+  if (!el) return;
+  const entradas = Object.entries(S.coresPorDiametro || {}).sort((a,b) => Number(a[0])-Number(b[0]));
+  el.innerHTML = entradas.length
+    ? entradas.map(([diam, cor]) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <input type="number" value="${diam}" min="1" style="width:80px;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"
+          onchange="renomearRegraCorDiametro('${diam}', this.value)">
+        <span style="font-size:12px;color:var(--text2)">mm</span>
+        <input type="color" value="${cor}" style="width:44px;height:32px;padding:0;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;background:none"
+          onchange="editarRegraCorDiametro('${diam}', this.value)">
+        <span style="font-family:monospace;font-size:11.5px;color:var(--text2)">${cor}</span>
+        <button onclick="removerRegraCorDiametro('${diam}')" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
+          <i class="ti ti-trash" style="font-size:12px"></i>
+        </button>
+      </div>`).join('')
+    : '<p style="font-size:11.5px;color:var(--text2)">Nenhuma regra cadastrada — a rede usa a cor original do KML (ou a cor padrão, se não tiver).</p>';
+}
+
+async function salvarCoresPorDiametro() {
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { coresPorDiametro: S.coresPorDiametro }, { merge:true });
+}
+
+async function adicionarRegraCorDiametro() {
+  const diam = prompt('Diâmetro (mm) — ex.: 50');
+  if (!diam || isNaN(Number(diam))) { if (diam!==null) toast('Informe um número válido'); return; }
+  const chave = String(Number(diam));
+  if (S.coresPorDiametro[chave]) { toast('Já existe uma regra para ' + chave + 'mm — edite a cor dela'); return; }
+  S.coresPorDiametro[chave] = '#185FA5';
+  await salvarCoresPorDiametro();
+  renderConfigCoresPorDiametro();
+  toast('Diâmetro adicionado — escolha a cor');
+}
+
+async function editarRegraCorDiametro(diam, cor) {
+  S.coresPorDiametro[diam] = cor;
+  await salvarCoresPorDiametro();
+  toast('Cor do diâmetro ' + diam + 'mm atualizada');
+}
+
+async function renomearRegraCorDiametro(diamAntigo, diamNovoRaw) {
+  const diamNovo = String(Number(diamNovoRaw));
+  if (!diamNovoRaw || isNaN(Number(diamNovoRaw)) || diamNovo === diamAntigo) { renderConfigCoresPorDiametro(); return; }
+  if (S.coresPorDiametro[diamNovo]) { toast('Já existe uma regra para ' + diamNovo + 'mm'); renderConfigCoresPorDiametro(); return; }
+  S.coresPorDiametro[diamNovo] = S.coresPorDiametro[diamAntigo];
+  delete S.coresPorDiametro[diamAntigo];
+  await salvarCoresPorDiametro();
+  renderConfigCoresPorDiametro();
+}
+
+async function removerRegraCorDiametro(diam) {
+  delete S.coresPorDiametro[diam];
+  await salvarCoresPorDiametro();
+  renderConfigCoresPorDiametro();
+  toast('Regra removida — trechos de ' + diam + 'mm voltam a usar a cor original do KML');
 }
 
 async function editarServico(id, campo, valor) {
@@ -4213,6 +4292,42 @@ async function buscarGeometriaBruta(camadaId, silencioso) {
   }
 }
 
+// Resolve a cor final de uma feature ao desenhar: prioriza a regra de cor-por-diâmetro
+// (configurável em Configurações → Cores da rede por diâmetro) sobre a cor original do
+// KML — assim, quem já cadastrou o diâmetro corretamente na pasta do KML (ex.: "T_50")
+// não precisa mais acertar a cor manualmente no AutoCAD/Civil3D antes de exportar.
+// Só se aplica a "redes" — DMC não tem diâmetro, então segue sempre a cor original/padrão.
+function resolverCorFeature(ft, tipo) {
+  const p = ft.properties || {};
+  if (tipo === 'redes' && p._diametroMm != null) {
+    const corRegra = S.coresPorDiametro[String(p._diametroMm)];
+    if (corRegra) return corRegra;
+  }
+  return p._corKml || null;
+}
+
+// Chamada quando a config de cores-por-diâmetro muda (local ou de outro dispositivo,
+// via onSnapshot) — reaplica o estilo em TODAS as camadas de rede já desenhadas nos
+// mapas, sem precisar recarregar a geometria (só troca a cor de cada trecho na hora).
+function redesenharCamadasComCorAtualizada() {
+  (S.leafletLayers.redes || []).forEach(item => {
+    if (!item._geojson) return;
+    const corPadrao = LAYER_STYLE.redes;
+    const aplicarEstilo = (lg) => {
+      if (!lg) return;
+      lg.eachLayer(layer => {
+        const ft = layer.feature;
+        if (!ft) return;
+        const cor = resolverCorFeature(ft, 'redes');
+        const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
+        if (layer.setStyle) layer.setStyle(estilo);
+      });
+    };
+    aplicarEstilo(item.lgField);
+    aplicarEstilo(item.lgPC);
+  });
+}
+
 // Alterna visibilidade — grava no Firestore, e o onSnapshot atualiza todos os dispositivos
 // Busca o documento completo da camada (que contém o geojsonStr, potencialmente grande)
 // só no momento em que o usuário realmente pede para visualizá-la. Depois de carregada
@@ -4240,15 +4355,22 @@ async function carregarGeometriaCamada(tipo, camadaId) {
     // "deslocada"). Por isso criamos UMA instância de L.geoJSON por mapa.
     const criarLayer = () => L.geoJSON(geojson, {
       style: (ft) => {
-        const corKml = ft.properties && ft.properties._corKml;
-        return corKml ? { ...corPadrao, color: corKml, fillColor: corKml } : corPadrao;
+        const cor = resolverCorFeature(ft, tipo);
+        return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
       },
       pointToLayer: (ft, ll) => {
-        const corKml = ft.properties && ft.properties._corKml;
-        const estilo = corKml ? { ...corPadrao, color: corKml, fillColor: corKml } : corPadrao;
+        const cor = resolverCorFeature(ft, tipo);
+        const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
         return L.circleMarker(ll, { radius:5, ...estilo });
       },
-      onEachFeature: (ft, layer) => { const p=ft.properties||{}; const lbl=p.name||p.Nome||p.nome||item.nome; if(lbl) layer.bindPopup('<b>'+lbl+'</b>'); }
+      onEachFeature: (ft, layer) => {
+        const p=ft.properties||{};
+        const lbl=p.name||p.Nome||p.nome||item.nome;
+        // Se o diâmetro foi identificado (pasta do KML tipo "T_50"), mostra no popup —
+        // ajuda a conferir se a extração/regra de cor bateu certo com o trecho certo.
+        const diamTxt = p._diametroMm ? ` <small>(DN/DE ${p._diametroMm}mm)</small>` : '';
+        if (lbl || diamTxt) layer.bindPopup('<b>'+(lbl||item.nome)+'</b>'+diamTxt);
+      }
     });
 
     if (mapField) { item.lgField = criarLayer(); item.lgField.addTo(mapField); }
@@ -4647,6 +4769,21 @@ function getFirstByTag(node, tagName) {
   const els = node.getElementsByTagName(tagName);
   return els.length ? els[0] : null;
 }
+// Sobe pela árvore do XML a partir de um elemento (ex.: um Placemark) até achar a
+// <Folder> mais próxima que o contém, e devolve o nome dela (<name> — que, por
+// convenção do KML, é sempre o primeiro filho da pasta, antes de qualquer Placemark
+// ou subpasta, então pegar "o primeiro <name> dentro dessa pasta" já é o nome certo).
+function nomeDaPastaAncestral(el) {
+  let atual = el.parentNode;
+  while (atual && atual.nodeType === 1) {
+    if (atual.tagName === 'Folder') {
+      const nameEl = getFirstByTag(atual, 'name');
+      return nameEl ? nameEl.textContent.trim() : null;
+    }
+    atual = atual.parentNode;
+  }
+  return null;
+}
 
 function kmlToGeoJSON(kmlText) {
   const doc = new DOMParser().parseFromString(kmlText,'text/xml');
@@ -4695,6 +4832,17 @@ function kmlToGeoJSON(kmlText) {
     const nameEl = getFirstByTag(pm,'name');
     const props = { name: nameEl ? nameEl.textContent.trim() : '' };
     getByTag(pm,'SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
+
+    // Muitos KMLs convertidos de DWG (por camada/layer do CAD) não têm nome no Placemark
+    // — o diâmetro fica só no nome da PASTA que agrupa os trechos (ex.: pasta "T_50" =
+    // tubulação de 50mm). Sobe pela árvore até achar a pasta mais próxima e tenta extrair
+    // um número dela — isso alimenta a cor-por-diâmetro (ver configCoresPorDiametro).
+    const nomePasta = nomeDaPastaAncestral(pm);
+    if (nomePasta) {
+      props._folderNome = nomePasta;
+      const m = nomePasta.match(/(\d+)/);
+      if (m) props._diametroMm = parseInt(m[1], 10);
+    }
 
     // Cor: tenta primeiro um <Style> inline dentro do próprio Placemark; senão segue o
     // <styleUrl> — que pode apontar direto para um <Style> ou indiretamente via <StyleMap>.

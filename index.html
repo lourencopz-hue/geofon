@@ -4131,7 +4131,17 @@ async function carregarGeometriaCamada(tipo, camadaId) {
         geojson = l.geojson;
       }
     }
-    catch(e) { toast('Erro ao ler geometria da camada'); console.warn(e); return; }
+    catch(e) {
+      // "Failed to fetch" nesse ponto especificamente costuma ser bloqueio de CORS do
+      // bucket do Storage (o navegador recusa ler a resposta de outra origem sem
+      // header liberando), não um problema no arquivo em si — por isso a dica abaixo.
+      const pareceCors = /failed to fetch/i.test(e.message||'');
+      toast(pareceCors
+        ? '⚠️ Erro de CORS ao ler geometria — configure o CORS do bucket do Storage'
+        : 'Erro ao ler geometria da camada: ' + (e.message||e));
+      console.warn(e);
+      return;
+    }
     if (!geojson) return;
 
     const corPadrao = LAYER_STYLE[tipo];

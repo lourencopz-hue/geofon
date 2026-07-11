@@ -71,6 +71,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg2)}
 /* CARDS & SECTIONS */
 .section{padding:12px 14px}
 .section-title{font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
+.section-title.collapsible{display:flex;align-items:center;justify-content:space-between;cursor:pointer;margin-bottom:0;padding:10px 0;user-select:none}
+.section-chevron{transition:transform .15s;font-size:14px;flex-shrink:0}
+.section-body{margin-top:10px}
 .card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px;margin-bottom:10px}
 .card:last-child{margin-bottom:0}
 
@@ -742,92 +745,136 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <!-- PC: CONFIG -->
   <div class="panel" id="config">
     <div class="panel-scroll">
-      <div class="section">
-        <div class="section-title">Cidades e prefixos</div>
-        <div id="config-cidades"></div>
-        <button class="btn primary" style="margin-top:8px" onclick="openModalCidade()">
-          <i class="ti ti-plus"></i> Adicionar cidade
-        </button>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+        <button class="btn sm" onclick="expandirTodasSecoesConfig(false)"><i class="ti ti-chevrons-up"></i> Recolher tudo</button>
+        <button class="btn sm" onclick="expandirTodasSecoesConfig(true)"><i class="ti ti-chevrons-down"></i> Expandir tudo</button>
       </div>
       <div class="section">
-        <div class="section-title">Equipes de campo</div>
-        <div id="config-equipes"></div>
-        <button class="btn primary" style="margin-top:8px" onclick="openModal('modal-equipe')">
-          <i class="ti ti-plus"></i> Adicionar equipe
-        </button>
-      </div>
-      <div class="section">
-        <div class="section-title">Tipos de vazamento e códigos de serviço</div>
-        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
-          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-            Cada tipo de vazamento pode ter um código de serviço padrão, que já vem sugerido no formulário de registro (a equipe ainda pode trocar se precisar).
-          </p>
+        <div class="section-title collapsible" onclick="toggleConfigSection('cidades')">
+          <span>Cidades e prefixos</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-cidades"></i>
         </div>
-        <div class="section-title" style="font-size:10px">Códigos de serviço</div>
-        <div id="config-servicos" style="margin-bottom:10px"></div>
-        <button class="btn sm" onclick="adicionarServicoManual()">
-          <i class="ti ti-plus"></i> Adicionar código de serviço
-        </button>
-        <div class="section-title" style="font-size:10px;margin-top:16px">Tipos de vazamento</div>
-        <div id="config-tipos"></div>
-        <button class="btn sm" onclick="adicionarTipoManual()">
-          <i class="ti ti-plus"></i> Adicionar tipo de vazamento
-        </button>
-      </div>
-      <div class="section">
-        <div class="section-title">Geofones cadastrados</div>
-        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
-          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-            Cada equipe pode ter um geofone vinculado, que já vem pré-selecionado no registro de vazamento — pode ser trocado pela equipe se necessário.
-          </p>
+        <div id="cfgsec-cidades" class="section-body">
+          <div id="config-cidades"></div>
+          <button class="btn primary" style="margin-top:8px" onclick="openModalCidade()">
+            <i class="ti ti-plus"></i> Adicionar cidade
+          </button>
         </div>
-        <div id="config-geofones"></div>
-        <button class="btn sm" onclick="adicionarGeofoneManual()">
-          <i class="ti ti-plus"></i> Adicionar geofone
-        </button>
       </div>
       <div class="section">
-        <div class="section-title">Exibição no mapa e na lista</div>
-        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
-          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-            Escolha quais informações aparecem no popup do mapa (clique num ponto) e como destaque na lista. A foto, quando existir, sempre aparece em destaque.
-          </p>
+        <div class="section-title collapsible" onclick="toggleConfigSection('equipes')">
+          <span>Equipes de campo</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-equipes"></i>
         </div>
-        <div id="config-campos-popup"></div>
-      </div>
-      <div class="section">
-        <div class="section-title">Mensagem de notificação por WhatsApp</div>
-        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
-          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-            Escolha quais informações entram no texto enviado por WhatsApp ao notificar a equipe de um vazamento.
-          </p>
+        <div id="cfgsec-equipes" class="section-body">
+          <div id="config-equipes"></div>
+          <button class="btn primary" style="margin-top:8px" onclick="openModal('modal-equipe')">
+            <i class="ti ti-plus"></i> Adicionar equipe
+          </button>
         </div>
-        <div id="config-campos-whatsapp"></div>
       </div>
       <div class="section">
-        <div class="section-title">Cores da rede por diâmetro</div>
-        <div class="card" style="background:var(--blue-l);margin-bottom:10px">
-          <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-            Defina uma cor fixa para cada diâmetro (DN/DE) de rede. Funciona com KMLs onde o diâmetro está identificado pelo nome da pasta (ex.: "T_50" = 50mm) — comum em exportações de DWG/Civil3D. Quando existe uma regra para o diâmetro do trecho, ela tem prioridade sobre a cor original do arquivo — não precisa mais acertar a cor manualmente antes de exportar.
-          </p>
+        <div class="section-title collapsible" onclick="toggleConfigSection('tipos')">
+          <span>Tipos de vazamento e códigos de serviço</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-tipos"></i>
         </div>
-        <div id="config-cores-diametro"></div>
-        <button class="btn sm" style="margin-top:8px" onclick="adicionarRegraCorDiametro()">
-          <i class="ti ti-plus"></i> Adicionar diâmetro
-        </button>
-      </div>
-      <div class="section">
-        <div class="section-title">Configurações gerais</div>
-        <div class="card">
-          <div class="field">
-            <label>Nome da organização / empresa</label>
-            <input type="text" id="cfg-org" placeholder="Ex: SAMAE Criciúma">
+        <div id="cfgsec-tipos" class="section-body">
+          <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+            <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+              Cada tipo de vazamento pode ter um código de serviço padrão, que já vem sugerido no formulário de registro (a equipe ainda pode trocar se precisar).
+            </p>
           </div>
-          <div class="field">
-            <label>Precisão GPS mínima aceitável (metros)</label>
-            <input type="number" id="cfg-gps" value="20">
+          <div class="section-title" style="font-size:10px">Códigos de serviço</div>
+          <div id="config-servicos" style="margin-bottom:10px"></div>
+          <button class="btn sm" onclick="adicionarServicoManual()">
+            <i class="ti ti-plus"></i> Adicionar código de serviço
+          </button>
+          <div class="section-title" style="font-size:10px;margin-top:16px">Tipos de vazamento</div>
+          <div id="config-tipos"></div>
+          <button class="btn sm" onclick="adicionarTipoManual()">
+            <i class="ti ti-plus"></i> Adicionar tipo de vazamento
+          </button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title collapsible" onclick="toggleConfigSection('geofones')">
+          <span>Geofones cadastrados</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-geofones"></i>
+        </div>
+        <div id="cfgsec-geofones" class="section-body">
+          <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+            <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+              Cada equipe pode ter um geofone vinculado, que já vem pré-selecionado no registro de vazamento — pode ser trocado pela equipe se necessário.
+            </p>
           </div>
-          <button class="btn primary" onclick="salvarConfig()"><i class="ti ti-device-floppy"></i> Salvar configurações</button>
+          <div id="config-geofones"></div>
+          <button class="btn sm" onclick="adicionarGeofoneManual()">
+            <i class="ti ti-plus"></i> Adicionar geofone
+          </button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title collapsible" onclick="toggleConfigSection('exibicao')">
+          <span>Exibição no mapa e na lista</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-exibicao"></i>
+        </div>
+        <div id="cfgsec-exibicao" class="section-body">
+          <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+            <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+              Escolha quais informações aparecem no popup do mapa (clique num ponto) e como destaque na lista. A foto, quando existir, sempre aparece em destaque.
+            </p>
+          </div>
+          <div id="config-campos-popup"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title collapsible" onclick="toggleConfigSection('whatsapp')">
+          <span>Mensagem de notificação por WhatsApp</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-whatsapp"></i>
+        </div>
+        <div id="cfgsec-whatsapp" class="section-body">
+          <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+            <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+              Escolha quais informações entram no texto enviado por WhatsApp ao notificar a equipe de um vazamento.
+            </p>
+          </div>
+          <div id="config-campos-whatsapp"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title collapsible" onclick="toggleConfigSection('cores-diametro')">
+          <span>Cores da rede por diâmetro</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-cores-diametro"></i>
+        </div>
+        <div id="cfgsec-cores-diametro" class="section-body">
+          <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+            <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+              Defina uma cor fixa para cada diâmetro (DN/DE) de rede. Funciona com KMLs onde o diâmetro está identificado pelo nome da pasta (ex.: "T_50" = 50mm) — comum em exportações de DWG/Civil3D. Quando existe uma regra para o diâmetro do trecho, ela tem prioridade sobre a cor original do arquivo — não precisa mais acertar a cor manualmente antes de exportar.
+            </p>
+          </div>
+          <div id="config-cores-diametro"></div>
+          <button class="btn sm" style="margin-top:8px" onclick="adicionarRegraCorDiametro()">
+            <i class="ti ti-plus"></i> Adicionar diâmetro
+          </button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title collapsible" onclick="toggleConfigSection('geral')">
+          <span>Configurações gerais</span>
+          <i class="ti ti-chevron-down section-chevron" id="chev-cfgsec-geral"></i>
+        </div>
+        <div id="cfgsec-geral" class="section-body">
+          <div class="card">
+            <div class="field">
+              <label>Nome da organização / empresa</label>
+              <input type="text" id="cfg-org" placeholder="Ex: SAMAE Criciúma">
+            </div>
+            <div class="field">
+              <label>Precisão GPS mínima aceitável (metros)</label>
+              <input type="number" id="cfg-gps" value="20">
+            </div>
+            <button class="btn primary" onclick="salvarConfig()"><i class="ti ti-device-floppy"></i> Salvar configurações</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1609,6 +1656,7 @@ function iniciarSincronizacaoFirestore() {
   initFieldMap();
   startGPS();
   setTimeout(() => iniciarSincronizacaoCamadas(), 400);
+  restaurarEstadoSecoesConfig();
 }
 
 // Retoma uma campanha própria que já estava ativa no Firestore (ex.: após recarregar
@@ -5813,6 +5861,48 @@ async function removerEquipe(i){
   S.equipes.splice(i,1);
   renderConfigEquipes(); populateSelects();
   toast('Equipe removida');
+}
+
+// ================================================================
+// SEÇÕES RECOLHÍVEIS (aba Configurações) — a aba foi ficando comprida com tantas
+// seções, então cada uma pode ser recolhida/expandida individualmente. O estado fica
+// salvo no localStorage do próprio navegador (preferência por dispositivo, não precisa
+// sincronizar entre usuários) e é restaurado sozinho na próxima vez que o app abrir.
+// ================================================================
+const CONFIG_SECOES = ['cidades','equipes','tipos','geofones','exibicao','whatsapp','cores-diametro','geral'];
+
+function toggleConfigSection(id) {
+  const body = document.getElementById('cfgsec-' + id);
+  const chev = document.getElementById('chev-cfgsec-' + id);
+  if (!body) return;
+  const abrindo = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  if (chev) chev.style.transform = abrindo ? 'rotate(0deg)' : 'rotate(-90deg)';
+  try { localStorage.setItem('cfgsec_' + id, abrindo ? '1' : '0'); } catch(e) {}
+}
+
+function expandirTodasSecoesConfig(expandir) {
+  CONFIG_SECOES.forEach(id => {
+    const body = document.getElementById('cfgsec-' + id);
+    const chev = document.getElementById('chev-cfgsec-' + id);
+    if (!body) return;
+    body.classList.toggle('hidden', !expandir);
+    if (chev) chev.style.transform = expandir ? 'rotate(0deg)' : 'rotate(-90deg)';
+    try { localStorage.setItem('cfgsec_' + id, expandir ? '1' : '0'); } catch(e) {}
+  });
+}
+
+function restaurarEstadoSecoesConfig() {
+  CONFIG_SECOES.forEach(id => {
+    let salvo;
+    try { salvo = localStorage.getItem('cfgsec_' + id); } catch(e) { salvo = null; }
+    if (salvo === '0') {
+      const body = document.getElementById('cfgsec-' + id);
+      const chev = document.getElementById('chev-cfgsec-' + id);
+      if (body) body.classList.add('hidden');
+      if (chev) chev.style.transform = 'rotate(-90deg)';
+    }
+  });
 }
 
 async function salvarConfig(){

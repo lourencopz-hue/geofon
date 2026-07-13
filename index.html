@@ -853,9 +853,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             </p>
           </div>
           <div id="config-cores-diametro"></div>
-          <button class="btn sm" style="margin-top:8px" onclick="adicionarRegraCorDiametro()">
-            <i class="ti ti-plus"></i> Adicionar diâmetro
-          </button>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn sm" onclick="adicionarRegraCorDiametro()">
+              <i class="ti ti-plus"></i> Adicionar diâmetro
+            </button>
+            <button class="btn sm" onclick="document.getElementById('up-cores-diametro').click()">
+              <i class="ti ti-file-spreadsheet"></i> Importar planilha (dn, hex ou r/g/b)
+            </button>
+            <input type="file" id="up-cores-diametro" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleImportarCoresPorDiametro(this)">
+          </div>
         </div>
       </div>
       <div class="section">
@@ -1875,6 +1881,22 @@ async function toggleCampoWhatsApp(campo, valor) {
 
 // Cor da rede por diâmetro — lista editável (diâmetro em mm + cor), ordenada do menor
 // pro maior diâmetro pra ficar mais fácil de conferir.
+// Aceita tanto hex ("#FF00FF" ou "FF00FF") quanto RGB ("255,0,255") na hora de digitar
+// a cor — o celular e o desktop mostram o seletor nativo de cor (input type=color) de
+// jeitos bem diferentes entre si, então um campo de texto simples é mais previsível e
+// também é o formato mais fácil de copiar direto de uma planilha de referência.
+function normalizarCorEntrada(v) {
+  v = (v||'').trim();
+  const rgbMatch = v.match(/^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/);
+  if (rgbMatch) {
+    const [r,g,b] = rgbMatch.slice(1,4).map(n => Math.min(255, parseInt(n,10)));
+    return '#' + [r,g,b].map(n => n.toString(16).padStart(2,'0')).join('').toUpperCase();
+  }
+  const semHash = v.replace(/^#/,'');
+  if (/^[0-9A-Fa-f]{6}$/.test(semHash)) return '#' + semHash.toUpperCase();
+  return null;
+}
+
 function renderConfigCoresPorDiametro() {
   const el = document.getElementById('config-cores-diametro');
   if (!el) return;
@@ -1882,12 +1904,13 @@ function renderConfigCoresPorDiametro() {
   el.innerHTML = entradas.length
     ? entradas.map(([diam, cor]) => `
       <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-        <input type="number" value="${diam}" min="1" style="width:80px;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"
+        <input type="number" value="${diam}" min="1" style="width:70px;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"
           onchange="renomearRegraCorDiametro('${diam}', this.value)">
         <span style="font-size:12px;color:var(--text2)">mm</span>
-        <input type="color" value="${cor}" style="width:44px;height:32px;padding:0;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;background:none"
+        <div style="width:22px;height:22px;border-radius:5px;border:1px solid var(--border);background:${cor};flex-shrink:0"></div>
+        <input type="text" value="${cor}" placeholder="#FF00FF ou 255,0,255"
+          style="width:140px;padding:6px 8px;font-size:11.5px;font-family:monospace;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"
           onchange="editarRegraCorDiametro('${diam}', this.value)">
-        <span style="font-family:monospace;font-size:11.5px;color:var(--text2)">${cor}</span>
         <button onclick="removerRegraCorDiametro('${diam}')" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)">
           <i class="ti ti-trash" style="font-size:12px"></i>
         </button>
@@ -1907,13 +1930,17 @@ async function adicionarRegraCorDiametro() {
   S.coresPorDiametro[chave] = '#185FA5';
   await salvarCoresPorDiametro();
   renderConfigCoresPorDiametro();
-  toast('Diâmetro adicionado — escolha a cor');
+  toast('Diâmetro adicionado — ajuste a cor (hex ou RGB)');
 }
 
-async function editarRegraCorDiametro(diam, cor) {
+async function editarRegraCorDiametro(diam, corDigitada) {
+  const cor = normalizarCorEntrada(corDigitada);
+  if (!cor) { toast('Cor inválida — use #RRGGBB (ex: #FF00FF) ou RGB (ex: 255,0,255)'); renderConfigCoresPorDiametro(); return; }
   S.coresPorDiametro[diam] = cor;
   await salvarCoresPorDiametro();
+  renderConfigCoresPorDiametro();
   toast('Cor do diâmetro ' + diam + 'mm atualizada');
+  redesenharCamadasComCorAtualizada();
 }
 
 async function renomearRegraCorDiametro(diamAntigo, diamNovoRaw) {
@@ -1924,6 +1951,7 @@ async function renomearRegraCorDiametro(diamAntigo, diamNovoRaw) {
   delete S.coresPorDiametro[diamAntigo];
   await salvarCoresPorDiametro();
   renderConfigCoresPorDiametro();
+  redesenharCamadasComCorAtualizada();
 }
 
 async function removerRegraCorDiametro(diam) {
@@ -1931,6 +1959,84 @@ async function removerRegraCorDiametro(diam) {
   await salvarCoresPorDiametro();
   renderConfigCoresPorDiametro();
   toast('Regra removida — trechos de ' + diam + 'mm voltam a usar a cor original do KML');
+  redesenharCamadasComCorAtualizada();
+}
+
+// ================================================================
+// IMPORTAÇÃO DE PLANILHA — cores por diâmetro (.xlsx/.csv)
+// Aceita tanto colunas já separadas (dn | hex, ou dn | r | g | b) quanto uma linha CSV
+// inteira colada numa única célula (ex.: "layer,dn,aci,r,g,b,hex") — formato comum
+// quando alguém exporta essa tabela de outra ferramenta (ex.: script de CAD) e cola
+// direto no Excel sem separar em colunas.
+// ================================================================
+function handleImportarCoresPorDiametro(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+      await processarPlanilhaCoresPorDiametro(wb);
+    } catch(err) {
+      toast('Erro ao ler planilha: ' + (err.message||err));
+      console.warn(err);
+    }
+  };
+  reader.readAsArrayBuffer(f);
+  input.value = '';
+}
+
+function separarLinhaCoresDiametro(row) {
+  // Se veio tudo numa célula só (CSV colado), separa por vírgula
+  if (row.length === 1 && typeof row[0] === 'string' && row[0].includes(',')) {
+    return row[0].split(',').map(s => s.trim());
+  }
+  return row.map(v => v==null ? '' : String(v).trim());
+}
+
+async function processarPlanilhaCoresPorDiametro(wb) {
+  const linhas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, raw:true, defval:null });
+  if (!linhas.length) { toast('Planilha vazia'); return; }
+
+  const header = separarLinhaCoresDiametro(linhas[0]).map(h => h.toLowerCase());
+  const iDn  = header.findIndex(h => h === 'dn' || h.includes('diametro') || h.includes('diâmetro'));
+  const iHex = header.findIndex(h => h === 'hex');
+  const iR   = header.findIndex(h => h === 'r');
+  const iG   = header.findIndex(h => h === 'g');
+  const iB   = header.findIndex(h => h === 'b');
+  if (iDn < 0 || (iHex < 0 && (iR<0 || iG<0 || iB<0))) {
+    toast('A planilha precisa ter as colunas "dn" e "hex" (ou "dn","r","g","b")');
+    return;
+  }
+
+  let importadas = 0;
+  const ignoradas = [];
+  for (let i = 1; i < linhas.length; i++) {
+    const cols = separarLinhaCoresDiametro(linhas[i]);
+    if (!cols.length || !cols[iDn]) continue;
+    const dn = Number(cols[iDn]);
+    if (isNaN(dn)) { ignoradas.push(i+1); continue; }
+
+    let hex = iHex >= 0 ? cols[iHex] : null;
+    if (!hex && iR >= 0) {
+      const r = parseInt(cols[iR],10), g = parseInt(cols[iG],10), b = parseInt(cols[iB],10);
+      if (![r,g,b].some(isNaN)) hex = '#' + [r,g,b].map(n => n.toString(16).padStart(2,'0')).join('');
+    }
+    const corNormalizada = hex ? normalizarCorEntrada(hex) : null;
+    if (!corNormalizada) { ignoradas.push(i+1); continue; }
+
+    // Diâmetros repetidos na planilha (ex.: várias camadas de CAD com o mesmo DN) só
+    // sobrescrevem com o mesmo valor — sem problema, o resultado final é o mesmo.
+    S.coresPorDiametro[String(dn)] = corNormalizada;
+    importadas++;
+  }
+
+  await salvarCoresPorDiametro();
+  renderConfigCoresPorDiametro();
+  redesenharCamadasComCorAtualizada();
+  let msg = '✓ ' + importadas + ' cor(es) por diâmetro importada(s)';
+  if (ignoradas.length) msg += ', ' + ignoradas.length + ' linha(s) ignorada(s)';
+  toast(msg);
 }
 
 async function editarServico(id, campo, valor) {

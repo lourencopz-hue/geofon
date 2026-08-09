@@ -4696,7 +4696,14 @@ async function carregarGeometriaCamada(tipo, camadaId) {
           if (popupTxt) layer.bindPopup(popupTxt);
 
           if (tipo === 'redes' && ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type) && layer.getLatLngs) {
-            const linhaToque = L.polyline(layer.getLatLngs(), { weight: 24, opacity: 0, interactive: true });
+            // Peso 24 (testado antes) era largo demais: em trechos onde duas tubulações
+            // de diâmetro diferente passam perto uma da outra (paralelas, ou perto de
+            // uma junção), as áreas invisíveis de toque se sobrepunham, e o clique podia
+            // "pegar" o trecho errado — exatamente o problema relatado (linha verde
+            // respondendo com dado de outro diâmetro). 12 ainda amplia bastante a área
+            // de toque em relação ao traço fino original (peso 2), sem invadir tanto o
+            // espaço de trechos vizinhos.
+            const linhaToque = L.polyline(layer.getLatLngs(), { weight: 12, opacity: 0, interactive: true });
             if (popupTxt) linhaToque.bindPopup(popupTxt);
             linhasDeToque.push(linhaToque);
           }

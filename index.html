@@ -414,10 +414,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="map-toolbar">
       <button class="btn primary" onclick="openRegisterQuick()"><i class="ti ti-map-pin-plus"></i>Novo ponto</button>
-      <button class="btn sm" id="btn-campanha" onclick="abrirPainelCampanha()" style="background:var(--purple-l);border-color:rgba(83,74,183,.25);color:var(--purple)"><i class="ti ti-route" style="color:var(--purple)"></i><span id="btn-campanha-label">Campanha</span></button>
-      <button class="btn sm" onclick="openDMCPanel()" style="position:relative;background:var(--blue-l);border-color:rgba(24,95,165,.25);color:var(--blue-d)"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
-      <button class="btn sm" onclick="openRedesPanel()" style="background:var(--teal-l);border-color:rgba(15,110,86,.25);color:var(--teal)"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
       <button class="btn sm" onclick="centerMyPosition()" ondblclick="toggleMinhaPosicaoPermanente()" style="background:var(--bg2);border-color:var(--border2)" title="1 toque: centraliza e pisca. 2 toques: liga/desliga posição fixa"><i class="ti ti-gps" style="color:var(--text2)"></i>Minha pos.</button>
+      <button class="btn sm" onclick="sincronizarRadioModoLeaksField();openModal('modal-mais-opcoes')" style="background:var(--bg2);border-color:var(--border2);position:relative" title="Campanha, DMC, Redes e exibição de vazamentos">
+        <i class="ti ti-dots" style="color:var(--text2)"></i>
+        <span id="dmc-pendentes-badge-mini" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">!</span>
+      </button>
     </div>
     <div class="map-wrap">
       <div id="map-field-map"></div>
@@ -1066,6 +1067,37 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<div class="modal-overlay" id="modal-mais-opcoes">
+  <div class="modal" style="max-width:380px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:12px">Mais opções do mapa</h3>
+
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+      <button class="btn sm" id="btn-campanha" onclick="closeModal('modal-mais-opcoes');abrirPainelCampanha()" style="justify-content:flex-start;background:var(--purple-l);border-color:rgba(83,74,183,.25);color:var(--purple)"><i class="ti ti-route" style="color:var(--purple)"></i><span id="btn-campanha-label">Campanha</span></button>
+      <button class="btn sm" onclick="closeModal('modal-mais-opcoes');openDMCPanel()" style="justify-content:flex-start;position:relative;background:var(--blue-l);border-color:rgba(24,95,165,.25);color:var(--blue-d)"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:70px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
+      <button class="btn sm" onclick="closeModal('modal-mais-opcoes');openRedesPanel()" style="justify-content:flex-start;background:var(--teal-l);border-color:rgba(15,110,86,.25);color:var(--teal)"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
+    </div>
+
+    <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Vazamentos já registrados no mapa</div>
+    <p style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.5">Em regiões com muitos pontos já cadastrados, ver todos de uma vez pode poluir o mapa — escolha o que faz sentido pra você agora.</p>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer">
+        <input type="radio" name="modo-leaks-field" value="nenhum" onchange="mudarModoExibicaoLeaksField('nenhum')">
+        <div><div style="font-size:12.5px;font-weight:500">Nenhum</div><div style="font-size:10.5px;color:var(--text2)">Mapa limpo, só os pontos que eu marcar agora</div></div>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer">
+        <input type="radio" name="modo-leaks-field" value="proximos" onchange="mudarModoExibicaoLeaksField('proximos')">
+        <div><div style="font-size:12.5px;font-weight:500">Próximos</div><div style="font-size:10.5px;color:var(--text2)">Só os que estão a até 800m de mim</div></div>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer">
+        <input type="radio" name="modo-leaks-field" value="todos" onchange="mudarModoExibicaoLeaksField('todos')">
+        <div><div style="font-size:12.5px;font-weight:500">Todos</div><div style="font-size:10.5px;color:var(--text2)">Mostra tudo, como era antes</div></div>
+      </label>
+    </div>
+
+    <button class="btn btn-block" onclick="closeModal('modal-mais-opcoes')" style="margin-top:8px;justify-content:center">Fechar</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-wa-confirm">
   <div class="modal" style="max-width:380px;text-align:center">
     <div style="width:52px;height:52px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;margin:0 auto 14px">
@@ -1405,6 +1437,22 @@ try {
   const salvo = JSON.parse(localStorage.getItem('campanhasOcultas') || '[]');
   if (Array.isArray(salvo)) S._campanhasOcultasManualmente = new Set(salvo);
 } catch(e) {}
+
+// Modo de exibição dos vazamentos JÁ REGISTRADOS no mapa de Campo (celular) —
+// 'nenhum' (padrão — mapa limpo), 'proximos' (só num raio de 800m da posição atual)
+// ou 'todos' (como era antes). Em regiões com muito histórico de pontos, mostrar tudo
+// o tempo todo poluía bastante o mapa em campo. Preferência local por dispositivo.
+S._modoLeaksField = localStorage.getItem('modoLeaksField') || 'nenhum';
+const RAIO_LEAKS_PROXIMOS_M = 800;
+function mudarModoExibicaoLeaksField(modo) {
+  S._modoLeaksField = modo;
+  try { localStorage.setItem('modoLeaksField', modo); } catch(e) {}
+  addFieldMarkers();
+}
+function sincronizarRadioModoLeaksField() {
+  const el = document.querySelector('input[name="modo-leaks-field"][value="' + S._modoLeaksField + '"]');
+  if (el) el.checked = true;
+}
 function toggleVisibilidadeCampanha(campanhaId) {
   if (S._campanhasOcultasManualmente.has(campanhaId)) S._campanhasOcultasManualmente.delete(campanhaId);
   else S._campanhasOcultasManualmente.add(campanhaId);
@@ -2305,7 +2353,13 @@ function sincronizarDMCsCidade(geojson, cidadeId) {
   if (!c) return;
   let mudou = false;
   lista.forEach(n => { if (!c.dmcs.some(d => d.nome === n)) { c.dmcs.push(normalizarDMC(n)); mudou = true; } });
-  if (mudou) salvarCidadeFirestore(c);
+  // Só avisa quando REALMENTE adicionou algo novo — antes, o toast disparava toda vez
+  // que essa checagem rodava (inclusive no carregamento automático da geometria em
+  // segundo plano pra detecção por coordenada), mesmo quando os DMCs já existiam todos
+  // e nada mudava de verdade. Por isso a mensagem parecia aparecer "à toa" toda vez que
+  // o app abria.
+  if (!mudou) return;
+  salvarCidadeFirestore(c);
   const regCid = document.getElementById('reg-cidade');
   if (regCid && regCid.value) onCidadeChange();
   renderConfigCidades();
@@ -2410,6 +2464,9 @@ function startGPS() {
       sugerirCidadePorGPS();
       registrarPontoNaCampanha();
       atualizarMinhaPosicaoPermanente();
+      // No modo "Próximos", a lista de vazamentos exibidos depende da posição atual —
+      // precisa recalcular a cada leitura nova de GPS pra acompanhar o deslocamento.
+      if (S._modoLeaksField === 'proximos') addFieldMarkers();
       // Na primeira vez que o GPS responde (o mapa pode já ter sido criado com a
       // coordenada padrão como fallback temporário), recentraliza na posição real do usuário.
       if (primeiraLeitura) recentralizarMapasNaPrimeiraLeituraGPS();
@@ -2421,6 +2478,7 @@ function startGPS() {
       sugerirCidadePorGPS();
       registrarPontoNaCampanha();
       atualizarMinhaPosicaoPermanente();
+      if (S._modoLeaksField === 'proximos') addFieldMarkers();
       if (primeiraLeitura) recentralizarMapasNaPrimeiraLeituraGPS();
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
@@ -3322,7 +3380,18 @@ function initPCMap() {
 function addFieldMarkers() {
   if (!mapField) return;
   fMarkers.forEach(m => m.remove()); fMarkers = [];
-  S.leaks.forEach(l => {
+  const modo = S._modoLeaksField;
+  let leaksParaMostrar;
+  if (modo === 'todos') {
+    leaksParaMostrar = S.leaks;
+  } else if (modo === 'proximos' && S.pos) {
+    leaksParaMostrar = S.leaks.filter(l => distanciaMetros(S.pos.lat, S.pos.lng, l.lat, l.lng) <= RAIO_LEAKS_PROXIMOS_M);
+  } else {
+    // 'nenhum', ou 'proximos' sem GPS ainda disponível — nesse segundo caso preferimos
+    // não mostrar nada em vez de mostrar tudo, até o GPS responder.
+    leaksParaMostrar = [];
+  }
+  leaksParaMostrar.forEach(l => {
     const m = makeMarker(l);
     m.addTo(mapField).bindPopup(popupHtml(l), { maxWidth: 340 });
     fMarkers.push(m);
@@ -5099,6 +5168,11 @@ function atualizarBadgePendentes() {
       badge.classList.add('hidden');
     }
   });
+  // Espelha no botão "..." do mapa de campo, já que o botão DMC (e seu contador) agora
+  // ficam escondidos dentro do menu de mais opções — sem isso, ninguém saberia que tem
+  // camada pendente sem abrir o menu primeiro.
+  const miniBadge = document.getElementById('dmc-pendentes-badge-mini');
+  if (miniBadge) miniBadge.classList.toggle('hidden', !(podeValidar && total > 0));
 }
 
 // Parser KML → GeoJSON

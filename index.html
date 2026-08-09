@@ -4625,6 +4625,11 @@ function redesenharCamadasComCorAtualizada() {
     const aplicarEstilo = (lg) => {
       if (!lg) return;
       lg.eachLayer(layer => {
+        // A camada de rede agora pode vir embrulhada num grupo junto com as linhas de
+        // toque invisíveis (ver criarLayer) — precisa entrar recursivamente pra achar
+        // os trechos de verdade (que têm .feature); as linhas de toque não têm .feature
+        // de propósito, então são ignoradas aqui (nunca precisam de cor, são invisíveis).
+        if (layer.eachLayer) { aplicarEstilo(layer); return; }
         const ft = layer.feature;
         if (!ft) return;
         const cor = resolverCorFeature(ft, 'redes');
@@ -4662,32 +4667,46 @@ async function carregarGeometriaCamada(tipo, camadaId) {
     // instância "disputada" entre os dois causa remoção inconsistente e desalinhamento
     // visual ao dar zoom (o sintoma relatado: camada que "não fica oculta" e aparece
     // "deslocada"). Por isso criamos UMA instância de L.geoJSON por mapa.
-    const criarLayer = () => L.geoJSON(geojson, {
-      // "tolerance" amplia a área de toque/clique ao redor de cada linha, sem mudar a
-      // espessura visual dela — resolve o "dedo gordo" relatado ao tentar tocar num
-      // trecho fino de rede. Só existe no renderer Canvas (o padrão do Leaflet é SVG,
-      // que não tem esse recurso), por isso força esse renderer aqui. Rede recebe mais
-      // tolerância que DMC porque a linha da rede é bem mais fina que o polígono do DMC
-      // (que já é uma área grande, fácil de tocar em qualquer lugar dentro dela).
-      renderer: L.canvas({ padding: 0.5, tolerance: tipo === 'redes' ? 14 : 6 }),
-      style: (ft) => {
-        const cor = resolverCorFeature(ft, tipo);
-        return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
-      },
-      pointToLayer: (ft, ll) => {
-        const cor = resolverCorFeature(ft, tipo);
-        const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
-        return L.circleMarker(ll, { radius:5, ...estilo });
-      },
-      onEachFeature: (ft, layer) => {
-        const p=ft.properties||{};
-        const lbl=p.name||p.Nome||p.nome||item.nome;
-        // Se o diâmetro foi identificado (pasta do KML tipo "T_50"), mostra no popup —
-        // ajuda a conferir se a extração/regra de cor bateu certo com o trecho certo.
-        const diamTxt = p._diametroMm ? ` <small>(DN/DE ${p._diametroMm}mm)</small>` : '';
-        if (lbl || diamTxt) layer.bindPopup('<b>'+(lbl||item.nome)+'</b>'+diamTxt);
-      }
-    });
+    const criarLayer = () => {
+      // Trecho de rede é uma linha bem fina — difícil de tocar com precisão no celular
+      // ("dedo gordo"). Tentamos antes resolver com a opção "tolerance" do renderer
+      // Canvas do Leaflet, mas causou uma regressão real: em vez de facilitar, ficou
+      // impossível clicar em qualquer trecho. Essa é a técnica clássica e testada pra
+      // isso — desenhar, por baixo de cada linha visível (fina, colorida), uma segunda
+      // linha BEM mais grossa e totalmente invisível (opacity 0), só pra capturar o
+      // toque. O visual não muda nadinha; só a área que responde ao toque fica maior.
+      const linhasDeToque = [];
+      const grupoVisivel = L.geoJSON(geojson, {
+        style: (ft) => {
+          const cor = resolverCorFeature(ft, tipo);
+          return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
+        },
+        pointToLayer: (ft, ll) => {
+          const cor = resolverCorFeature(ft, tipo);
+          const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
+          return L.circleMarker(ll, { radius:5, ...estilo });
+        },
+        onEachFeature: (ft, layer) => {
+          const p=ft.properties||{};
+          const lbl=p.name||p.Nome||p.nome||item.nome;
+          // Se o diâmetro foi identificado (pasta do KML tipo "T_50"), mostra no popup —
+          // ajuda a conferir se a extração/regra de cor bateu certo com o trecho certo.
+          const diamTxt = p._diametroMm ? ` <small>(DN/DE ${p._diametroMm}mm)</small>` : '';
+          const popupTxt = (lbl || diamTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt) : null;
+          if (popupTxt) layer.bindPopup(popupTxt);
+
+          if (tipo === 'redes' && ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type) && layer.getLatLngs) {
+            const linhaToque = L.polyline(layer.getLatLngs(), { weight: 24, opacity: 0, interactive: true });
+            if (popupTxt) linhaToque.bindPopup(popupTxt);
+            linhasDeToque.push(linhaToque);
+          }
+        }
+      });
+      // As linhas de toque ficam num grupo junto com a camada visível — pro resto do
+      // código (mostrar/ocultar/remover) continuar tratando isso como "uma camada só",
+      // sem precisar saber que por dentro são duas coisas.
+      return linhasDeToque.length ? L.layerGroup([...linhasDeToque, grupoVisivel]) : grupoVisivel;
+    };
 
     if (mapField) { item.lgField = criarLayer(); item.lgField.addTo(mapField); }
     if (mapPC)    { item.lgPC = criarLayer(); item.lgPC.addTo(mapPC); }

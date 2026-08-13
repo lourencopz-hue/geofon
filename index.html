@@ -5048,6 +5048,13 @@ async function calcularExtensaoRedeDMC(cidadeId, dmcNome) {
   if (!poligono) return null;
   const camadasRede = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
   if (!camadasRede.length) return null;
+  // Log de diagnóstico: se por acaso houver mais de uma camada de rede ativa pra mesma
+  // cidade (ex.: um upload de teste antigo que ninguém removeu), a soma conta as duas —
+  // o que pode inflar bastante o resultado sem nenhum erro na conta em si. Fica aqui
+  // pra facilitar detectar esse cenário sem precisar adivinhar.
+  if (camadasRede.length > 1) {
+    console.warn('Calculando extensão de "' + dmcNome + '" somando ' + camadasRede.length + ' camadas de rede ativas para essa cidade:', camadasRede.map(c=>c.nome));
+  }
   let totalMetros = 0;
   for (const item of camadasRede) {
     await garantirGeometriaCarregada(item);
@@ -5086,6 +5093,10 @@ async function recalcularExtensaoRedeCidade(cidadeId, apenasDmcNome) {
 // cadastrados) pros DMCs já existentes, sem precisar subir nenhum arquivo de novo.
 async function recalcularExtensaoRedeManual(cidadeId) {
   toast('🔄 Recalculando extensão de rede...');
+  const camadasRede = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (camadasRede.length > 1) {
+    toast('⚠️ Atenção: há ' + camadasRede.length + ' camadas de rede ativas nessa cidade — a soma inclui todas. Se alguma for antiga/duplicada, remova-a em Redes antes de recalcular.');
+  }
   const { atualizados, total } = await recalcularExtensaoRedeCidade(cidadeId);
   if (!total) { toast('Nenhum DMC cadastrado nessa cidade ainda'); return; }
   toast(atualizados

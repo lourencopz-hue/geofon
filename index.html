@@ -5076,7 +5076,7 @@ async function calcularExtensaoRedeDMC(cidadeId, dmcNome) {
 async function recalcularExtensaoRedeCidade(cidadeId, apenasDmcNome) {
   const c = S.cidades.find(c => c.id === cidadeId);
   if (!c) return { atualizados: 0 };
-  const dmcsAlvo = c.dmcs.filter(d => d.nome !== DMC_SEM_DMC && (!apenasDmcNome || d.nome === apenasDmcNome));
+  const dmcsAlvo = c.dmcs.filter(d => d.nome !== DMC_SEM_DMC && (!apenasDmcNome || nomesDMCBatem(d.nome, apenasDmcNome)));
   let atualizados = 0;
   for (const d of dmcsAlvo) {
     const metros = await calcularExtensaoRedeDMC(cidadeId, d.nome);
@@ -5695,24 +5695,27 @@ async function renderDMCsEditaveis(cidadeId) {
   const camadasDaCidade = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   await Promise.all(camadasDaCidade.map(garantirGeometriaCarregada));
 
-  // Monta o conjunto de nomes "vinculados" — qualquer nome de feature (mesmas
+  // Monta a lista de nomes "vinculados" — qualquer nome de feature (mesmas
   // propriedades candidatas usadas em sincronizarDMCsCidade) que apareça em alguma
-  // camada de DMC já carregada dessa cidade conta como vínculo confirmado.
-  const nomesVinculados = new Set();
+  // camada de DMC já carregada dessa cidade conta como vínculo confirmado. Array (não
+  // Set) porque a comparação agora é flexível (nomesDMCBatem), não mais só igualdade
+  // exata — mesmo motivo do bug corrigido na mesclagem de duplicados.
+  const nomesVinculados = [];
   camadasDaCidade.forEach(item => {
     if (!item._geojson || !item._geojson.features) return;
     item._geojson.features.forEach(ft => {
       const p = ft.properties || {};
       [p.name,p.Name,p.Nome,p.nome,p.DMC,p.dmc,p.NOME,p.Descricao,p.descricao,p.Label,p.label]
-        .forEach(v => { if (v && typeof v === 'string') nomesVinculados.add(normTxt(v.trim())); });
+        .forEach(v => { if (v && typeof v === 'string' && v.trim()) nomesVinculados.push(v.trim()); });
     });
   });
 
   el.innerHTML = renderLinhasDMC(c, cidadeId, nomesVinculados);
 }
 
-// linhasVinculadas: Set de nomes normalizados com camada confirmada, ou null enquanto
-// ainda está carregando (nesse caso não mostra nem o ícone de OK nem o de alerta).
+// linhasVinculadas: array de nomes de feature encontrados nas camadas de KML (para
+// comparação flexível — ver nomesDMCBatem), ou null enquanto ainda está carregando
+// (nesse caso não mostra nem o ícone de OK nem o de alerta).
 function renderLinhasDMC(c, cidadeId, nomesVinculados) {
   return c.dmcs.map((d, i) => {
     const ehSemDMC = d.nome === DMC_SEM_DMC;
@@ -5723,7 +5726,7 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
         <i class="ti ti-map-pin-off" style="font-size:13px"></i> Sem DMC <span style="margin-left:auto;font-size:10px">(fixo — usado quando o ponto não pertence a nenhum DMC)</span>
       </div>`;
     }
-    const temCamada = nomesVinculados ? nomesVinculados.has(normTxt(d.nome)) : null;
+    const temCamada = nomesVinculados ? nomesVinculados.some(n => nomesDMCBatem(n, d.nome)) : null;
     const iconeVinculo = temCamada === null ? ''
       : temCamada ? '<i class="ti ti-map-check" style="color:var(--green);font-size:14px" title="Tem camada de KML vinculada"></i>'
       : '<i class="ti ti-map-pin-question" style="color:var(--amber);font-size:14px" title="Nenhuma camada de KML vinculada a este DMC ainda — a extensão de rede real não pode ser calculada até isso existir"></i>';

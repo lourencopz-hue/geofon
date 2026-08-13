@@ -1067,6 +1067,34 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<div class="modal-overlay" id="modal-os">
+  <div class="modal" style="max-width:380px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px">Autorização de Serviço (AS)</h3>
+    <p style="font-size:11.5px;color:var(--text2);margin-bottom:14px">Ponto <span class="id-badge" id="os-leak-id" style="font-size:11px">—</span></p>
+
+    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;margin-bottom:14px">
+      <input type="checkbox" id="os-aberta-check" style="width:18px;height:18px;cursor:pointer">
+      <div><div style="font-size:13px;font-weight:500">AS aberta no sistema (SCI)</div><div style="font-size:10.5px;color:var(--text2)">Marca que a autorização já foi solicitada</div></div>
+    </label>
+
+    <div class="field">
+      <label>Data/hora da abertura (opcional)</label>
+      <input type="text" id="os-datahora" placeholder="Só números — ex: 140820261030" maxlength="17" oninput="mascaraDataHoraOS(this)" style="font-family:monospace">
+      <p style="font-size:10px;color:var(--text2);margin-top:3px">Não precisa digitar barra nem dois-pontos — o app formata sozinho.</p>
+    </div>
+    <div class="field">
+      <label>Matrícula (opcional)</label>
+      <input type="text" id="os-matricula" placeholder="Ex: 1234" maxlength="6" inputmode="numeric" style="font-family:monospace">
+      <p style="font-size:10px;color:var(--text2);margin-top:3px">Preenchido com zeros à esquerda até completar 6 dígitos.</p>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn" style="flex:1;justify-content:center" onclick="closeModal('modal-os')">Cancelar</button>
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="salvarOS()">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-mais-opcoes">
   <div class="modal" style="max-width:380px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:12px">Mais opções do mapa</h3>
@@ -3016,7 +3044,10 @@ function redesenharCampanhasNoMapa() {
         S.campanhasPolylines[id][chave].setStyle(estilo);
         S.campanhasPolylines[id][chave].setPopupContent('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + statusTxt + '</small>');
       } else {
-        const linha = L.polyline(pontos, estilo).addTo(mapa);
+        // Pane própria, acima de DMC e Rede (ver criarPanesDeCamadas) — sem isso, o
+        // trajeto de campanha ficaria por baixo dos polígonos de DMC/rede (que agora têm
+        // prioridade de camada fixa), dificultando ver/clicar nele por cima dessas áreas.
+        const linha = L.polyline(pontos, { ...estilo, pane: 'paneCampanhas' }).addTo(mapa);
         linha.bindPopup('<b>' + dados.nome + '</b><br><small>' + (dados.usuarioNome||'') + statusTxt + '</small>');
         S.campanhasPolylines[id][chave] = linha;
       }
@@ -3352,6 +3383,20 @@ function sugerirCidadePorGPS() {
 // ================================================================
 // MAPAS
 // ================================================================
+// Cria dois "panes" (camadas de desenho) do Leaflet com prioridades fixas: rede sempre
+// por CIMA do DMC, não importa qual das duas foi carregada/ligada primeiro. Antes, quem
+// carregava por último ficava por cima (ordem de inserção no DOM), o que deixava a rede
+// embaixo do DMC às vezes — e como o DMC é uma área preenchida (não só contorno), ele
+// "roubava" o clique que deveria ir pro trecho de rede por baixo.
+function criarPanesDeCamadas(mapa) {
+  const paneDMC = mapa.createPane('paneDMC');
+  paneDMC.style.zIndex = 410; // acima do overlayPane padrão (400), abaixo da rede
+  const paneRedes = mapa.createPane('paneRedes');
+  paneRedes.style.zIndex = 420; // sempre acima do DMC — garante que dá pra clicar na rede
+  const paneCampanhas = mapa.createPane('paneCampanhas');
+  paneCampanhas.style.zIndex = 430; // trajeto de campanha acima de DMC e rede
+}
+
 function initFieldMap() {
   if (mapField) return;
   // Usa a posição GPS já capturada, se disponível nesse momento; senão, cai no centro
@@ -3360,6 +3405,7 @@ function initFieldMap() {
   const zoomInicial = S.pos ? 15 : 13;
   mapField = L.map('map-field-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapField);
+  criarPanesDeCamadas(mapField);
   addFieldMarkers();
   setTimeout(() => mapField.invalidateSize(), 300);
 }
@@ -3372,6 +3418,7 @@ function initPCMap() {
   const zoomInicial = S.pos ? 13 : 11;
   mapPC = L.map('map-pc-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapPC);
+  criarPanesDeCamadas(mapPC);
   refreshPCMap();
   redesenharCampanhasNoMapa(); // mapa PC é criado sob demanda, pode já existir campanhas ativas
   setTimeout(() => mapPC.invalidateSize(), 300);
@@ -4385,9 +4432,68 @@ function renderLeakList() {
         <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
         ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
       </div>
+      <button onclick="event.stopPropagation();abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — toque para ver/editar':'Marcar AS como aberta'}"
+        style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.osAberta?'var(--green)':'var(--text3)'}">
+        <i class="ti ${l.osAberta?'ti-clipboard-check':'ti-clipboard'}" style="font-size:15px"></i>
+        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">SCI</span>
+      </button>
       ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
     </div>`;
   }).join('');
+}
+
+// ================================================================
+// AUTORIZAÇÃO DE SERVIÇO (AS / SCI) — controle na Lista de que a OS já foi aberta no
+// sistema interno (CasanSCI), separado do fluxo de campo. Data/hora e matrícula são
+// opcionais; o essencial é só o "check" de aberta ou não.
+// ================================================================
+function abrirModalOS(leakId) {
+  const l = S.leaks.find(l => l.id === leakId);
+  if (!l) return;
+  S._osLeakId = leakId;
+  document.getElementById('os-leak-id').textContent = leakId;
+  document.getElementById('os-aberta-check').checked = !!l.osAberta;
+  document.getElementById('os-datahora').value = l.osDataHora || '';
+  document.getElementById('os-matricula').value = l.osMatricula || '';
+  openModal('modal-os');
+}
+
+// Formata progressivamente enquanto digita, sem exigir barra/dois-pontos: 12 dígitos
+// (DDMMAAAAHHMM) viram "DD/MM/AAAA HH:MM" na tela, aceitando preenchimento parcial.
+function mascaraDataHoraOS(el) {
+  const digitos = el.value.replace(/\D/g,'').slice(0,12);
+  let formatado = '';
+  if (digitos.length > 0) formatado += digitos.slice(0,2);
+  if (digitos.length > 2) formatado += '/' + digitos.slice(2,4);
+  if (digitos.length > 4) formatado += '/' + digitos.slice(4,8);
+  if (digitos.length > 8) formatado += ' ' + digitos.slice(8,10);
+  if (digitos.length > 10) formatado += ':' + digitos.slice(10,12);
+  el.value = formatado;
+}
+
+async function salvarOS() {
+  const leakId = S._osLeakId;
+  if (!leakId) return;
+  const aberta = document.getElementById('os-aberta-check').checked;
+  const dataHora = document.getElementById('os-datahora').value.trim();
+  let matricula = document.getElementById('os-matricula').value.replace(/\D/g,'');
+  // Zeros à esquerda até completar 6 dígitos — só se algo foi digitado; campo vazio
+  // continua vazio (é opcional, não vira "000000" à toa).
+  if (matricula) matricula = matricula.padStart(6, '0');
+
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',leakId), {
+      osAberta: aberta, osDataHora: dataHora, osMatricula: matricula
+    }, { merge:true });
+  } catch(err) {
+    toast('⚠️ Erro ao salvar: ' + (err.code || err.message || err));
+    return;
+  }
+  const l = S.leaks.find(l => l.id === leakId);
+  if (l) { l.osAberta = aberta; l.osDataHora = dataHora; l.osMatricula = matricula; }
+  closeModal('modal-os');
+  renderLeakList();
+  toast(aberta ? '✓ AS marcada como aberta' : 'AS desmarcada');
 }
 
 function zoomLeak(lat, lng) {
@@ -4487,6 +4593,33 @@ S.photosBase64  = [];
 S.leafletLayers = { dmc:[], redes:[] }; // cada item: { nome, cidade, visible, lg }
 S.dmcCidadeFiltro = '';
 
+// Dispara o recálculo automático de extensão de rede depois de um upload bem-sucedido.
+// Upload de REDE afeta todos os DMCs da cidade (compartilham a mesma rede); upload de
+// DMC (polígono) só precisa recalcular os DMCs cujo nome está NESSE arquivo específico
+// — os outros DMCs da cidade não mudaram de contorno, não há motivo pra mexer neles.
+async function dispararRecalculoExtensaoAposUpload(tipo, geojson, cidadeId) {
+  if (tipo === 'redes') {
+    const { atualizados } = await recalcularExtensaoRedeCidade(cidadeId);
+    if (atualizados) toast('📏 Extensão de rede recalculada para ' + atualizados + ' DMC(s)');
+  } else if (tipo === 'dmc') {
+    const nomes = new Set();
+    (geojson.features||[]).forEach(ft => {
+      if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) return;
+      const p = ft.properties || {};
+      const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+      if (nome) nomes.add(nome.trim());
+    });
+    let atualizados = 0;
+    for (const nome of nomes) {
+      const r = await recalcularExtensaoRedeCidade(cidadeId, nome);
+      atualizados += r.atualizados;
+    }
+    if (atualizados) toast('📏 Extensão de rede recalculada para ' + atualizados + ' DMC(s)');
+  }
+  const cidExpandida = document.getElementById('dmcs-edit-' + cidadeId);
+  if (cidExpandida && !cidExpandida.classList.contains('hidden')) renderDMCsEditaveis(cidadeId);
+}
+
 function handleLayerUpload(input, tipo) {
   Array.from(input.files).forEach(f => {
     const reader = new FileReader();
@@ -4515,6 +4648,7 @@ function handleLayerUpload(input, tipo) {
             definirVisibilidadeLocal(novoId, true);
             toast('✓ "' + f.name + '" carregada e disponível para todos!');
             centralizarEmGeoJSON(geojson);
+            dispararRecalculoExtensaoAposUpload(tipo, geojson, cidadeId);
           }
         }
       } catch(err) {
@@ -4567,6 +4701,7 @@ async function confirmarCidadeCamada() {
     definirVisibilidadeLocal(novoId, true);
     toast('✓ "' + pend.nome + '" carregada e disponível para todos!');
     centralizarEmGeoJSON(pend.geojson);
+    dispararRecalculoExtensaoAposUpload(pend.tipo, pend.geojson, cidadeId);
   }
   S._camadaPendenteUpload = null;
   closeModal('modal-camada-cidade');
@@ -4760,7 +4895,9 @@ async function carregarGeometriaCamada(tipo, camadaId) {
       // linha BEM mais grossa e totalmente invisível (opacity 0), só pra capturar o
       // toque. O visual não muda nadinha; só a área que responde ao toque fica maior.
       const linhasDeToque = [];
+      const nomePane = tipo === 'redes' ? 'paneRedes' : 'paneDMC';
       const grupoVisivel = L.geoJSON(geojson, {
+        pane: nomePane,
         style: (ft) => {
           const cor = resolverCorFeature(ft, tipo);
           return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
@@ -4768,7 +4905,7 @@ async function carregarGeometriaCamada(tipo, camadaId) {
         pointToLayer: (ft, ll) => {
           const cor = resolverCorFeature(ft, tipo);
           const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
-          return L.circleMarker(ll, { radius:5, ...estilo });
+          return L.circleMarker(ll, { radius:5, pane: nomePane, ...estilo });
         },
         onEachFeature: (ft, layer) => {
           const p=ft.properties||{};
@@ -4787,7 +4924,7 @@ async function carregarGeometriaCamada(tipo, camadaId) {
             // respondendo com dado de outro diâmetro). 12 ainda amplia bastante a área
             // de toque em relação ao traço fino original (peso 2), sem invadir tanto o
             // espaço de trechos vizinhos.
-            const linhaToque = L.polyline(layer.getLatLngs(), { weight: 12, opacity: 0, interactive: true });
+            const linhaToque = L.polyline(layer.getLatLngs(), { pane: 'paneRedes', weight: 12, opacity: 0, interactive: true });
             if (popupTxt) linhaToque.bindPopup(popupTxt);
             linhasDeToque.push(linhaToque);
           }
@@ -4853,6 +4990,108 @@ async function detectarCidadeEDMCPorCoordenada(lat, lng) {
 function removerGeometriaDoMapa(item) {
   if (item.lgField && mapField && mapField.hasLayer(item.lgField)) mapField.removeLayer(item.lgField);
   if (item.lgPC && mapPC && mapPC.hasLayer(item.lgPC)) mapPC.removeLayer(item.lgPC);
+}
+
+// ================================================================
+// EXTENSÃO DE REDE POR DMC — recorte real da camada de Rede pelo polígono do DMC
+// (Turf.js), em vez da aproximação por extensão percorrida em campanha.
+// ================================================================
+// Acha, entre todas as camadas de DMC já cadastradas de uma cidade, a feature (polígono)
+// cujo nome bate com o DMC procurado — mesma lista de propriedades candidatas usada em
+// sincronizarDMCsCidade/detectarCidadeEDMCPorCoordenada, pra manter os dois consistentes.
+async function encontrarPoligonoDMC(cidadeId, dmcNome) {
+  const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
+  for (const item of camadas) {
+    await garantirGeometriaCarregada(item);
+    if (!item._geojson || !item._geojson.features) continue;
+    for (const ft of item._geojson.features) {
+      if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) continue;
+      const p = ft.properties || {};
+      const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
+      if (nome && normTxt(nome) === normTxt(dmcNome)) return ft;
+    }
+  }
+  return null;
+}
+
+// Calcula quantos metros de uma feature de linha caem DENTRO de um polígono, por
+// amostragem (a cada `passoM` metros, verifica se o ponto do meio do trecho está dentro
+// do polígono e soma). É uma aproximação numérica, não um recorte booleano exato — mas
+// pra extensão de rede (metros totais, não a geometria exata do recorte) é precisão de
+// sobra, e é muito mais simples/robusto do que operações de geometria booleana exatas
+// (que exigem bibliotecas mais pesadas e são sensíveis a geometria mal-formada).
+function comprimentoDentroDoPoligono(feature, poligono, passoM = 10) {
+  let comprimentoTotalKm;
+  try { comprimentoTotalKm = turf.length(feature, { units: 'kilometers' }); }
+  catch(e) { return 0; }
+  if (!comprimentoTotalKm) return 0;
+  const passoKm = passoM / 1000;
+  let somaDentroKm = 0, d = 0;
+  while (d < comprimentoTotalKm) {
+    const proximo = Math.min(d + passoKm, comprimentoTotalKm);
+    const meio = (d + proximo) / 2;
+    try {
+      const pt = turf.along(feature, meio, { units: 'kilometers' });
+      if (turf.booleanPointInPolygon(pt, poligono)) somaDentroKm += (proximo - d);
+    } catch(e) { /* ponto/trecho inválido — ignora esse pedacinho e segue */ }
+    d = proximo;
+  }
+  return somaDentroKm * 1000; // metros
+}
+
+// Recalcula a extensão real de um DMC específico, recortando toda a rede já carregada
+// da cidade pelo polígono desse DMC. Retorna o total em metros (ou null se faltar
+// polígono ou rede — nesse caso o app continua usando a extensão percorrida aproximada).
+async function calcularExtensaoRedeDMC(cidadeId, dmcNome) {
+  if (typeof turf === 'undefined') return null;
+  const poligono = await encontrarPoligonoDMC(cidadeId, dmcNome);
+  if (!poligono) return null;
+  const camadasRede = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!camadasRede.length) return null;
+  let totalMetros = 0;
+  for (const item of camadasRede) {
+    await garantirGeometriaCarregada(item);
+    if (!item._geojson || !item._geojson.features) continue;
+    for (const ft of item._geojson.features) {
+      if (!ft.geometry || !['LineString','MultiLineString'].includes(ft.geometry.type)) continue;
+      totalMetros += comprimentoDentroDoPoligono(ft, poligono);
+    }
+  }
+  return Math.round(totalMetros);
+}
+
+// Recalcula a extensão de rede de uma cidade inteira — de TODOS os DMCs que já têm
+// polígono cadastrado (não só um). Usada quando a camada de REDE é atualizada (afeta
+// o cálculo de todos os DMCs da cidade, já que compartilham a mesma rede) e também pelo
+// botão manual "Recalcular agora" em Gestão. Se `apenasDmcNome` for passado, recalcula
+// só aquele DMC (usado quando é o POLÍGONO do DMC que foi atualizado — só ele muda).
+async function recalcularExtensaoRedeCidade(cidadeId, apenasDmcNome) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return { atualizados: 0 };
+  const dmcsAlvo = c.dmcs.filter(d => d.nome !== DMC_SEM_DMC && (!apenasDmcNome || d.nome === apenasDmcNome));
+  let atualizados = 0;
+  for (const d of dmcsAlvo) {
+    const metros = await calcularExtensaoRedeDMC(cidadeId, d.nome);
+    if (metros != null) {
+      d.extensaoRede = metros;
+      d.ultimaAtualizacao = new Date().toISOString();
+      atualizados++;
+    }
+  }
+  if (atualizados) await salvarCidadeFirestore(c);
+  return { atualizados, total: dmcsAlvo.length };
+}
+
+// Botão manual em Gestão — recalcula tudo que já dá pra calcular (rede + polígono já
+// cadastrados) pros DMCs já existentes, sem precisar subir nenhum arquivo de novo.
+async function recalcularExtensaoRedeManual(cidadeId) {
+  toast('🔄 Recalculando extensão de rede...');
+  const { atualizados, total } = await recalcularExtensaoRedeCidade(cidadeId);
+  if (!total) { toast('Nenhum DMC cadastrado nessa cidade ainda'); return; }
+  toast(atualizados
+    ? `✓ Extensão recalculada para ${atualizados} de ${total} DMC(s)`
+    : 'Nenhum DMC tem rede + polígono cadastrados ainda — extensão continua aproximada');
+  renderDMCsEditaveis(cidadeId);
 }
 
 // Liga/desliga a visibilidade — decisão 100% local deste dispositivo (localStorage),
@@ -5374,6 +5613,9 @@ function renderManage() {
           <div style="display:flex;flex-direction:column;gap:5px" id="dmcs-list-${c.id}"></div>
           <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarDMCManual('${c.id}')">
             <i class="ti ti-plus"></i> Adicionar DMC manualmente
+          </button>
+          <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="recalcularExtensaoRedeManual('${c.id}')" title="Recalcula a extensão real (rede recortada pelo polígono do DMC) pros DMCs que já têm os dois arquivos cadastrados">
+            <i class="ti ti-ruler-2"></i> Recalcular extensão de rede
           </button>
         </div>
       </div>`;

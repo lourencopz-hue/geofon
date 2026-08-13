@@ -2380,7 +2380,7 @@ function sincronizarDMCsCidade(geojson, cidadeId) {
   const c = S.cidades.find(c => c.id === cidadeId);
   if (!c) return;
   let mudou = false;
-  lista.forEach(n => { if (!c.dmcs.some(d => d.nome === n)) { c.dmcs.push(normalizarDMC(n)); mudou = true; } });
+  lista.forEach(n => { if (!c.dmcs.some(d => nomesDMCBatem(d.nome, n))) { c.dmcs.push(normalizarDMC(n)); mudou = true; } });
   // Só avisa quando REALMENTE adicionou algo novo — antes, o toast disparava toda vez
   // que essa checagem rodava (inclusive no carregamento automático da geometria em
   // segundo plano pra detecção por coordenada), mesmo quando os DMCs já existiam todos
@@ -4133,7 +4133,8 @@ async function confirmarQuick() {
   // mais visível lá, mas o problema valia pra qualquer cidade).
   // O DMC detectado por polígono só é usado se realmente existir na lista de DMCs
   // dessa cidade (a propriedade do KML pode não bater 100% com o nome cadastrado).
-  const dmcPorPoligono = S._dmcDetectadoPorCoordenada && c?.dmcs.find(d => d.nome === S._dmcDetectadoPorCoordenada) ? S._dmcDetectadoPorCoordenada : null;
+  const dmcCorrespondente = S._dmcDetectadoPorCoordenada && c ? c.dmcs.find(d => nomesDMCBatem(d.nome, S._dmcDetectadoPorCoordenada)) : null;
+  const dmcPorPoligono = dmcCorrespondente ? dmcCorrespondente.nome : null;
   const dmcPadrao = dmcEscolhido || dmcPorPoligono || S.campanhaAtual?.dmc || DMC_SEM_DMC;
   const temFoto = !!S.quickPhotoBase64;
 
@@ -5008,7 +5009,7 @@ async function encontrarPoligonoDMC(cidadeId, dmcNome) {
       if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) continue;
       const p = ft.properties || {};
       const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
-      if (nome && normTxt(nome) === normTxt(dmcNome)) return ft;
+      if (nome && nomesDMCBatem(nome, dmcNome)) return ft;
     }
   }
   return null;
@@ -5802,19 +5803,23 @@ async function detectarEMesclarDMCsDuplicados() {
   let totalMesclados = 0;
   const relatorio = [];
   for (const c of S.cidades) {
-    const grupos = new Map(); // nomeNormalizado -> [DMCs]
+    const grupos = new Map(); // nomeBase -> [DMCs]
     c.dmcs.forEach(d => {
       if (d.nome === DMC_SEM_DMC) return;
-      const chave = normTxt(d.nome);
+      // Agrupa pelo nome BASE (sem o prefixo tipo "TVO-DMC-") — antes agrupava pelo nome
+      // exato, e por isso não detectava "Morro Chato" (vindo da planilha) e
+      // "TVO-DMC-Morro Chato" (vindo do contorno em KML) como o mesmo DMC.
+      const chave = nomeBaseDMC(d.nome) || normTxt(d.nome);
       if (!grupos.has(chave)) grupos.set(chave, []);
       grupos.get(chave).push(d);
     });
     let cidadeMudou = false;
     for (const [, grupo] of grupos) {
       if (grupo.length < 2) continue;
-      // Escolhe o "sobrevivente": prioriza quem tem sigla preenchida, depois quem tem
-      // mais campos preenchidos no total (ligações, situação, extensão).
-      const pontuar = d => (d.sigla?2:0) + (d.ligacoes!=null?1:0) + (d.situacao?1:0) + (d.extensaoRede!=null?1:0);
+      // Escolhe o "sobrevivente": prioriza nome mais "limpo" (sem prefixo tipo
+      // "TVO-DMC-", mais legível pra equipe de campo), depois sigla preenchida, depois
+      // quem tem mais campos preenchidos no total.
+      const pontuar = d => (nomeBaseDMC(d.nome)===normTxt(d.nome)?3:0) + (d.sigla?2:0) + (d.ligacoes!=null?1:0) + (d.situacao?1:0) + (d.extensaoRede!=null?1:0);
       const ordenado = [...grupo].sort((a,b) => pontuar(b)-pontuar(a));
       const sobrevivente = ordenado[0];
       const duplicados = ordenado.slice(1);
@@ -5870,6 +5875,25 @@ async function adicionarDMCManual(cidadeId) {
 // pra achar a coluna certa no cabeçalho quanto pra casar município/DMC com o que já
 // existe no app, sem se importar com maiúscula/minúscula ou espaço sobrando.
 function normTxt(v) { return (v==null ? '' : String(v)).trim().toUpperCase(); }
+
+// Nomes de DMC chegam em dois formatos bem diferentes dependendo da origem: a planilha
+// traz o nome "limpo" (ex.: "Morro Chato"), mas o KML de contorno costuma vir com o
+// nome completo da camada (ex.: "TVO-DMC-Morro Chato"). Sem tratar isso, o app cadastrava
+// o MESMO DMC duas vezes — um vindo de cada fonte, sem nunca se reconhecerem como o
+// mesmo — e a extensão calculada pelo recorte da rede nunca achava o polígono certo pra
+// vincular ao DMC "limpo" da planilha, porque a comparação era sempre exata.
+// nomeBaseDMC tira esse prefixo (sigla + "DMC" + separadores) pra sobrar só o nome do
+// DMC em si, o que permite comparar os dois formatos como sendo a mesma coisa.
+function nomeBaseDMC(nome) {
+  return normTxt(nome).replace(/^[A-ZÀ-Ú]{2,5}[\s\-_]*DMC[\s\-_]*/, '').trim();
+}
+function nomesDMCBatem(a, b) {
+  const na = normTxt(a), nb = normTxt(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const ba = nomeBaseDMC(a), bb = nomeBaseDMC(b);
+  return (ba && ba === nb) || (bb && bb === na) || (ba && ba === bb);
+}
 
 // Acha o índice da coluna cujo cabeçalho contém um dos textos candidatos (comparação
 // tolerante a espaço/maiúscula — o arquivo real tinha, por exemplo, "Ligações " com
@@ -6058,7 +6082,7 @@ async function processarPlanilhaDMCs(wb) {
     // do já existente, só porque a sigla nunca batia (estava sempre em branco).
     let dmc = c.dmcs.find(d => d.sigla && normTxt(d.sigla) === normTxt(siglaDMC));
     if (!dmc && nomeDMCPlanilha) {
-      dmc = c.dmcs.find(d => d.nome !== DMC_SEM_DMC && normTxt(d.nome) === normTxt(nomeDMCPlanilha));
+      dmc = c.dmcs.find(d => d.nome !== DMC_SEM_DMC && nomesDMCBatem(d.nome, nomeDMCPlanilha));
       // Achou por nome, não por sigla — "cura" o cadastro preenchendo a sigla que
       // faltava, pra da próxima vez casar direto por ela (mais estável que nome).
       if (dmc && !dmc.sigla) dmc.sigla = siglaDMC;

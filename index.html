@@ -4574,8 +4574,23 @@ async function confirmarCidadeCamada() {
 
 function detectCidadeFromName(nome) {
   const n = nome.toLowerCase();
+  // Separa o nome do arquivo em "pedaços" (por -, _, espaço, ponto etc.) — assim dá
+  // pra comparar o PREFIXO como um pedaço inteiro, não uma substring qualquer.
+  const segmentos = n.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+  // 1) Prioridade: um segmento que bate EXATO com o prefixo da cidade (ex.: "tvo" em
+  // "TVO-DMC-São_Braz.kml"). É a forma mais confiável — prefixo é sempre único por
+  // cidade, ao contrário do nome, que pode compartilhar palavras com outras cidades.
   for (const c of S.cidades) {
-    if (n.includes(c.prefixo.toLowerCase()) || n.includes(c.nome.toLowerCase().split(' ')[0])) return c.id;
+    if (segmentos.includes(c.prefixo.toLowerCase())) return c.id;
+  }
+  // 2) Fallback: nome COMPLETO da cidade aparecendo no arquivo — não só a primeira
+  // palavra. Usar só a primeira palavra causava colisão real: um arquivo de Turvo
+  // com um trecho chamado "São Braz" batia com "São José do Cerrito" só por causa do
+  // "São" em comum, mesmo o prefixo "TVO" estando bem ali no nome do arquivo. Nome
+  // inteiro é bem mais específico e evita esse tipo de falso positivo.
+  for (const c of S.cidades) {
+    if (n.includes(c.nome.toLowerCase())) return c.id;
   }
   return '';
 }

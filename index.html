@@ -1067,6 +1067,26 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<div class="modal-overlay" id="modal-remover-dmc-kml">
+  <div class="modal" style="max-width:400px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Este DMC tem uma camada de KML vinculada</h3>
+    <p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px">
+      "<b id="remover-dmc-nome"></b>" tem um polígono de KML vinculado a ele. Se você remover só o cadastro do DMC, o app pode <b>recriar ele sozinho</b> na próxima vez que essa camada for sincronizada — porque o polígono continua existindo, só o registro do DMC é que sumiu.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn danger" style="justify-content:center" onclick="removerDMCEcamada()">
+        <i class="ti ti-trash"></i> Remover DMC e a camada de KML (recomendado)
+      </button>
+      <button class="btn" style="justify-content:center" onclick="removerApenasDMC()">
+        Remover só o cadastro (pode voltar a aparecer)
+      </button>
+      <button class="btn" style="justify-content:center;background:var(--bg2)" onclick="closeModal('modal-remover-dmc-kml')">
+        Cancelar
+      </button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-os">
   <div class="modal" style="max-width:380px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:4px">Autorização de Serviço (AS)</h3>
@@ -1078,14 +1098,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </label>
 
     <div class="field">
-      <label>Data/hora da abertura (opcional)</label>
-      <input type="text" id="os-datahora" placeholder="Só números — ex: 140820261030" maxlength="17" oninput="mascaraDataHoraOS(this)" style="font-family:monospace">
-      <p style="font-size:10px;color:var(--text2);margin-top:3px">Não precisa digitar barra nem dois-pontos — o app formata sozinho.</p>
-    </div>
-    <div class="field">
-      <label>Matrícula (opcional)</label>
-      <input type="text" id="os-matricula" placeholder="Ex: 1234" maxlength="6" inputmode="numeric" style="font-family:monospace">
-      <p style="font-size:10px;color:var(--text2);margin-top:3px">Preenchido com zeros à esquerda até completar 6 dígitos.</p>
+      <label>Número da AS (opcional)</label>
+      <input type="text" id="os-numero" placeholder="Só números — ex: 14082026103000123" maxlength="21" oninput="mascaraNumeroOS(this)" style="font-family:monospace">
+      <p style="font-size:10px;color:var(--text2);margin-top:3px">Data, hora e matrícula em sequência — não precisa digitar barra nem dois-pontos, o app formata sozinho. Matrícula completa sozinha com zeros à esquerda.</p>
     </div>
 
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -1390,13 +1405,16 @@ const DMC_SEM_DMC = 'Sem DMC';
 // funcionando sem precisar de uma migração manual separada.
 function normalizarDMC(d) {
   if (typeof d === 'string') {
-    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null };
+    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null };
   }
   return {
     nome: d.nome || '', sigla: d.sigla || '', ligacoes: (d.ligacoes ?? null),
     situacao: d.situacao || null, extensaoRede: (d.extensaoRede ?? null),
     extensaoPercorrida: (d.extensaoPercorrida ?? null), codigoGis: (d.codigoGis ?? null),
-    ultimaAtualizacao: d.ultimaAtualizacao || null
+    ultimaAtualizacao: d.ultimaAtualizacao || null,
+    // Cor do contorno no mapa — sobrescreve a cor original do arquivo KML, sem precisar
+    // editar/reexportar a curva. null = mantém a cor que veio do arquivo, como sempre foi.
+    corPersonalizada: d.corPersonalizada || null
   };
 }
 // Normaliza todos os DMCs de uma cidade e garante que "Sem DMC" sempre exista nela.
@@ -3845,6 +3863,16 @@ async function salvarPonto() {
   const geofoneId = document.getElementById('reg-geofone').value;
   if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
 
+  // Bloqueia salvar sem nenhuma foto — nem a que já existia (do registro rápido) nem
+  // uma nova tirada agora aqui em "Registrar". Pedido explícito: todo ponto precisa
+  // de pelo menos 1 foto antes de ser considerado registrado/completo.
+  const temFotosNovas0 = S.photosBase64 && S.photosBase64.length > 0;
+  const temFotosExistentes0 = S._pontoEmEdicao.fotosUrls && S._pontoEmEdicao.fotosUrls.length > 0;
+  if (!temFotosNovas0 && !temFotosExistentes0) {
+    toast('📷 Adicione pelo menos uma foto antes de salvar');
+    return;
+  }
+
   const id = S._pontoEmEdicao.id;
   const tipoObj = S.tiposVazamento.find(t => t.id === tipoId);
   const servicoObj = S.servicos.find(s => s.id === servicoId);
@@ -4108,6 +4136,16 @@ async function confirmarQuick() {
   if (!cid) { toast('Selecione a cidade'); return; }
   if (!eqId) { toast('Selecione a equipe'); return; }
   if (!S.pos) { toast('Aguardando GPS...'); return; }
+
+  // Bloqueia registrar sem nenhuma foto — tanto a foto única do registro rápido quanto
+  // as fotos do modo completo contam. Pedido explícito: todo ponto (rápido ou completo)
+  // precisa de pelo menos 1 foto antes de gravar.
+  const temFotoQuick = !!S.quickPhotoBase64;
+  const temFotosCompleto = S.photosBase64 && S.photosBase64.length > 0;
+  if (!temFotoQuick && !temFotosCompleto) {
+    toast('📷 Adicione pelo menos uma foto antes de registrar');
+    return;
+  }
 
   // Se o modo completo estiver ativo, exige tipo de vazamento (igual ao formulário completo)
   let tipoId = '', servicoId = '', dmcEscolhido = '', diamCompleto = null, ruaCompleto = '';
@@ -4454,21 +4492,25 @@ function abrirModalOS(leakId) {
   S._osLeakId = leakId;
   document.getElementById('os-leak-id').textContent = leakId;
   document.getElementById('os-aberta-check').checked = !!l.osAberta;
-  document.getElementById('os-datahora').value = l.osDataHora || '';
-  document.getElementById('os-matricula').value = l.osMatricula || '';
+  // Compatibilidade com pontos salvos antes da junção dos campos (tinha data/hora e
+  // matrícula separados) — mostra os dois juntos, do jeito que ficariam agora.
+  const numeroExibicao = l.osNumero || [l.osDataHora, l.osMatricula].filter(Boolean).join(' ');
+  document.getElementById('os-numero').value = numeroExibicao;
   openModal('modal-os');
 }
 
-// Formata progressivamente enquanto digita, sem exigir barra/dois-pontos: 12 dígitos
-// (DDMMAAAAHHMM) viram "DD/MM/AAAA HH:MM" na tela, aceitando preenchimento parcial.
-function mascaraDataHoraOS(el) {
-  const digitos = el.value.replace(/\D/g,'').slice(0,12);
+// Formata progressivamente enquanto digita, sem exigir barra/dois-pontos/espaço: os 18
+// dígitos possíveis são 8 (data) + 4 (hora) + 6 (matrícula), em sequência — é tudo um
+// número de protocolo só, a matrícula é literalmente o final dele, não um dado separado.
+function mascaraNumeroOS(el) {
+  const digitos = el.value.replace(/\D/g,'').slice(0,18);
   let formatado = '';
   if (digitos.length > 0) formatado += digitos.slice(0,2);
   if (digitos.length > 2) formatado += '/' + digitos.slice(2,4);
   if (digitos.length > 4) formatado += '/' + digitos.slice(4,8);
   if (digitos.length > 8) formatado += ' ' + digitos.slice(8,10);
   if (digitos.length > 10) formatado += ':' + digitos.slice(10,12);
+  if (digitos.length > 12) formatado += ' ' + digitos.slice(12,18);
   el.value = formatado;
 }
 
@@ -4476,22 +4518,33 @@ async function salvarOS() {
   const leakId = S._osLeakId;
   if (!leakId) return;
   const aberta = document.getElementById('os-aberta-check').checked;
-  const dataHora = document.getElementById('os-datahora').value.trim();
-  let matricula = document.getElementById('os-matricula').value.replace(/\D/g,'');
-  // Zeros à esquerda até completar 6 dígitos — só se algo foi digitado; campo vazio
-  // continua vazio (é opcional, não vira "000000" à toa).
-  if (matricula) matricula = matricula.padStart(6, '0');
+  const digitos = document.getElementById('os-numero').value.replace(/\D/g,'').slice(0,18);
+  let numeroOS = '';
+  if (digitos) {
+    const dataHoraDigitos = digitos.slice(0,12);
+    // Zeros à esquerda na matrícula (últimos até 6 dígitos) só na hora de salvar — fazer
+    // isso enquanto ainda está digitando ficaria estranho (completaria com zero no meio
+    // da digitação).
+    let matriculaDigitos = digitos.slice(12,18);
+    if (matriculaDigitos) matriculaDigitos = matriculaDigitos.padStart(6,'0');
+    if (dataHoraDigitos.length > 0) numeroOS += dataHoraDigitos.slice(0,2);
+    if (dataHoraDigitos.length > 2) numeroOS += '/' + dataHoraDigitos.slice(2,4);
+    if (dataHoraDigitos.length > 4) numeroOS += '/' + dataHoraDigitos.slice(4,8);
+    if (dataHoraDigitos.length > 8) numeroOS += ' ' + dataHoraDigitos.slice(8,10);
+    if (dataHoraDigitos.length > 10) numeroOS += ':' + dataHoraDigitos.slice(10,12);
+    if (matriculaDigitos) numeroOS += ' ' + matriculaDigitos;
+  }
 
   try {
     await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',leakId), {
-      osAberta: aberta, osDataHora: dataHora, osMatricula: matricula
+      osAberta: aberta, osNumero: numeroOS
     }, { merge:true });
   } catch(err) {
     toast('⚠️ Erro ao salvar: ' + (err.code || err.message || err));
     return;
   }
   const l = S.leaks.find(l => l.id === leakId);
-  if (l) { l.osAberta = aberta; l.osDataHora = dataHora; l.osMatricula = matricula; }
+  if (l) { l.osAberta = aberta; l.osNumero = numeroOS; delete l.osDataHora; delete l.osMatricula; }
   closeModal('modal-os');
   renderLeakList();
   toast(aberta ? '✓ AS marcada como aberta' : 'AS desmarcada');
@@ -4821,16 +4874,23 @@ async function buscarGeometriaBruta(camadaId, silencioso) {
   }
 }
 
-// Resolve a cor final de uma feature ao desenhar: prioriza a regra de cor-por-diâmetro
-// (configurável em Configurações → Cores da rede por diâmetro) sobre a cor original do
-// KML — assim, quem já cadastrou o diâmetro corretamente na pasta do KML (ex.: "T_50")
-// não precisa mais acertar a cor manualmente no AutoCAD/Civil3D antes de exportar.
-// Só se aplica a "redes" — DMC não tem diâmetro, então segue sempre a cor original/padrão.
-function resolverCorFeature(ft, tipo) {
+// Resolve a cor final de uma feature ao desenhar: pra rede, prioriza a regra de
+// cor-por-diâmetro (Configurações) sobre a cor original do KML. Pra DMC, prioriza a cor
+// personalizada cadastrada em Gestão (por DMC) sobre a cor original do KML — dá pra
+// ajustar sem precisar editar/reexportar o contorno.
+function resolverCorFeature(ft, tipo, item) {
   const p = ft.properties || {};
   if (tipo === 'redes' && p._diametroMm != null) {
     const corRegra = S.coresPorDiametro[String(p._diametroMm)];
     if (corRegra) return corRegra;
+  }
+  if (tipo === 'dmc' && item && item.cidade) {
+    const c = S.cidades.find(c => c.id === item.cidade);
+    if (c) {
+      const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+      const dmc = nome ? c.dmcs.find(d => nomesDMCBatem(d.nome, nome)) : null;
+      if (dmc && dmc.corPersonalizada) return dmc.corPersonalizada;
+    }
   }
   return p._corKml || null;
 }
@@ -4839,26 +4899,28 @@ function resolverCorFeature(ft, tipo) {
 // via onSnapshot) — reaplica o estilo em TODAS as camadas de rede já desenhadas nos
 // mapas, sem precisar recarregar a geometria (só troca a cor de cada trecho na hora).
 function redesenharCamadasComCorAtualizada() {
-  (S.leafletLayers.redes || []).forEach(item => {
-    if (!item._geojson) return;
-    const corPadrao = LAYER_STYLE.redes;
-    const aplicarEstilo = (lg) => {
-      if (!lg) return;
-      lg.eachLayer(layer => {
-        // A camada de rede agora pode vir embrulhada num grupo junto com as linhas de
-        // toque invisíveis (ver criarLayer) — precisa entrar recursivamente pra achar
-        // os trechos de verdade (que têm .feature); as linhas de toque não têm .feature
-        // de propósito, então são ignoradas aqui (nunca precisam de cor, são invisíveis).
-        if (layer.eachLayer) { aplicarEstilo(layer); return; }
-        const ft = layer.feature;
-        if (!ft) return;
-        const cor = resolverCorFeature(ft, 'redes');
-        const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
-        if (layer.setStyle) layer.setStyle(estilo);
-      });
-    };
-    aplicarEstilo(item.lgField);
-    aplicarEstilo(item.lgPC);
+  ['redes','dmc'].forEach(tipo => {
+    (S.leafletLayers[tipo] || []).forEach(item => {
+      if (!item._geojson) return;
+      const corPadrao = LAYER_STYLE[tipo];
+      const aplicarEstilo = (lg) => {
+        if (!lg) return;
+        lg.eachLayer(layer => {
+          // A camada de rede agora pode vir embrulhada num grupo junto com as linhas de
+          // toque invisíveis (ver criarLayer) — precisa entrar recursivamente pra achar
+          // os trechos de verdade (que têm .feature); as linhas de toque não têm .feature
+          // de propósito, então são ignoradas aqui (nunca precisam de cor, são invisíveis).
+          if (layer.eachLayer) { aplicarEstilo(layer); return; }
+          const ft = layer.feature;
+          if (!ft) return;
+          const cor = resolverCorFeature(ft, tipo, item);
+          const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
+          if (layer.setStyle) layer.setStyle(estilo);
+        });
+      };
+      aplicarEstilo(item.lgField);
+      aplicarEstilo(item.lgPC);
+    });
   });
 }
 
@@ -4900,11 +4962,11 @@ async function carregarGeometriaCamada(tipo, camadaId) {
       const grupoVisivel = L.geoJSON(geojson, {
         pane: nomePane,
         style: (ft) => {
-          const cor = resolverCorFeature(ft, tipo);
+          const cor = resolverCorFeature(ft, tipo, item);
           return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
         },
         pointToLayer: (ft, ll) => {
-          const cor = resolverCorFeature(ft, tipo);
+          const cor = resolverCorFeature(ft, tipo, item);
           const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
           return L.circleMarker(ll, { radius:5, pane: nomePane, ...estilo });
         },
@@ -4914,7 +4976,12 @@ async function carregarGeometriaCamada(tipo, camadaId) {
           // Se o diâmetro foi identificado (pasta do KML tipo "T_50"), mostra no popup —
           // ajuda a conferir se a extração/regra de cor bateu certo com o trecho certo.
           const diamTxt = p._diametroMm ? ` <small>(DN/DE ${p._diametroMm}mm)</small>` : '';
-          const popupTxt = (lbl || diamTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt) : null;
+          // Mostra a cidade a que essa camada está vinculada — ajuda a pegar rápido um
+          // arquivo que foi associado à cidade errada (ex.: rede de Braço do Norte
+          // aparecendo dentro de Criciúma), sem precisar ir procurar na Gestão.
+          const cidadeVinculada = S.cidades.find(c => c.id === item.cidade);
+          const cidadeTxt = cidadeVinculada ? `<br><small style="color:#888">Cidade: ${cidadeVinculada.nome}</small>` : '';
+          const popupTxt = (lbl || diamTxt || cidadeTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt+cidadeTxt) : null;
           if (popupTxt) layer.bindPopup(popupTxt);
 
           if (tipo === 'redes' && ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type) && layer.getLatLngs) {
@@ -5749,7 +5816,7 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
           ${SITUACOES_DMC.map(s => `<option value="${s}" ${d.situacao===s?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
-      <div style="display:flex;gap:10px;font-size:10.5px;color:var(--text2)">
+      <div style="display:flex;gap:10px;font-size:10.5px;color:var(--text2);align-items:center;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:4px">Ligações:
           <input type="number" value="${d.ligacoes ?? ''}" placeholder="—" onchange="editarCampoDMC('${cidadeId}',${i},'ligacoes',this.value?Number(this.value):null)"
             style="width:64px;padding:3px 5px;font-size:11px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
@@ -5757,6 +5824,12 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
         <span title="Extensão real da rede — calculada a partir da camada de Rede recortada pelo polígono do DMC (em breve); até lá, é aproximada pela extensão percorrida em campanhas.">
           Extensão: ${d.extensaoRede ? d.extensaoRede.toLocaleString('pt-BR') + 'm' : (d.extensaoPercorrida ? '~' + Math.round(d.extensaoPercorrida).toLocaleString('pt-BR') + 'm (aprox.)' : '—')}
         </span>
+        <label style="display:flex;align-items:center;gap:4px" title="Cor do contorno deste DMC no mapa — sobrescreve a cor original do KML, sem precisar editar/reexportar a curva">
+          Cor:
+          <div style="width:14px;height:14px;border-radius:3px;border:1px solid var(--border);background:${d.corPersonalizada||'transparent'};flex-shrink:0"></div>
+          <input type="text" value="${d.corPersonalizada||''}" placeholder="padrão do KML" onchange="editarCorDMC('${cidadeId}',${i},this.value)"
+            style="width:100px;padding:3px 5px;font-size:10.5px;font-family:monospace;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+        </label>
       </div>
     </div>`;
   }).join('');
@@ -5785,16 +5858,106 @@ async function editarCampoDMC(cidadeId, idx, campo, valor) {
   document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
 }
 
+// Cor personalizada do contorno de um DMC — mesmo formato aceito nas cores por
+// diâmetro (hex ou "R,G,B"), pra ficar consistente e não depender do seletor nativo de
+// cor do navegador (que se comporta diferente em cada aparelho).
+async function editarCorDMC(cidadeId, idx, corDigitada) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c || !c.dmcs[idx]) return;
+  if (!corDigitada.trim()) {
+    c.dmcs[idx].corPersonalizada = null;
+    await salvarCidadeFirestore(c);
+    renderDMCsEditaveis(cidadeId);
+    redesenharCamadasComCorAtualizada();
+    toast('Cor personalizada removida — volta a usar a cor do KML');
+    return;
+  }
+  const cor = normalizarCorEntrada(corDigitada);
+  if (!cor) { toast('Cor inválida — use #RRGGBB (ex: #FF00FF) ou RGB (ex: 255,0,255)'); renderDMCsEditaveis(cidadeId); return; }
+  c.dmcs[idx].corPersonalizada = cor;
+  await salvarCidadeFirestore(c);
+  renderDMCsEditaveis(cidadeId);
+  redesenharCamadasComCorAtualizada();
+  toast('Cor do DMC atualizada');
+}
+
 async function removerDMC(cidadeId, idx) {
   const c = S.cidades.find(c => c.id === cidadeId);
   if (!c) return;
-  if (c.dmcs[idx].nome === DMC_SEM_DMC) { toast('"Sem DMC" é uma região fixa do sistema e não pode ser removida'); return; }
-  if (!confirm('Remover "' + c.dmcs[idx].nome + '" da lista? Vazamentos já registrados com esse DMC não serão alterados.')) return;
+  const dmc = c.dmcs[idx];
+  if (dmc.nome === DMC_SEM_DMC) { toast('"Sem DMC" é uma região fixa do sistema e não pode ser removida'); return; }
+
+  // Procura se existe uma camada de KML com um polígono vinculado a este DMC — se tiver
+  // e a gente só remover o cadastro, a sincronização automática (sincronizarDMCsCidade)
+  // vai recriar o DMC sozinha na próxima vez que essa camada for carregada, porque o
+  // polígono continua existindo. Isso é exatamente o bug relatado: "o DMC volta a
+  // aparecer depois". Por isso, avisa e oferece remover a camada também.
+  const poligonoVinculado = await encontrarPoligonoDMC(cidadeId, dmc.nome);
+  if (poligonoVinculado) {
+    S._dmcParaRemover = { cidadeId, idx };
+    document.getElementById('remover-dmc-nome').textContent = dmc.nome;
+    openModal('modal-remover-dmc-kml');
+    return;
+  }
+
+  if (!confirm('Remover "' + dmc.nome + '" da lista? Vazamentos já registrados com esse DMC não serão alterados.')) return;
   c.dmcs.splice(idx, 1);
   await salvarCidadeFirestore(c);
   renderDMCsEditaveis(cidadeId);
   document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
   toast('DMC removido da lista');
+}
+
+// Opção 1 do modal: remove só o cadastro do DMC, avisando explicitamente que ele pode
+// voltar a aparecer sozinho (a pessoa decide correr esse risco conscientemente).
+async function removerApenasDMC() {
+  const { cidadeId, idx } = S._dmcParaRemover || {};
+  if (!cidadeId) return;
+  closeModal('modal-remover-dmc-kml');
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  const nome = c.dmcs[idx]?.nome;
+  c.dmcs.splice(idx, 1);
+  await salvarCidadeFirestore(c);
+  renderDMCsEditaveis(cidadeId);
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
+  toast('DMC removido — atenção: como a camada de KML continua existindo, "' + nome + '" pode voltar a aparecer sozinho se essa camada for recarregada');
+}
+
+// Opção 2 do modal: remove o DMC E a camada de KML vinculada (marca removida:true na
+// camada, igual ao "Remover" de qualquer outra camada) — essa é a remoção "definitiva".
+async function removerDMCEcamada() {
+  const { cidadeId, idx } = S._dmcParaRemover || {};
+  if (!cidadeId) return;
+  closeModal('modal-remover-dmc-kml');
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  const dmc = c.dmcs[idx];
+  if (!dmc) return;
+
+  // Acha e remove (marca removida) TODAS as camadas de DMC dessa cidade que tenham um
+  // polígono batendo com esse nome — pode ter mais de uma em casos raros.
+  const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
+  for (const item of camadas) {
+    await garantirGeometriaCarregada(item);
+    if (!item._geojson || !item._geojson.features) continue;
+    const bate = item._geojson.features.some(ft => {
+      if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) return false;
+      const p = ft.properties || {};
+      const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+      return nome && nomesDMCBatem(nome, dmc.nome);
+    });
+    if (bate) {
+      await window.FB.setDoc(window.FB.doc(window.FB.db,'camadas',item.id), { removida:true }, { merge:true });
+      removerGeometriaDoMapa(item);
+    }
+  }
+
+  c.dmcs.splice(idx, 1);
+  await salvarCidadeFirestore(c);
+  renderDMCsEditaveis(cidadeId);
+  document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
+  toast('DMC e camada de KML removidos');
 }
 
 // Detecta e mescla DMCs duplicados (mesmo nome, cadastrados 2x — normalmente porque um

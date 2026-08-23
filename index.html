@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif}
@@ -516,9 +517,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             </div>
             <div class="field">
               <label>Código do serviço <span style="color:var(--text3);font-weight:400">(sugerido pelo tipo, pode trocar)</span></label>
-              <select id="reg-servico">
+              <select id="reg-servico" onchange="atualizarCampoHD('reg')">
                 <option value="">Selecione o serviço...</option>
               </select>
+            </div>
+            <div class="field hidden" id="reg-hd-wrap">
+              <label>Número do HD <span style="color:var(--text3);font-weight:400">(código + número, sem "CASAN" — ex: Z25LN0008455)</span></label>
+              <div style="display:flex;gap:6px">
+                <input type="text" id="reg-hd-numero" placeholder="Ex: Z25LN0008455" style="flex:1;text-transform:uppercase">
+                <button class="btn sm" type="button" onclick="tentarLerNumeroHD('reg')" id="reg-hd-btn"><i class="ti ti-camera"></i> Ler da foto</button>
+              </div>
+              <p style="font-size:10px;color:var(--text2);margin-top:3px">Dica: uma foto de close bem enquadrada na etiqueta lê muito melhor que uma foto de contexto mais aberta.</p>
             </div>
             <div class="field">
               <label>Severidade</label>
@@ -1072,9 +1081,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </div>
       <div class="field">
         <label>Código do serviço <span style="color:var(--text3);font-weight:400">(sugerido pelo tipo)</span></label>
-        <select id="quick-servico">
+        <select id="quick-servico" onchange="atualizarCampoHD('quick')">
           <option value="">Selecione o serviço...</option>
         </select>
+      </div>
+      <div class="field hidden" id="quick-hd-wrap">
+        <label>Número do HD <span style="color:var(--text3);font-weight:400">(código + número, sem "CASAN" — ex: Z25LN0008455)</span></label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="quick-hd-numero" placeholder="Ex: Z25LN0008455" style="flex:1;text-transform:uppercase">
+          <button class="btn sm" type="button" onclick="tentarLerNumeroHD('quick')" id="quick-hd-btn"><i class="ti ti-camera"></i> Ler da foto</button>
+        </div>
+        <p style="font-size:10px;color:var(--text2);margin-top:3px">Dica: uma foto de close bem enquadrada na etiqueta lê muito melhor que uma foto de contexto mais aberta.</p>
       </div>
       <div class="field">
         <label>Diâmetro estimado (mm)</label>
@@ -1129,6 +1146,20 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn" style="flex:1;justify-content:center" onclick="closeModal('modal-escolher-coord')">Cancelar</button>
       <button class="btn primary" style="flex:1;justify-content:center" onclick="confirmarCoordenadaEscolhida()">Usar esta coordenada</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-recorte-hd">
+  <div class="modal" style="max-width:420px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px">Não consegui ler automaticamente</h3>
+    <p style="font-size:11.5px;color:var(--text2);margin-bottom:10px">Arraste um retângulo em volta só do número, pra tentar de novo com mais precisão.</p>
+    <div style="overflow:auto;max-width:100%;border:1px solid var(--border);border-radius:var(--radius)">
+      <canvas id="canvas-recorte-hd" style="max-width:100%;touch-action:none;cursor:crosshair;display:block"></canvas>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" style="flex:1;justify-content:center" onclick="closeModal('modal-recorte-hd')">Cancelar</button>
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="confirmarRecorteHD()">Ler recorte</button>
     </div>
   </div>
 </div>
@@ -1950,6 +1981,188 @@ function atualizarServicoSugerido() {
   const tipo = S.tiposVazamento.find(t => t.id === tipoId);
   const selServico = document.getElementById('reg-servico');
   if (tipo && tipo.servicoPadrao && selServico) selServico.value = tipo.servicoPadrao;
+  atualizarCampoHD('reg');
+}
+
+// ================================================================
+// NÚMERO DO HD — só relevante pro serviço 3810 (troca/conserto de hidrômetro). Mostra/
+// esconde o campo conforme o serviço escolhido, e oferece leitura automática do número
+// a partir de uma foto já anexada (OCR local, no navegador, via Tesseract.js — sem
+// depender de nenhum servidor externo).
+// ================================================================
+function servicoEhHD(servicoId) {
+  const s = S.servicos.find(s => s.id === servicoId);
+  return s && s.codigo === '3810';
+}
+
+function atualizarCampoHD(modo) {
+  const selServico = document.getElementById(modo + '-servico');
+  const wrap = document.getElementById(modo + '-hd-wrap');
+  if (!selServico || !wrap) return;
+  wrap.classList.toggle('hidden', !servicoEhHD(selServico.value));
+}
+
+// Tenta extrair o número do HD do texto bruto que o OCR devolveu. O número completo
+// é composto de um código (ex.: "Z25LN") seguido da parte numérica (ex.: "0008455") —
+// "CASAN" nunca faz parte disso, é só o nome da empresa gravado junto na etiqueta.
+// A parte NUMÉRICA só é aceita se sair 100% limpa (só dígitos) — é o pedaço mais fácil
+// de confundir letra com número, então essa exigência evita "corrigir" uma leitura
+// ruim e acabar confiando num número errado sem a pessoa perceber (testei tentar
+// corrigir confusões tipo O→0/S→5 antes, e isso às vezes inventava um número errado
+// com aparência de certo — pior que simplesmente admitir que não achou).
+// Já o código (a linha logo ANTES da numérica) tolera uma limpeza mais leve — tira
+// pontuação/ruído que o OCR costuma grudar em volta (aspas, traços, dois-pontos) — já
+// que ele mistura letra e número por natureza, não dá pra exigir "100% limpo" dele.
+function extrairNumeroHD(textoOcr) {
+  const linhas = (textoOcr || '').split('\n').map(l => l.trim()).filter(Boolean);
+  for (let i = 0; i < linhas.length; i++) {
+    const compactado = linhas[i].replace(/\s+/g, '');
+    if (!/^\d{5,9}$/.test(compactado)) continue;
+    let codigo = '';
+    if (i > 0) {
+      const anteriorLimpo = linhas[i-1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const pareceCodigo = /^[A-Z0-9]{3,8}$/.test(anteriorLimpo) && /[A-Z]/.test(anteriorLimpo) && /[0-9]/.test(anteriorLimpo);
+      if (pareceCodigo && anteriorLimpo !== 'CASAN') codigo = anteriorLimpo;
+    }
+    return codigo + compactado;
+  }
+  return null;
+}
+
+async function reconhecerTextoImagem(base64) {
+  if (typeof Tesseract === 'undefined') { toast('⚠️ Leitor de texto ainda não carregou — tente de novo em alguns segundos'); return null; }
+  const { data } = await Tesseract.recognize(base64, 'eng');
+  return data.text;
+}
+
+// Roda a leitura na(s) foto(s) já anexadas ao ponto (rápido = 1 foto; Registrar = todas
+// as novas + as já existentes do ponto). Se não achar nada plausível em nenhuma, oferece
+// o recorte manual como alternativa — só nesse caso, pra não complicar o fluxo normal.
+async function tentarLerNumeroHD(modo) {
+  const btn = document.getElementById(modo + '-hd-btn');
+  const campoNumero = document.getElementById(modo + '-hd-numero');
+  let fotos = [];
+  if (modo === 'quick') {
+    if (S.quickPhotoBase64) fotos.push(S.quickPhotoBase64);
+  } else {
+    if (S.photosBase64 && S.photosBase64.length) fotos = fotos.concat(S.photosBase64);
+    if (S._pontoEmEdicao && S._pontoEmEdicao.fotosUrls) fotos = fotos.concat(S._pontoEmEdicao.fotosUrls);
+  }
+  if (!fotos.length) { toast('📷 Tire ou anexe uma foto primeiro'); return; }
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Lendo...'; }
+  try {
+    let encontrado = null;
+    for (const foto of fotos) {
+      const texto = await reconhecerTextoImagem(foto);
+      encontrado = extrairNumeroHD(texto);
+      if (encontrado) break;
+    }
+    if (encontrado) {
+      campoNumero.value = encontrado;
+      toast('✓ Número lido: ' + encontrado + ' — confira antes de salvar');
+    } else {
+      toast('Não consegui ler nenhum número — tente uma foto de close só da etiqueta, ou digite manualmente');
+      abrirRecorteHD(modo, fotos[0]);
+    }
+  } catch(err) {
+    console.warn('Erro na leitura de OCR:', err);
+    toast('⚠️ Erro ao ler a foto — pode digitar o número manualmente');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-camera"></i> Ler da foto'; }
+  }
+}
+
+// ================================================================
+// RECORTE MANUAL PARA LEITURA DO HD — só aparece quando a leitura automática (na foto
+// inteira) não acha nada plausível. A pessoa arrasta um retângulo em volta só do
+// número, e a leitura roda de novo, agora só naquele pedaço — muito mais preciso
+// (confirmado em teste: numa foto bem recortada, a leitura saiu perfeita).
+// ================================================================
+let _recorteHD = { modo:null, img:null, escala:1, inicio:null, atual:null, arrastando:false };
+
+function abrirRecorteHD(modo, foto) {
+  _recorteHD.modo = modo;
+  _recorteHD.inicio = null;
+  _recorteHD.atual = null;
+  openModal('modal-recorte-hd');
+  const canvas = document.getElementById('canvas-recorte-hd');
+  const img = new Image();
+  img.crossOrigin = 'anonymous'; // necessário pra poder recortar (canvas) fotos já enviadas ao Storage
+  img.onload = () => {
+    const maxW = 360;
+    const escala = Math.min(1, maxW / img.width);
+    canvas.width = Math.round(img.width * escala);
+    canvas.height = Math.round(img.height * escala);
+    _recorteHD.img = img;
+    _recorteHD.escala = escala;
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  };
+  img.onerror = () => { toast('⚠️ Não consegui carregar a foto pra recortar — digite o número manualmente'); closeModal('modal-recorte-hd'); };
+  img.src = foto;
+
+  canvas.onpointerdown = (e) => {
+    const r = canvas.getBoundingClientRect();
+    _recorteHD.inicio = { x: e.clientX - r.left, y: e.clientY - r.top };
+    _recorteHD.arrastando = true;
+  };
+  canvas.onpointermove = (e) => {
+    if (!_recorteHD.arrastando) return;
+    const r = canvas.getBoundingClientRect();
+    _recorteHD.atual = { x: e.clientX - r.left, y: e.clientY - r.top };
+    redesenharRecorteHD();
+  };
+  canvas.onpointerup = () => { _recorteHD.arrastando = false; };
+  canvas.onpointerleave = () => { _recorteHD.arrastando = false; };
+}
+
+function redesenharRecorteHD() {
+  const canvas = document.getElementById('canvas-recorte-hd');
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(_recorteHD.img, 0, 0, canvas.width, canvas.height);
+  if (_recorteHD.inicio && _recorteHD.atual) {
+    ctx.strokeStyle = '#FF3B30';
+    ctx.lineWidth = 2;
+    const x = Math.min(_recorteHD.inicio.x, _recorteHD.atual.x);
+    const y = Math.min(_recorteHD.inicio.y, _recorteHD.atual.y);
+    const w = Math.abs(_recorteHD.atual.x - _recorteHD.inicio.x);
+    const h = Math.abs(_recorteHD.atual.y - _recorteHD.inicio.y);
+    ctx.strokeRect(x, y, w, h);
+  }
+}
+
+async function confirmarRecorteHD() {
+  if (!_recorteHD.inicio || !_recorteHD.atual) { toast('Arraste um retângulo em volta do número primeiro'); return; }
+  const escala = _recorteHD.escala;
+  const x = Math.min(_recorteHD.inicio.x, _recorteHD.atual.x) / escala;
+  const y = Math.min(_recorteHD.inicio.y, _recorteHD.atual.y) / escala;
+  const w = Math.abs(_recorteHD.atual.x - _recorteHD.inicio.x) / escala;
+  const h = Math.abs(_recorteHD.atual.y - _recorteHD.inicio.y) / escala;
+  if (w < 5 || h < 5) { toast('Área muito pequena — tente de novo'); return; }
+
+  let base64Recorte;
+  try {
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = w; cropCanvas.height = h;
+    cropCanvas.getContext('2d').drawImage(_recorteHD.img, x, y, w, h, 0, 0, w, h);
+    base64Recorte = cropCanvas.toDataURL('image/jpeg', 0.92);
+  } catch(err) {
+    // "Tainted canvas" acontece se a foto veio de uma URL sem permissão de CORS
+    // liberada no Storage — nesse caso não dá pra recortar, só digitar na mão mesmo.
+    toast('⚠️ Não consegui recortar essa foto — digite o número manualmente');
+    return;
+  }
+
+  toast('Lendo recorte...');
+  const texto = await reconhecerTextoImagem(base64Recorte);
+  const numero = extrairNumeroHD(texto);
+  if (numero) {
+    document.getElementById(_recorteHD.modo + '-hd-numero').value = numero;
+    toast('✓ Número lido: ' + numero + ' — confira antes de salvar');
+    closeModal('modal-recorte-hd');
+  } else {
+    toast('Ainda não consegui ler esse recorte — tente uma área mais justa, ou digite manualmente');
+  }
 }
 
 // ================================================================
@@ -3902,6 +4115,8 @@ function abrirComplementacao(leakId) {
   if (tipoObj) document.getElementById('reg-tipo').value = tipoObj.id;
   const servicoObj = S.servicos.find(s => l.servico && l.servico.startsWith(s.codigo));
   if (servicoObj) document.getElementById('reg-servico').value = servicoObj.id;
+  document.getElementById('reg-hd-numero').value = l.numeroHD || '';
+  atualizarCampoHD('reg');
 
   document.querySelectorAll('#sev-group .toggle-btn').forEach(b=>b.classList.remove('active'));
   const sevBtn = document.querySelector(`#sev-group .toggle-btn.${l.severidade}`);
@@ -3979,6 +4194,10 @@ async function salvarPonto() {
   const diam = document.getElementById('reg-diam').value;
   const rua = document.getElementById('reg-rua').value.trim();
   const geofoneId = document.getElementById('reg-geofone').value;
+  // Só existe/só importa quando o serviço é 3810 (troca/conserto de hidrômetro) — nos
+  // demais casos o campo fica escondido e não deve ser salvo com lixo de uma seleção
+  // anterior.
+  const numeroHD = servicoEhHD(servicoId) ? (document.getElementById('reg-hd-numero').value.trim().toUpperCase() || null) : null;
   if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
 
   // Bloqueia salvar sem nenhuma foto — nem a que já existia (do registro rápido) nem
@@ -4003,7 +4222,7 @@ async function salvarPonto() {
   const atualizacao = {
     dmc, tipo, servico, severidade: S.sevAtual,
     desc: obs, diam: diam || null, rua: rua || null, geofone: geofoneId || null,
-    pendenteComplementacao: false
+    numeroHD, pendenteComplementacao: false
   };
   await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), atualizacao, { merge:true });
   toast(`✓ Ponto ${id} atualizado!`);
@@ -4174,6 +4393,7 @@ function atualizarServicoSugeridoQuick() {
   const tipo = S.tiposVazamento.find(t => t.id === tipoId);
   const selServico = document.getElementById('quick-servico');
   if (tipo && tipo.servicoPadrao && selServico) selServico.value = tipo.servicoPadrao;
+  atualizarCampoHD('quick');
 }
 
 // Versões genéricas dos populadores de select de tipo/serviço, reaproveitadas
@@ -4212,6 +4432,8 @@ function openRegisterQuick() {
   document.getElementById('quick-diam').value = '';
   document.getElementById('quick-rua').value = '';
   document.getElementById('quick-rua-status').textContent = '';
+  document.getElementById('quick-hd-numero').value = '';
+  document.getElementById('quick-hd-wrap').classList.add('hidden');
   // Permite uma nova sugestão automática de cidade/equipe a cada abertura do modal
   S._cidadeEscolhidaManualmente = false;
   S._dmcEscolhidoManualmente = false;
@@ -4266,7 +4488,7 @@ async function confirmarQuick() {
   }
 
   // Se o modo completo estiver ativo, exige tipo de vazamento (igual ao formulário completo)
-  let tipoId = '', servicoId = '', dmcEscolhido = '', diamCompleto = null, ruaCompleto = '';
+  let tipoId = '', servicoId = '', dmcEscolhido = '', diamCompleto = null, ruaCompleto = '', numeroHD = null;
   if (S._quickModoCompleto) {
     tipoId = document.getElementById('quick-tipo').value;
     if (!tipoId) { toast('Selecione o tipo de vazamento'); return; }
@@ -4274,6 +4496,7 @@ async function confirmarQuick() {
     dmcEscolhido = document.getElementById('quick-dmc').value;
     diamCompleto = document.getElementById('quick-diam').value || null;
     ruaCompleto = document.getElementById('quick-rua').value.trim();
+    numeroHD = servicoEhHD(servicoId) ? (document.getElementById('quick-hd-numero').value.trim().toUpperCase() || null) : null;
   }
 
   const eq = S.equipes.find(e => e.id === eqId);
@@ -4301,7 +4524,7 @@ async function confirmarQuick() {
 
   const leak={
     id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:tipoNome, servico:servicoTexto, severidade:S.sevQuick,
-    lat:S.pos.lat, lng:S.pos.lng, desc, diam:diamCompleto, rua: ruaCompleto || null,
+    lat:S.pos.lat, lng:S.pos.lng, desc, diam:diamCompleto, rua: ruaCompleto || null, numeroHD,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos: temFoto ? 1 : 0,
     fotosUrls: [],

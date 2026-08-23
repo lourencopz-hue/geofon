@@ -639,7 +639,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </select>
       <button class="btn sm primary" onclick="refreshPCMap()"><i class="ti ti-refresh"></i>Atualizar</button>
       <div style="width:1px;background:var(--border);margin:0 2px"></div>
-      <button class="btn sm" onclick="openDMCPanel()" style="position:relative"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
+      <button class="btn sm" onclick="openDMCPanel()" style="position:relative"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge-desktop" class="dmc-pendentes-badge hidden" style="position:absolute;top:-5px;right:-5px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
       <button class="btn sm" onclick="openRedesPanel()"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
     </div>
     <div class="pc-split">
@@ -834,7 +834,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               Escolha quais informações aparecem no popup do mapa (clique num ponto) e como destaque na lista. A foto, quando existir, sempre aparece em destaque.
             </p>
           </div>
+          <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin:2px 0 4px">Popup do mapa</div>
           <div id="config-campos-popup"></div>
+          <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px">Direto em cada item da Lista <span style="font-weight:400;text-transform:none">(sem precisar tocar pra abrir)</span></div>
+          <div id="config-campos-lista"></div>
         </div>
       </div>
       <div class="section">
@@ -1116,7 +1119,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
       <button class="btn sm" id="btn-campanha" onclick="closeModal('modal-mais-opcoes');abrirPainelCampanha()" style="justify-content:flex-start;background:var(--purple-l);border-color:rgba(83,74,183,.25);color:var(--purple)"><i class="ti ti-route" style="color:var(--purple)"></i><span id="btn-campanha-label">Campanha</span></button>
-      <button class="btn sm" onclick="closeModal('modal-mais-opcoes');openDMCPanel()" style="justify-content:flex-start;position:relative;background:var(--blue-l);border-color:rgba(24,95,165,.25);color:var(--blue-d)"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge" class="hidden" style="position:absolute;top:-5px;right:70px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
+      <button class="btn sm" onclick="closeModal('modal-mais-opcoes');openDMCPanel()" style="justify-content:flex-start;position:relative;background:var(--blue-l);border-color:rgba(24,95,165,.25);color:var(--blue-d)"><i class="ti ti-hexagon" style="color:var(--blue)"></i>DMC<span id="dmc-pendentes-badge-mobile" class="dmc-pendentes-badge hidden" style="position:absolute;top:-5px;right:70px;background:var(--amber);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700"></span></button>
       <button class="btn sm" onclick="closeModal('modal-mais-opcoes');openRedesPanel()" style="justify-content:flex-start;background:var(--teal-l);border-color:rgba(15,110,86,.25);color:var(--teal)"><i class="ti ti-line-dashed" style="color:var(--teal)"></i>Redes</button>
     </div>
 
@@ -1461,6 +1464,11 @@ const S = {
   // primeiro (se existir), os demais campos são exibidos na ordem desta lista.
   // Configurável em Configurações → Exibição (renderConfigCamposPopup).
   camposPopup: { data:true, severidade:true, tipo:true, dmc:false, servico:false, desc:false, diam:false, rua:false },
+  // Quais campos aparecem direto em cada item da Lista, sem precisar tocar pra abrir os
+  // detalhes — pensado especialmente pra quem precisa da rua e do código do município
+  // (AS) rapidinho, sem abrir cada ponto um por um. Desligados por padrão pra manter a
+  // lista compacta pra quem não precisa disso.
+  camposLista: { rua:false, codigoAS:false },
   // Quais campos entram na mensagem de WhatsApp enviada ao notificar a equipe.
   // Todos ligados por padrão, para manter o comportamento atual quem já usa o app.
   camposWhatsApp: { rua:true, dmc:true, tipo:true, servico:true, diam:true, severidade:true, equipe:true, obs:true, localizacao:true, data:true },
@@ -1488,7 +1496,7 @@ try {
 // 'nenhum' (padrão — mapa limpo), 'proximos' (só num raio de 800m da posição atual)
 // ou 'todos' (como era antes). Em regiões com muito histórico de pontos, mostrar tudo
 // o tempo todo poluía bastante o mapa em campo. Preferência local por dispositivo.
-S._modoLeaksField = localStorage.getItem('modoLeaksField') || 'nenhum';
+S._modoLeaksField = localStorage.getItem('modoLeaksField') || 'proximos';
 const RAIO_LEAKS_PROXIMOS_M = 800;
 function mudarModoExibicaoLeaksField(modo) {
   S._modoLeaksField = modo;
@@ -1761,6 +1769,7 @@ function iniciarSincronizacaoFirestore() {
       if (dados.org !== undefined) S.config.org = dados.org;
       if (dados.gps !== undefined) S.config.gps = dados.gps;
       if (dados.camposPopup) S.camposPopup = { ...S.camposPopup, ...dados.camposPopup };
+      if (dados.camposLista) S.camposLista = { ...S.camposLista, ...dados.camposLista };
       if (dados.camposWhatsApp) S.camposWhatsApp = { ...S.camposWhatsApp, ...dados.camposWhatsApp };
       if (dados.coresPorDiametro) S.coresPorDiametro = dados.coresPorDiametro;
       const cfgOrgEl = document.getElementById('cfg-org'); if (cfgOrgEl) cfgOrgEl.value = S.config.org || '';
@@ -1769,6 +1778,7 @@ function iniciarSincronizacaoFirestore() {
     // Renderiza sempre — mesmo que o documento ainda não exista no Firestore (1ª vez),
     // os checkboxes aparecem com os valores padrão definidos em S.camposPopup.
     renderConfigCamposPopup();
+    renderConfigCamposLista();
     renderConfigCamposWhatsApp();
     renderConfigCoresPorDiametro();
     // Redesenha os pop-ups dos mapas com a config atualizada — assim a mudança aparece
@@ -1776,6 +1786,7 @@ function iniciarSincronizacaoFirestore() {
     addFieldMarkers();
     refreshPCMap();
     redesenharCamadasComCorAtualizada();
+    renderLeakList();
   });
 
   // Campanhas de geofonamento — sincronizadas em tempo real, para que toda a equipe
@@ -2011,6 +2022,23 @@ async function toggleCampoPopup(campo, valor) {
   // (onSnapshot) recebe essa própria gravação de volta e já cuida de redesenhar os
   // pop-ups dos dois mapas, tanto neste dispositivo quanto em todos os outros conectados.
   toast('Preferência de exibição atualizada');
+}
+
+const CAMPOS_LISTA_LABELS = { rua: 'Rua / endereço', codigoAS: 'Código do município (AS)' };
+function renderConfigCamposLista() {
+  const el = document.getElementById('config-campos-lista');
+  if (!el) return;
+  const cfg = S.camposLista || {};
+  el.innerHTML = Object.entries(CAMPOS_LISTA_LABELS).map(([campo, label]) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+      <input type="checkbox" ${cfg[campo] ? 'checked' : ''} onchange="toggleCampoLista('${campo}', this.checked)" style="width:16px;height:16px;cursor:pointer">
+      ${label}
+    </label>`).join('');
+}
+async function toggleCampoLista(campo, valor) {
+  S.camposLista[campo] = valor;
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposLista: S.camposLista }, { merge:true });
+  toast('Preferência da Lista atualizada');
 }
 
 // Mesma ideia do bloco acima, mas para os campos que entram na MENSAGEM DE WHATSAPP
@@ -3499,6 +3527,13 @@ function popupHtml(l) {
 
   partes.push(`<div style="font-family:monospace;font-weight:700;color:var(--blue);font-size:13px;margin-bottom:4px">${l.id}</div>`);
 
+  // Atalho pra completar direto do mapa — antes só dava pra achar o ponto pendente
+  // pela Lista; clicando nele no mapa (onde geralmente é mais fácil de localizar,
+  // principalmente ao voltar num dia depois) já leva direto pra tela de completar.
+  if (l.pendenteComplementacao || !l.tipo) {
+    partes.push(`<button onclick="irParaCompletarRegistro('${l.id}')" style="display:flex;align-items:center;gap:5px;padding:6px 10px;font-size:11.5px;font-weight:600;border:none;border-radius:6px;background:var(--amber);color:#fff;cursor:pointer;margin-bottom:6px"><i class="ti ti-clipboard-plus" style="font-size:13px"></i> Completar registro</button>`);
+  }
+
   if (l.fotosUrls && l.fotosUrls.length) {
     const fotosData = encodeURIComponent(JSON.stringify(l.fotosUrls));
     if (l.fotosUrls.length === 1) {
@@ -3552,8 +3587,6 @@ function setPCView(btn, view) {
   S.pcView = view;
   refreshPCMap();
 }
-
-function toggleLayerVisibility(tipo) { toast(`Camada ${tipo.toUpperCase()} alternada`); }
 
 // ================================================================
 // ID GENERATION
@@ -3750,12 +3783,24 @@ function renderRegisterPendingList() {
   }).join('');
 }
 
-// Só pode editar pontos dentro da janela de 24h. Admin/Supervisor podem mesmo fora da janela.
+// Ponto ainda pendente de complementação (registro rápido "cru", sem tipo definido)
+// pode ser completado a qualquer momento, sem prazo — a janela de 24h só vale depois
+// que o ponto já foi totalmente preenchido uma vez. Antes, um ponto marcado rápido
+// numa sexta e só revisitado na segunda (ex.: chuva no fim de semana) ficava bloqueado
+// pra completar, e o jeito era registrar tudo de novo — duplicando o ponto no mapa.
 function podeEditarPonto(l) {
   const role = S.userDoc?.role;
   if (role === 'admin' || role === 'supervisor') return true;
+  if (l.pendenteComplementacao || !l.tipo) return true;
   if (!l.editavelAte) return true; // pontos antigos sem o campo, não bloqueia retroativamente
   return Date.now() < l.editavelAte;
+}
+
+// Atalho a partir do popup do mapa: vai direto pra tela de Registrar já com esse
+// ponto carregado, sem precisar procurar ele na lista de pendentes manualmente.
+function irParaCompletarRegistro(leakId) {
+  switchTab('register','tabs-field');
+  abrirComplementacao(leakId);
 }
 
 function abrirComplementacao(leakId) {
@@ -4460,6 +4505,13 @@ function renderLeakList() {
   wrap.innerHTML = filtered.map(l => {
     const c=S.cidades.find(c=>c.id===l.cidade);
     const temFoto = l.fotosUrls && l.fotosUrls.length;
+    const cfgL = S.camposLista || {};
+    // Rua e código do município (AS) direto na linha — pensado pra quem tá preenchendo
+    // a Autorização de Serviço e precisa desses dois dados sem abrir cada ponto.
+    const extrasAS = [];
+    if (cfgL.rua && l.rua) extrasAS.push(l.rua);
+    if (cfgL.codigoAS && c?.codigoAS) extrasAS.push('Cód. ' + c.codigoAS);
+    const linhaExtrasAS = extrasAS.length ? `<div class="lmeta" style="margin-top:2px;color:var(--blue-d)">${extrasAS.join(' · ')}</div>` : '';
     return `<div class="leak-item" onclick="abrirDetalhesLeak('${l.id}')">
       ${temFoto
         ? `<img src="${l.fotosUrls[0]}" alt="" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0" loading="lazy" onerror="this.style.display='none'">`
@@ -4470,6 +4522,7 @@ function renderLeakList() {
         <div class="ltype">${l.tipo || '(aguardando complementação)'}</div>
         <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
         ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
+        ${linhaExtrasAS}
       </div>
       <button onclick="event.stopPropagation();abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — toque para ver/editar':'Marcar AS como aberta'}"
         style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.osAberta?'var(--green)':'var(--text3)'}">
@@ -5426,8 +5479,6 @@ function renderRedesPanel() {
   }).join('');
 }
 
-function toggleLayerVisibility(tipo) { tipo==='dmc' ? openDMCPanel() : openRedesPanel(); }
-
 function renderLayerLists() {
   const role = S.userDoc?.role;
   const ehSuperior = role === 'admin' || role === 'supervisor';
@@ -5493,7 +5544,7 @@ function atualizarBadgePendentes() {
   const pendentesDMC = (S.leafletLayers.dmc||[]).filter(l => !l.validada).length;
   const pendentesRedes = (S.leafletLayers.redes||[]).filter(l => !l.validada).length;
   const total = pendentesDMC + pendentesRedes;
-  document.querySelectorAll('#dmc-pendentes-badge').forEach(badge => {
+  document.querySelectorAll('.dmc-pendentes-badge').forEach(badge => {
     if (podeValidar && total > 0) {
       badge.textContent = total > 9 ? '9+' : total;
       badge.classList.remove('hidden');
@@ -6356,10 +6407,18 @@ function renderConfigCidades() {
           </div>
           <p style="font-size:10px;color:var(--text3);margin-top:4px">Vazamentos já registrados mantêm o ID antigo; só os novos usarão o prefixo atualizado.</p>
         </div>
-        <div class="field" style="margin-bottom:8px">
-          <label style="font-size:10.5px">Centro do mapa (latitude, longitude)</label>
-          <input type="text" value="${(c.coords||[]).join(', ')}" onchange="editarCoordsCidade(${i},this.value)"
-            placeholder="-28.6775, -49.3680" style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <div class="field" style="margin-bottom:0;flex:1">
+            <label style="font-size:10.5px">Centro do mapa (latitude, longitude)</label>
+            <input type="text" value="${(c.coords||[]).join(', ')}" onchange="editarCoordsCidade(${i},this.value)"
+              placeholder="-28.6775, -49.3680" style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+          </div>
+          <div class="field" style="margin-bottom:0;width:80px">
+            <label style="font-size:10.5px">Código AS</label>
+            <input type="text" value="${c.codigoAS||''}" maxlength="3" inputmode="numeric" placeholder="—"
+              onchange="editarCidadeCampo(${i},'codigoAS',this.value.replace(/\\D/g,''))"
+              style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+          </div>
         </div>
         <div style="font-size:10.5px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">WhatsApp</div>
         <div style="display:flex;flex-direction:column;gap:4px">

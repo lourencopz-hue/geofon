@@ -381,6 +381,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           Trajetos encerrados ou pausados ficam disponíveis pra carregar/ocultar aqui sem prazo — até que uma campanha mais nova exista no mesmo DMC, quando a antiga sai da lista.
         </p>
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="btn sm" style="flex:1;justify-content:center" onclick="ocultarTodosTrajetos('pc')"><i class="ti ti-eye-off"></i> Ocultar todos</button>
+        <button class="btn sm" style="flex:1;justify-content:center" onclick="mostrarTodosTrajetos('pc')"><i class="ti ti-eye"></i> Mostrar todos</button>
+      </div>
       <div id="campanhas-trajetos-pc-list" style="max-height:260px;overflow-y:auto">
         <p style="font-size:11.5px;color:var(--text2);text-align:center;padding:10px">Nenhum trajeto recente pra mostrar.</p>
       </div>
@@ -936,7 +940,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="field">
       <label>Centro do mapa (latitude, longitude)</label>
-      <input type="text" id="nc-coords" placeholder="-28.6775, -49.3680">
+      <div style="display:flex;gap:6px">
+        <input type="text" id="nc-coords" placeholder="-28.6775, -49.3680" style="flex:1">
+        <button class="btn sm" type="button" onclick="abrirEscolherCoordenada('nc-coords')"><i class="ti ti-map-pin"></i> Mapa</button>
+      </div>
     </div>
     <button class="btn primary btn-block" onclick="salvarCidade()">
       <i class="ti ti-check"></i> Salvar cidade
@@ -1086,6 +1093,19 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="btn" style="justify-content:center;background:var(--bg2)" onclick="closeModal('modal-remover-dmc-kml')">
         Cancelar
       </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-escolher-coord">
+  <div class="modal" style="max-width:520px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px">Escolher coordenada no mapa</h3>
+    <p style="font-size:11.5px;color:var(--text2);margin-bottom:10px">Toque no mapa no ponto que quer usar como centro da cidade.</p>
+    <div id="mapa-escolher-coord" style="width:100%;height:340px;border-radius:var(--radius-lg);border:1px solid var(--border)"></div>
+    <p id="escolher-coord-preview" style="font-size:11px;color:var(--text2);margin-top:8px;font-family:monospace">Nenhum ponto marcado ainda</p>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" style="flex:1;justify-content:center" onclick="closeModal('modal-escolher-coord')">Cancelar</button>
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="confirmarCoordenadaEscolhida()">Usar esta coordenada</button>
     </div>
   </div>
 </div>
@@ -3101,6 +3121,36 @@ function redesenharCampanhasNoMapa() {
   });
 }
 
+// Esconde/mostra TODOS os trajetos elegíveis de uma vez (no modo indicado), sem
+// precisar clicar item por item — útil quando o mapa de Gestão acumula vários trajetos
+// antigos ao mesmo tempo.
+function candidatosTrajetos(modo) {
+  return Object.entries(S.campanhasAtivas)
+    .filter(([, c]) => !(c.ativa && !c.pausada))
+    .filter(([id, c]) => elegivelParaExibirCampanha(id, c, S.campanhasAtivas, modo))
+    .map(([id]) => id);
+}
+function ocultarTodosTrajetos(modo) {
+  const ids = candidatosTrajetos(modo);
+  if (!ids.length) { toast('Nenhum trajeto pra ocultar'); return; }
+  ids.forEach(id => S._campanhasOcultasManualmente.add(id));
+  try { localStorage.setItem('campanhasOcultas', JSON.stringify([...S._campanhasOcultasManualmente])); } catch(e) {}
+  redesenharCampanhasNoMapa();
+  renderTrajetosToggleList('campanhas-trajetos-field-list', 'field');
+  renderTrajetosToggleList('campanhas-trajetos-pc-list', 'pc');
+  toast('Trajetos ocultados');
+}
+function mostrarTodosTrajetos(modo) {
+  const ids = candidatosTrajetos(modo);
+  if (!ids.length) { toast('Nenhum trajeto pra mostrar'); return; }
+  ids.forEach(id => S._campanhasOcultasManualmente.delete(id));
+  try { localStorage.setItem('campanhasOcultas', JSON.stringify([...S._campanhasOcultasManualmente])); } catch(e) {}
+  redesenharCampanhasNoMapa();
+  renderTrajetosToggleList('campanhas-trajetos-field-list', 'field');
+  renderTrajetosToggleList('campanhas-trajetos-pc-list', 'pc');
+  toast('Trajetos exibidos');
+}
+
 // Lista, com um interruptor por item, os trajetos de campanha ENCERRADOS ou PAUSADOS
 // elegíveis pra esse modo (campo = até 15 dias; gestão = até existir uma campanha mais
 // nova no mesmo DMC) — separado da lista de "quem está em campo agora", que não tem
@@ -4524,12 +4574,12 @@ function renderLeakList() {
         ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
         ${linhaExtrasAS}
       </div>
+      ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
       <button onclick="event.stopPropagation();abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — toque para ver/editar':'Marcar AS como aberta'}"
         style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.osAberta?'var(--green)':'var(--text3)'}">
         <i class="ti ${l.osAberta?'ti-clipboard-check':'ti-clipboard'}" style="font-size:15px"></i>
         <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">SCI</span>
       </button>
-      ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
     </div>`;
   }).join('');
 }
@@ -6410,8 +6460,11 @@ function renderConfigCidades() {
         <div style="display:flex;gap:8px;margin-bottom:8px">
           <div class="field" style="margin-bottom:0;flex:1">
             <label style="font-size:10.5px">Centro do mapa (latitude, longitude)</label>
-            <input type="text" value="${(c.coords||[]).join(', ')}" onchange="editarCoordsCidade(${i},this.value)"
-              placeholder="-28.6775, -49.3680" style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+            <div style="display:flex;gap:6px">
+              <input type="text" id="coords-edit-${i}" value="${(c.coords||[]).join(', ')}" onchange="editarCoordsCidade(${i},this.value)"
+                placeholder="-28.6775, -49.3680" style="flex:1;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:monospace">
+              <button class="btn sm" type="button" onclick="abrirEscolherCoordenada('coords-edit-${i}')" title="Escolher no mapa"><i class="ti ti-map-pin"></i></button>
+            </div>
           </div>
           <div class="field" style="margin-bottom:0;width:80px">
             <label style="font-size:10.5px">Código AS</label>
@@ -6448,6 +6501,63 @@ function toggleExpandirCidade(cidadeId) {
   const abrindo = alternarPainelExpandido('cidade:' + cidadeId);
   if (div) div.classList.toggle('hidden', !abrindo);
   if (chev) chev.style.transform = abrindo ? 'rotate(180deg)' : 'rotate(0deg)';
+}
+
+// ================================================================
+// ESCOLHER COORDENADA NO MAPA — usado tanto no cadastro de cidade nova quanto na
+// edição de uma já existente, pra não precisar procurar a coordenada em outro site e
+// trazer pro GeoFon manualmente.
+// ================================================================
+let _mapaEscolherCoord = null;
+let _marcadorEscolherCoord = null;
+
+function abrirEscolherCoordenada(inputId) {
+  S._pickCoordInputId = inputId;
+  S._pickCoordLatLng = null;
+  const input = document.getElementById(inputId);
+  const atual = input ? input.value.split(',').map(s => parseFloat(s.trim())) : [];
+  const temAtual = atual.length === 2 && !isNaN(atual[0]) && !isNaN(atual[1]);
+
+  document.getElementById('escolher-coord-preview').textContent = temAtual
+    ? `Ponto atual: ${atual[0].toFixed(6)}, ${atual[1].toFixed(6)}`
+    : 'Nenhum ponto marcado ainda';
+
+  openModal('modal-escolher-coord');
+  // setTimeout: o Leaflet precisa que o container já esteja visível (com tamanho real)
+  // pra desenhar certo — o modal ainda está abrindo no instante do clique do botão.
+  setTimeout(() => {
+    const centro = temAtual ? atual : [-28.6775, -49.3680];
+    if (!_mapaEscolherCoord) {
+      _mapaEscolherCoord = L.map('mapa-escolher-coord').setView(centro, temAtual ? 14 : 8);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(_mapaEscolherCoord);
+      _mapaEscolherCoord.on('click', (e) => marcarCoordenadaEscolhida(e.latlng.lat, e.latlng.lng));
+    } else {
+      _mapaEscolherCoord.setView(centro, temAtual ? 14 : 8);
+      _mapaEscolherCoord.invalidateSize();
+    }
+    if (_marcadorEscolherCoord) { _mapaEscolherCoord.removeLayer(_marcadorEscolherCoord); _marcadorEscolherCoord = null; }
+    if (temAtual) marcarCoordenadaEscolhida(atual[0], atual[1]);
+  }, 150);
+}
+
+function marcarCoordenadaEscolhida(lat, lng) {
+  S._pickCoordLatLng = { lat, lng };
+  if (_marcadorEscolherCoord) _mapaEscolherCoord.removeLayer(_marcadorEscolherCoord);
+  _marcadorEscolherCoord = L.marker([lat, lng]).addTo(_mapaEscolherCoord);
+  document.getElementById('escolher-coord-preview').textContent = `Ponto marcado: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+}
+
+function confirmarCoordenadaEscolhida() {
+  if (!S._pickCoordLatLng) { toast('Toque no mapa para marcar o ponto primeiro'); return; }
+  const input = document.getElementById(S._pickCoordInputId);
+  if (input) {
+    input.value = S._pickCoordLatLng.lat.toFixed(6) + ', ' + S._pickCoordLatLng.lng.toFixed(6);
+    // Dispara o "change" manualmente — assim o mesmo onchange que já existia no campo
+    // (seja o de salvar cidade nova, seja o de editar uma já existente) roda sozinho,
+    // sem precisar de um caminho de código separado só pra quando vem do mapa.
+    input.dispatchEvent(new Event('change'));
+  }
+  closeModal('modal-escolher-coord');
 }
 
 async function editarCoordsCidade(idx, valor) {

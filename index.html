@@ -538,6 +538,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               </div>
             </div>
             <div class="field">
+              <label>Tipo de pavimento</label>
+              <div class="toggle-group" id="pavimento-group">
+                <button class="toggle-btn" data-val="asfalto" onclick="setPavimento(this,'asfalto')">Asfalto</button>
+                <button class="toggle-btn" data-val="concreto" onclick="setPavimento(this,'concreto')">Concreto</button>
+                <button class="toggle-btn" data-val="lajota" onclick="setPavimento(this,'lajota')">Lajota</button>
+                <button class="toggle-btn" data-val="sem_revestimento" onclick="setPavimento(this,'sem_revestimento')">Sem revestimento</button>
+              </div>
+            </div>
+            <div class="field">
               <label>Diâmetro estimado (mm)</label>
               <input type="number" id="reg-diam" placeholder="Ex: 50 mm">
             </div>
@@ -692,35 +701,61 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
   <!-- PC: GESTÃO -->
   <div class="panel" id="manage">
-    <div class="pc-split" style="overflow:hidden">
-      <div style="flex:1;overflow-y:auto;padding:14px;border-right:1px solid var(--border)">
-        <div class="section-title">Cidades cadastradas</div>
-        <div id="manage-cidades"></div>
-        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px" onclick="openModalCidade()">
-          <i class="ti ti-plus"></i> Adicionar cidade
-        </button>
-        <button class="btn" style="width:100%;justify-content:center;margin-top:6px" onclick="document.getElementById('up-dmc-xlsx').click()">
-          <i class="ti ti-file-spreadsheet"></i> Importar planilha de DMCs (.xlsx)
-        </button>
-        <button class="btn" style="width:100%;justify-content:center;margin-top:6px" onclick="if(confirm('Detectar e mesclar DMCs com o mesmo nome duplicados em cada cidade? Vazamentos já registrados são migrados automaticamente para o registro que sobrar.'))detectarEMesclarDMCsDuplicados()">
-          <i class="ti ti-git-merge"></i> Detectar e mesclar DMCs duplicados
-        </button>
-        <input type="file" id="up-dmc-xlsx" accept=".xlsx,.xls" style="display:none" onchange="handleImportarPlanilhaDMCs(this)">
-        <p style="font-size:10px;color:var(--text3);margin-top:4px">
-          Atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado. Município novo é criado automaticamente com coordenada obtida por nome (marcada para conferência).
-        </p>
-        <hr class="section-divider" style="margin:16px 0">
-        <div class="section-title">Carregar arquivos KML / GeoJSON</div>
-        <div class="upload-zone" onclick="document.getElementById('up-pc').click()">
-          <i class="ti ti-map-2"></i>
-          <strong>Subir camada geográfica</strong>
-          <p>DMC, redes ou limites municipais</p>
+    <div class="config-layout">
+      <div class="config-sidebar">
+        <div class="config-nav-item" data-gestao-section="cidades-dmc" onclick="mostrarSecaoGestao('cidades-dmc')">
+          <i class="ti ti-map-pin"></i> <span>Cidades e DMCs</span>
         </div>
-        <input type="file" id="up-pc" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'manage')">
+        <div class="config-nav-item" data-gestao-section="camadas" onclick="mostrarSecaoGestao('camadas')">
+          <i class="ti ti-map-2"></i> <span>Carregar camadas</span>
+        </div>
+        <div class="config-nav-item" data-gestao-section="pontos" onclick="mostrarSecaoGestao('pontos')">
+          <i class="ti ti-list-details"></i> <span>Pontos registrados</span>
+        </div>
       </div>
-      <div style="flex:1;overflow-y:auto;padding:14px">
-        <div class="section-title">Todos os pontos registrados</div>
-        <div id="manage-table"></div>
+
+      <div class="config-content">
+        <div id="gestaosec-cidades-dmc" class="config-section-panel" style="max-width:none">
+          <div class="section-title" style="margin-bottom:10px">Cidades e DMCs</div>
+          <div class="field" style="margin-bottom:10px;max-width:320px">
+            <label style="font-size:10.5px">Filtrar por município</label>
+            <select id="manage-filtro-cidade" onchange="S._manageFiltroCidade=this.value;renderManage()"
+              style="width:100%;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+              <option value="">Todos os municípios</option>
+            </select>
+          </div>
+          <div id="manage-cidades"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn primary" onclick="openModalCidade()">
+              <i class="ti ti-plus"></i> Adicionar cidade
+            </button>
+            <button class="btn" onclick="document.getElementById('up-dmc-xlsx').click()">
+              <i class="ti ti-file-spreadsheet"></i> Importar planilha de DMCs (.xlsx)
+            </button>
+            <button class="btn" onclick="if(confirm('Detectar e mesclar DMCs com o mesmo nome duplicados em cada cidade? Vazamentos já registrados são migrados automaticamente para o registro que sobrar.'))detectarEMesclarDMCsDuplicados()">
+              <i class="ti ti-git-merge"></i> Detectar e mesclar DMCs duplicados
+            </button>
+          </div>
+          <input type="file" id="up-dmc-xlsx" accept=".xlsx,.xls" style="display:none" onchange="handleImportarPlanilhaDMCs(this)">
+          <p style="font-size:10px;color:var(--text3);margin-top:4px">
+            Atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado. Município novo é criado automaticamente com coordenada obtida por nome (marcada para conferência).
+          </p>
+        </div>
+
+        <div id="gestaosec-camadas" class="config-section-panel hidden">
+          <div class="section-title" style="margin-bottom:10px">Carregar arquivos KML / GeoJSON</div>
+          <div class="upload-zone" onclick="document.getElementById('up-pc').click()">
+            <i class="ti ti-map-2"></i>
+            <strong>Subir camada geográfica</strong>
+            <p>DMC, redes ou limites municipais</p>
+          </div>
+          <input type="file" id="up-pc" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'manage')">
+        </div>
+
+        <div id="gestaosec-pontos" class="config-section-panel hidden" style="max-width:none">
+          <div class="section-title" style="margin-bottom:10px">Todos os pontos registrados</div>
+          <div id="manage-table"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1047,6 +1082,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </div>
     </div>
     <div class="field">
+      <label>Tipo de pavimento</label>
+      <div class="toggle-group" id="quick-pavimento-group">
+        <button class="toggle-btn" data-val="asfalto" onclick="setPavimento(this,'asfalto')">Asfalto</button>
+        <button class="toggle-btn" data-val="concreto" onclick="setPavimento(this,'concreto')">Concreto</button>
+        <button class="toggle-btn" data-val="lajota" onclick="setPavimento(this,'lajota')">Lajota</button>
+        <button class="toggle-btn" data-val="sem_revestimento" onclick="setPavimento(this,'sem_revestimento')">Sem revestimento</button>
+      </div>
+    </div>
+    <div class="field">
       <label>Descrição rápida</label>
       <textarea id="quick-desc" placeholder="Descreva brevemente o vazamento..." style="min-height:56px"></textarea>
     </div>
@@ -1176,7 +1220,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
     <div class="field">
       <label>Número da AS (opcional)</label>
-      <input type="text" id="os-numero" placeholder="Só números — ex: 14082026103000123" maxlength="21" oninput="mascaraNumeroOS(this)" style="font-family:monospace">
+      <input type="text" id="os-numero" placeholder="Só números — ex: 14082026103000123" maxlength="25" oninput="mascaraNumeroOS(this)" style="font-family:monospace">
       <p style="font-size:10px;color:var(--text2);margin-top:3px">Data, hora e matrícula em sequência — não precisa digitar barra nem dois-pontos, o app formata sozinho. Matrícula completa sozinha com zeros à esquerda.</p>
     </div>
 
@@ -1906,6 +1950,7 @@ function iniciarSincronizacaoFirestore() {
   startGPS();
   setTimeout(() => iniciarSincronizacaoCamadas(), 400);
   restaurarSecaoConfig();
+  restaurarSecaoGestao();
 }
 
 // Retoma uma campanha própria que já estava ativa no Firestore (ex.: após recarregar
@@ -4029,6 +4074,16 @@ function setQuickSev(btn, val) {
   btn.classList.add('active');
   S.sevQuick = val;
 }
+// Um único função cuida dos dois formulários (Registrar e Novo Ponto) — descobre qual
+// dos dois pelo id do grupo que contém o botão clicado, em vez de duplicar a mesma
+// lógica duas vezes como severidade faz.
+function setPavimento(btn, val) {
+  const grupo = btn.closest('.toggle-group');
+  grupo.querySelectorAll('.toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if (grupo.id === 'quick-pavimento-group') S.pavimentoQuick = val;
+  else S.pavimentoAtual = val;
+}
 
 // ================================================================
 // SALVAR PONTO
@@ -4122,6 +4177,11 @@ function abrirComplementacao(leakId) {
   const sevBtn = document.querySelector(`#sev-group .toggle-btn.${l.severidade}`);
   if (sevBtn) sevBtn.classList.add('active');
   S.sevAtual = l.severidade;
+
+  document.querySelectorAll('#pavimento-group .toggle-btn').forEach(b=>b.classList.remove('active'));
+  const pavBtn = l.pavimento ? document.querySelector(`#pavimento-group .toggle-btn[data-val="${l.pavimento}"]`) : null;
+  if (pavBtn) pavBtn.classList.add('active');
+  S.pavimentoAtual = l.pavimento || null;
 
   document.getElementById('reg-diam').value = l.diam || '';
   document.getElementById('reg-obs').value = l.desc || '';
@@ -4220,7 +4280,7 @@ async function salvarPonto() {
   // O geofone é registrado para fins de relatório/histórico — não entra na mensagem
   // de WhatsApp (que já tem informação suficiente para a equipe que vai consertar).
   const atualizacao = {
-    dmc, tipo, servico, severidade: S.sevAtual,
+    dmc, tipo, servico, severidade: S.sevAtual, pavimento: S.pavimentoAtual || null,
     desc: obs, diam: diam || null, rua: rua || null, geofone: geofoneId || null,
     numeroHD, pendenteComplementacao: false
   };
@@ -4434,6 +4494,8 @@ function openRegisterQuick() {
   document.getElementById('quick-rua-status').textContent = '';
   document.getElementById('quick-hd-numero').value = '';
   document.getElementById('quick-hd-wrap').classList.add('hidden');
+  document.querySelectorAll('#quick-pavimento-group .toggle-btn').forEach(b=>b.classList.remove('active'));
+  S.pavimentoQuick = null;
   // Permite uma nova sugestão automática de cidade/equipe a cada abertura do modal
   S._cidadeEscolhidaManualmente = false;
   S._dmcEscolhidoManualmente = false;
@@ -4523,7 +4585,7 @@ async function confirmarQuick() {
   const servicoTexto = S._quickModoCompleto ? (servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '') : '';
 
   const leak={
-    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:tipoNome, servico:servicoTexto, severidade:S.sevQuick,
+    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:tipoNome, servico:servicoTexto, severidade:S.sevQuick, pavimento: S.pavimentoQuick || null,
     lat:S.pos.lat, lng:S.pos.lng, desc, diam:diamCompleto, rua: ruaCompleto || null, numeroHD,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos: temFoto ? 1 : 0,
@@ -4817,10 +4879,15 @@ function renderLeakList() {
         <div class="lid">${l.id}</div>
         <div class="ltype">${l.tipo || '(aguardando complementação)'}</div>
         <div class="lmeta">${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
-        ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
+        ${l.desc?`<div class="lmeta" style="margin-top:2px;display:flex;align-items:center;gap:4px"><span style="flex:1">${l.desc}</span><button onclick="event.stopPropagation();copiarParecer('${l.id}')" title="Copiar parecer" style="background:none;border:none;cursor:pointer;color:var(--text3);padding:2px;flex-shrink:0"><i class="ti ti-copy" style="font-size:13px"></i></button></div>`:''}
         ${linhaExtrasAS}
       </div>
       ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
+      <button onclick="event.stopPropagation();toggleConsertado('${l.id}')" title="${l.consertado?'Vazamento consertado — toque para desmarcar':'Marcar como consertado'}"
+        style="background:none;border:1px solid ${l.consertado?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.consertado?'var(--green)':'var(--text3)'}">
+        <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}" style="font-size:15px"></i>
+        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">OK</span>
+      </button>
       <button onclick="event.stopPropagation();abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — toque para ver/editar':'Marcar AS como aberta'}"
         style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.osAberta?'var(--green)':'var(--text3)'}">
         <i class="ti ${l.osAberta?'ti-clipboard-check':'ti-clipboard'}" style="font-size:15px"></i>
@@ -4835,6 +4902,36 @@ function renderLeakList() {
 // sistema interno (CasanSCI), separado do fluxo de campo. Data/hora e matrícula são
 // opcionais; o essencial é só o "check" de aberta ou não.
 // ================================================================
+// Marca/desmarca o vazamento como consertado — toggle direto, sem modal (diferente da
+// AS, aqui não tem dado extra pra preencher, só o estado sim/não).
+async function toggleConsertado(leakId) {
+  const l = S.leaks.find(l => l.id === leakId);
+  if (!l) return;
+  const novoValor = !l.consertado;
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',leakId), { consertado: novoValor }, { merge:true });
+  } catch(err) {
+    toast('⚠️ Não foi possível salvar: ' + (err.code || err.message || err));
+    return;
+  }
+  l.consertado = novoValor;
+  renderLeakList();
+  toast(novoValor ? '✓ Marcado como consertado' : 'Desmarcado');
+}
+
+// Copia o parecer (observações/descrição) pro clipboard com um toque — antes precisava
+// selecionar o texto manualmente, incômodo no celular.
+async function copiarParecer(leakId) {
+  const l = S.leaks.find(l => l.id === leakId);
+  if (!l || !l.desc) { toast('Este ponto não tem parecer registrado'); return; }
+  try {
+    await navigator.clipboard.writeText(l.desc);
+    toast('✓ Parecer copiado');
+  } catch(err) {
+    toast('⚠️ Não consegui copiar automaticamente — selecione o texto manualmente');
+  }
+}
+
 function abrirModalOS(leakId) {
   const l = S.leaks.find(l => l.id === leakId);
   if (!l) return;
@@ -4896,6 +4993,7 @@ async function salvarOS() {
   if (l) { l.osAberta = aberta; l.osNumero = numeroOS; delete l.osDataHora; delete l.osMatricula; }
   closeModal('modal-os');
   renderLeakList();
+  renderManage();
   toast(aberta ? '✓ AS marcada como aberta' : 'AS desmarcada');
 }
 
@@ -6021,10 +6119,22 @@ function kmlCoords(el) {
 // GESTÃO
 // ================================================================
 function renderManage() {
+  // Popula o filtro de município (uma vez populado, o valor escolhido persiste entre
+  // re-renders porque comparamos pelo <select> já existente, não recriamos do zero).
+  const selFiltro = document.getElementById('manage-filtro-cidade');
+  if (selFiltro && selFiltro.options.length <= 1) {
+    selFiltro.innerHTML = '<option value="">Todos os municípios</option>' +
+      [...S.cidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  }
+  if (selFiltro && S._manageFiltroCidade !== undefined) selFiltro.value = S._manageFiltroCidade || '';
+
   // Cidades
   const mc = document.getElementById('manage-cidades');
   if (mc) {
-    mc.innerHTML = S.cidades.map(c => {
+    const cidadesFiltradas = S._manageFiltroCidade
+      ? S.cidades.filter(c => c.id === S._manageFiltroCidade)
+      : S.cidades;
+    mc.innerHTML = cidadesFiltradas.map(c => {
       const expandido = estaPainelExpandido('dmc-edit:' + c.id);
       return `
       <div class="card" style="margin-bottom:8px;padding:10px">
@@ -6092,6 +6202,11 @@ function toggleEditarDMCs(cidadeId) {
 }
 
 const SITUACOES_DMC = ['em Operação', 'em Instalação', 'em Estudo', 'Dividir DMC'];
+// Paleta fixa pra cor personalizada do DMC — clicável, em vez de precisar digitar hex
+// ou RGB (a maioria de quem usa não sabe o que digitar ali). Evita de propósito o
+// tom de verde-azulado usado nas camadas de Rede (#0F6E56), pra não repetir o mesmo
+// problema de confundir contorno de DMC com trecho de rede no mapa.
+const PALETA_CORES_DMC = ['#534AB7','#D6336C','#BA7517','#A32D2D','#185FA5','#2F9E44','#C0388A','#5F5E5A','#E64980','#7048E8','#F08C00','#1098AD','#37B24D','#F03E3E','#4263EB','#0CA678'];
 
 async function renderDMCsEditaveis(cidadeId) {
   const c = S.cidades.find(c => c.id === cidadeId);
@@ -6171,11 +6286,15 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
         <span title="Extensão real da rede — calculada a partir da camada de Rede recortada pelo polígono do DMC (em breve); até lá, é aproximada pela extensão percorrida em campanhas.">
           Extensão: ${d.extensaoRede ? d.extensaoRede.toLocaleString('pt-BR') + 'm' : (d.extensaoPercorrida ? '~' + Math.round(d.extensaoPercorrida).toLocaleString('pt-BR') + 'm (aprox.)' : '—')}
         </span>
-        <label style="display:flex;align-items:center;gap:4px" title="Cor do contorno deste DMC no mapa — sobrescreve a cor original do KML, sem precisar editar/reexportar a curva">
+        <label style="display:flex;align-items:center;gap:4px;position:relative" title="Cor do contorno deste DMC no mapa — sobrescreve a cor original do KML, sem precisar editar/reexportar a curva">
           Cor:
-          <div style="width:14px;height:14px;border-radius:3px;border:1px solid var(--border);background:${d.corPersonalizada||'transparent'};flex-shrink:0"></div>
-          <input type="text" value="${d.corPersonalizada||''}" placeholder="padrão do KML" onchange="editarCorDMC('${cidadeId}',${i},this.value)"
-            style="width:100px;padding:3px 5px;font-size:10.5px;font-family:monospace;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <button onclick="event.stopPropagation();document.getElementById('paleta-dmc-${cidadeId}-${i}').classList.toggle('hidden')"
+            style="width:20px;height:20px;border-radius:5px;border:1px solid var(--border);cursor:pointer;padding:0;background:${d.corPersonalizada||'repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50%/8px 8px'}"
+            title="${d.corPersonalizada || 'Cor original do KML — clique para escolher'}"></button>
+          <div id="paleta-dmc-${cidadeId}-${i}" class="hidden" style="position:absolute;top:24px;left:24px;z-index:20;display:flex;gap:5px;flex-wrap:wrap;padding:7px;background:var(--bg);border-radius:var(--radius);border:1px solid var(--border);box-shadow:0 4px 14px rgba(0,0,0,.15);width:150px">
+            ${PALETA_CORES_DMC.map(cor => `<button onclick="editarCorDMC('${cidadeId}',${i},'${cor}')" title="${cor}" style="width:18px;height:18px;border-radius:50%;background:${cor};border:2px solid ${d.corPersonalizada===cor?'var(--text)':'#fff'};box-shadow:0 0 0 1px var(--border);cursor:pointer;padding:0"></button>`).join('')}
+            <button onclick="editarCorDMC('${cidadeId}',${i},'')" title="Usar cor original do KML" style="width:18px;height:18px;border-radius:50%;background:repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%/6px 6px;border:1px solid var(--border);cursor:pointer;padding:0"></button>
+          </div>
         </label>
       </div>
     </div>`;
@@ -7175,6 +7294,26 @@ function restaurarSecaoConfig() {
   let salvo;
   try { salvo = localStorage.getItem('configSecaoAtual'); } catch(e) { salvo = null; }
   mostrarSecaoConfig(salvo || CONFIG_SECOES[0]);
+}
+
+// Mesma ideia da barra lateral de Configurações, aplicada à Gestão — "Cidades e DMCs",
+// "Carregar camadas" e "Pontos registrados" cada uma na sua tela, em vez das duas
+// colunas fixas de antes.
+const GESTAO_SECOES = ['cidades-dmc', 'camadas', 'pontos'];
+function mostrarSecaoGestao(nome) {
+  if (!GESTAO_SECOES.includes(nome)) nome = GESTAO_SECOES[0];
+  GESTAO_SECOES.forEach(id => {
+    const painel = document.getElementById('gestaosec-' + id);
+    const navItem = document.querySelector('.config-nav-item[data-gestao-section="' + id + '"]');
+    if (painel) painel.classList.toggle('hidden', id !== nome);
+    if (navItem) navItem.classList.toggle('active', id === nome);
+  });
+  try { localStorage.setItem('gestaoSecaoAtual', nome); } catch(e) {}
+}
+function restaurarSecaoGestao() {
+  let salvo;
+  try { salvo = localStorage.getItem('gestaoSecaoAtual'); } catch(e) { salvo = null; }
+  mostrarSecaoGestao(salvo || GESTAO_SECOES[0]);
 }
 
 // Pontinho de alerta na barra lateral, por categoria — sinaliza "tem algo aqui que pode

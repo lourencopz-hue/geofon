@@ -4940,6 +4940,7 @@ async function toggleConsertado(leakId) {
   }
   l.consertado = novoValor;
   renderLeakList();
+  renderManage();
   toast(novoValor ? '✓ Marcado como consertado' : 'Desmarcado');
 }
 
@@ -6186,7 +6187,7 @@ function renderManage() {
   if (mt) {
     if (!S.leaks.length) { mt.innerHTML='<p style="font-size:12px;color:var(--text2)">Nenhum ponto registrado ainda.</p>'; return; }
     mt.innerHTML=`<div style="overflow-x:auto"><table class="data-table">
-      <thead><tr><th>ID</th><th>Cidade</th><th>DMC</th><th>Tipo</th><th>Sev.</th><th>Equipe</th><th>Data</th></tr></thead>
+      <thead><tr><th>ID</th><th>Cidade</th><th>DMC</th><th>Tipo</th><th>Sev.</th><th>Equipe</th><th>Data</th><th>AS</th><th>Consertado</th></tr></thead>
       <tbody>${S.leaks.map(l=>{
         const cor=l.severidade==='alta'?'var(--red)':l.severidade==='media'?'var(--amber)':'var(--green)';
         const eq=S.equipes.find(e=>e.id===l.equipe);
@@ -6199,6 +6200,18 @@ function renderManage() {
           <td><span class="badge ${l.severidade}">${l.severidade}</span></td>
           <td>${eq?eq.codigo:l.equipe}</td>
           <td style="white-space:nowrap">${l.data}</td>
+          <td>
+            <button onclick="abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — clique para ver/editar':'Marcar AS como aberta'}"
+              style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:${l.osAberta?'var(--green)':'var(--text3)'};display:flex;align-items:center;gap:4px;white-space:nowrap">
+              <i class="ti ${l.osAberta?'ti-clipboard-check':'ti-clipboard'}" style="font-size:14px"></i> SCI
+            </button>
+          </td>
+          <td>
+            <button onclick="toggleConsertado('${l.id}')" title="${l.consertado?'Vazamento consertado — clique para desmarcar':'Marcar como consertado'}"
+              style="background:none;border:1px solid ${l.consertado?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:${l.consertado?'var(--green)':'var(--text3)'};display:flex;align-items:center;gap:4px;white-space:nowrap">
+              <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}" style="font-size:14px"></i> OK
+            </button>
+          </td>
         </tr>`;
       }).join('')}</tbody>
     </table></div>`;

@@ -4263,6 +4263,7 @@ async function salvarPonto() {
   // Bloqueia salvar sem nenhuma foto — nem a que já existia (do registro rápido) nem
   // uma nova tirada agora aqui em "Registrar". Pedido explícito: todo ponto precisa
   // de pelo menos 1 foto antes de ser considerado registrado/completo.
+  if (S._processandoFotosReg) { toast('⏳ Só um instante, a(s) foto(s) ainda estão sendo processadas...'); return; }
   const temFotosNovas0 = S.photosBase64 && S.photosBase64.length > 0;
   const temFotosExistentes0 = S._pontoEmEdicao.fotosUrls && S._pontoEmEdicao.fotosUrls.length > 0;
   if (!temFotosNovas0 && !temFotosExistentes0) {
@@ -4494,6 +4495,7 @@ function openRegisterQuick() {
   document.getElementById('quick-rua-status').textContent = '';
   document.getElementById('quick-hd-numero').value = '';
   document.getElementById('quick-hd-wrap').classList.add('hidden');
+  S._processandoFotoQuick = false;
   document.querySelectorAll('#quick-pavimento-group .toggle-btn').forEach(b=>b.classList.remove('active'));
   S.pavimentoQuick = null;
   // Permite uma nova sugestão automática de cidade/equipe a cada abertura do modal
@@ -4519,15 +4521,26 @@ S.quickPhotoBase64 = null;
 function handleQuickPhoto(input) {
   const f = input.files[0];
   if (!f) return;
+  // A compressão da foto é assíncrona e leva um tempinho real no celular — sem esse
+  // sinalizador, quem apertasse "Salvar" rápido demais logo depois de bater a foto
+  // esbarrava no bloqueio de "precisa de foto" por engano, mesmo já tendo tirado uma
+  // (a S.quickPhotoBase64 só é preenchida quando a compressão termina).
+  S._processandoFotoQuick = true;
+  const grid = document.getElementById('quick-photo-grid');
+  grid.innerHTML = `<div class="photo-thumb"><i class="ti ti-loader-2" style="font-size:22px;color:var(--blue)"></i><span>Processando...</span></div>`;
   comprimirImagem(f).then(dataUrl => {
     S.quickPhotoBase64 = dataUrl;
-    const grid = document.getElementById('quick-photo-grid');
+    S._processandoFotoQuick = false;
     grid.innerHTML = `<div class="photo-thumb"><img src="${dataUrl}" alt="foto"></div>` +
       `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()">
         <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
         <span>Trocar foto</span>
       </div>`;
-  }).catch(err => toast('Erro ao processar foto: ' + (err.message||err)));
+  }).catch(err => {
+    S._processandoFotoQuick = false;
+    toast('Erro ao processar foto: ' + (err.message||err));
+    grid.innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
+  });
   input.value = '';
 }
 
@@ -4542,6 +4555,12 @@ async function confirmarQuick() {
   // Bloqueia registrar sem nenhuma foto — tanto a foto única do registro rápido quanto
   // as fotos do modo completo contam. Pedido explícito: todo ponto (rápido ou completo)
   // precisa de pelo menos 1 foto antes de gravar.
+  // IMPORTANTE: se a foto acabou de ser tirada e ainda está sendo comprimida (processo
+  // assíncrono, leva um tempinho real no celular), avisa pra aguardar em vez de dizer
+  // "sem foto" — essa confusão era o bug relatado pela equipe de campo ("não salva na
+  // hora que bate a foto"): a pessoa tirava a foto e tentava salvar rápido demais,
+  // antes da compressão terminar, e esbarrava nesse bloqueio por engano.
+  if (S._processandoFotoQuick) { toast('⏳ Só um instante, a foto ainda está sendo processada...'); return; }
   const temFotoQuick = !!S.quickPhotoBase64;
   const temFotosCompleto = S.photosBase64 && S.photosBase64.length > 0;
   if (!temFotoQuick && !temFotosCompleto) {
@@ -4670,6 +4689,10 @@ function comprimirImagem(file) {
 async function handlePhotos(input) {
   const arquivos = Array.from(input.files);
   input.value = ''; // limpa já, antes de processar, para permitir selecionar os mesmos arquivos de novo se precisar
+  // Mesmo cuidado do registro rápido: compressão é assíncrona, então sinaliza "ainda
+  // processando" pro bloqueio de "precisa de foto" não disparar por engano se a pessoa
+  // tentar salvar rápido demais depois de anexar.
+  S._processandoFotosReg = true;
   for (const f of arquivos) {
     try {
       const dataUrlComprimida = await comprimirImagem(f);
@@ -4681,6 +4704,7 @@ async function handlePhotos(input) {
       toast('Erro ao processar foto: ' + (err.message||err));
     }
   }
+  S._processandoFotosReg = false;
 }
 function renderPhotos() {
   const g = document.getElementById('photo-grid');

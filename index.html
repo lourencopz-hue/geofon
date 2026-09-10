@@ -713,6 +713,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <div class="config-nav-item" data-gestao-section="pontos" onclick="mostrarSecaoGestao('pontos')">
           <i class="ti ti-list-details"></i> <span>Pontos registrados</span>
         </div>
+        <div class="config-nav-item" data-gestao-section="lista" onclick="mostrarSecaoGestao('lista')">
+          <i class="ti ti-list-check"></i> <span>Lista</span>
+        </div>
       </div>
 
       <div class="config-content">
@@ -745,17 +748,55 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
         <div id="gestaosec-camadas" class="config-section-panel hidden">
           <div class="section-title" style="margin-bottom:10px">Carregar arquivos KML / GeoJSON</div>
-          <div class="upload-zone" onclick="document.getElementById('up-pc').click()">
-            <i class="ti ti-map-2"></i>
-            <strong>Subir camada geográfica</strong>
-            <p>DMC, redes ou limites municipais</p>
+          <div class="card" style="background:var(--amber-l);margin-bottom:14px">
+            <p style="font-size:11.5px;color:var(--amber);line-height:1.6">
+              Escolha o tipo certo antes de subir — DMC (contorno/polígono) e Rede (tubulação) precisam ir em zonas diferentes, senão o app não sabe categorizar o arquivo direito.
+            </p>
           </div>
-          <input type="file" id="up-pc" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'manage')">
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="upload-zone" style="flex:1;min-width:200px" onclick="document.getElementById('up-pc-dmc').click()">
+              <i class="ti ti-map-2"></i>
+              <strong>Subir contorno de DMC</strong>
+              <p>Arquivo com o polígono/curva do DMC</p>
+            </div>
+            <div class="upload-zone" style="flex:1;min-width:200px" onclick="document.getElementById('up-pc-redes').click()">
+              <i class="ti ti-line-dashed"></i>
+              <strong>Subir rede</strong>
+              <p>Arquivo com a tubulação (linhas)</p>
+            </div>
+          </div>
+          <input type="file" id="up-pc-dmc" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'dmc')">
+          <input type="file" id="up-pc-redes" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'redes')">
         </div>
 
         <div id="gestaosec-pontos" class="config-section-panel hidden" style="max-width:none">
           <div class="section-title" style="margin-bottom:10px">Todos os pontos registrados</div>
           <div id="manage-table"></div>
+        </div>
+
+        <div id="gestaosec-lista" class="config-section-panel hidden" style="max-width:none">
+          <div class="section-title" style="margin-bottom:10px">Lista</div>
+          <div class="filter-bar" style="margin-bottom:10px">
+            <select id="flpc-periodo" onchange="renderLeakListDesktop()">
+              <option value="">Qualquer data</option>
+              <option value="hoje">Hoje</option>
+              <option value="ontem">Ontem</option>
+              <option value="semana">Esta semana</option>
+            </select>
+            <select id="flpc-cidade" onchange="renderLeakListDesktop()">
+              <option value="">Todas as cidades</option>
+            </select>
+            <select id="flpc-sev" onchange="renderLeakListDesktop()">
+              <option value="">Todas severidades</option>
+              <option value="alta">Alta</option>
+              <option value="media">Média</option>
+              <option value="baixa">Baixa</option>
+            </select>
+            <select id="flpc-equipe" onchange="renderLeakListDesktop()">
+              <option value="">Todas equipes</option>
+            </select>
+          </div>
+          <div id="leak-list-wrap-pc" class="section"></div>
         </div>
       </div>
     </div>
@@ -3994,7 +4035,7 @@ function updateIdPreviewQuick() {
 // ================================================================
 function populateSelects() {
   const cidadeIds = ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade','nc-prefixo'];
-  ['reg-cidade','fl-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade','prog-cidade'].forEach(id => {
+  ['reg-cidade','fl-cidade','flpc-cidade','quick-cidade','pc-fc','rep-cidade','ne-cidade','prog-cidade'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     const cur = el.value;
@@ -4007,15 +4048,16 @@ function populateSelects() {
     el.value = cur;
   });
   // Equipes no filtro
-  const flEq = document.getElementById('fl-equipe');
-  if (flEq) {
+  ['fl-equipe','flpc-equipe'].forEach(id => {
+    const flEq = document.getElementById(id);
+    if (!flEq) return;
     while (flEq.options.length > 1) flEq.remove(1);
     S.equipes.forEach(e => {
       const o = document.createElement('option');
       o.value = e.id; o.textContent = `${e.codigo} - ${e.nome.split(' - ')[0]}`;
       flEq.appendChild(o);
     });
-  }
+  });
   // Equipes relatório
   const repEq = document.getElementById('rep-equipe');
   if (repEq) {
@@ -4915,6 +4957,43 @@ function dataNoPeriodo(l, periodo) {
   return true;
 }
 
+// Item da Lista (cartão com foto, parecer, botões OK/SCI) — usado tanto no celular
+// (Campo → Lista) quanto no Desktop (Gestão → Lista), pra não duplicar a mesma marcação
+// duas vezes e garantir que os dois fiquem sempre idênticos.
+function construirItemLeakHTML(l) {
+  const c=S.cidades.find(c=>c.id===l.cidade);
+  const temFoto = l.fotosUrls && l.fotosUrls.length;
+  const cfgL = S.camposLista || {};
+  const codigoPrefixo = (cfgL.codigoAS && c?.codigoAS) ? c.codigoAS + ' ' : '';
+  const linhaRua = (cfgL.rua && l.rua) ? `<div class="lmeta" style="margin-top:2px">${l.rua}</div>` : '';
+  // Número da AS, se já preenchido, aparece direto na linha do tipo — sem precisar
+  // abrir a janela do SCI só pra conferir.
+  const asInline = l.osNumero ? ` <span style="color:var(--green);font-weight:600;font-family:'Segoe UI',Arial,sans-serif">- AS ${l.osNumero}</span>` : '';
+  return `<div class="leak-item" onclick="abrirDetalhesLeak('${l.id}')">
+      ${temFoto
+        ? `<img src="${l.fotosUrls[0]}" alt="" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="leak-dot ${l.severidade}"></div>`
+      }
+      <div class="leak-info">
+        <div class="lid">${l.id}${l.tipo?` <span style="color:var(--text);font-weight:600;font-family:'Segoe UI',Arial,sans-serif">- ${l.tipo}</span>`:` <span style="color:var(--text2);font-weight:400;font-family:'Segoe UI',Arial,sans-serif">(aguardando complementação)</span>`}${asInline}</div>
+        <div class="lmeta">${codigoPrefixo}${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
+        ${(l.tipo||l.desc)?`<div class="lmeta" style="margin-top:2px">${gerarParecerAutomatico(l)}</div>`:''}
+        ${linhaRua}
+      </div>
+      ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
+      <button onclick="event.stopPropagation();toggleConsertado('${l.id}')" title="${l.consertado?'Vazamento consertado — toque para desmarcar':'Marcar como consertado'}"
+        style="background:none;border:1px solid ${l.consertado?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.consertado?'var(--green)':'var(--text3)'}">
+        <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}" style="font-size:15px"></i>
+        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">OK</span>
+      </button>
+      <button onclick="event.stopPropagation();abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — toque para ver/editar':'Marcar AS como aberta'}"
+        style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.osAberta?'var(--green)':'var(--text3)'}">
+        <i class="ti ${l.osAberta?'ti-clipboard-check':'ti-clipboard'}" style="font-size:15px"></i>
+        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">SCI</span>
+      </button>
+    </div>`;
+}
+
 function renderLeakList() {
   const fc = document.getElementById('fl-cidade')?.value||'';
   const fs = document.getElementById('fl-sev')?.value||'';
@@ -4932,39 +5011,29 @@ function renderLeakList() {
     wrap.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:30px">Nenhum ponto encontrado.</p>';
     return;
   }
-  wrap.innerHTML = filtered.map(l => {
-    const c=S.cidades.find(c=>c.id===l.cidade);
-    const temFoto = l.fotosUrls && l.fotosUrls.length;
-    const cfgL = S.camposLista || {};
-    // Código do município (AS) entra ANTES do nome da cidade, na mesma linha de
-    // cidade/DMC/data — não fica mais junto da rua, porque a rua vai ganhar um código
-    // próprio (de outro sistema) mais pra frente, e não queremos misturar os dois.
-    const codigoPrefixo = (cfgL.codigoAS && c?.codigoAS) ? c.codigoAS + ' ' : '';
-    const linhaRua = (cfgL.rua && l.rua) ? `<div class="lmeta" style="margin-top:2px">${l.rua}</div>` : '';
-    return `<div class="leak-item" onclick="abrirDetalhesLeak('${l.id}')">
-      ${temFoto
-        ? `<img src="${l.fotosUrls[0]}" alt="" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0" loading="lazy" onerror="this.style.display='none'">`
-        : `<div class="leak-dot ${l.severidade}"></div>`
-      }
-      <div class="leak-info">
-        <div class="lid">${l.id}${l.tipo?` <span style="color:var(--text);font-weight:600;font-family:'Segoe UI',Arial,sans-serif">- ${l.tipo}</span>`:` <span style="color:var(--text2);font-weight:400;font-family:'Segoe UI',Arial,sans-serif">(aguardando complementação)</span>`}</div>
-        <div class="lmeta">${codigoPrefixo}${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
-        ${(l.tipo||l.desc)?`<div class="lmeta" style="margin-top:2px">${gerarParecerAutomatico(l)}</div>`:''}
-        ${linhaRua}
-      </div>
-      ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
-      <button onclick="event.stopPropagation();toggleConsertado('${l.id}')" title="${l.consertado?'Vazamento consertado — toque para desmarcar':'Marcar como consertado'}"
-        style="background:none;border:1px solid ${l.consertado?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.consertado?'var(--green)':'var(--text3)'}">
-        <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}" style="font-size:15px"></i>
-        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">OK</span>
-      </button>
-      <button onclick="event.stopPropagation();abrirModalOS('${l.id}')" title="${l.osAberta?'AS aberta — toque para ver/editar':'Marcar AS como aberta'}"
-        style="background:none;border:1px solid ${l.osAberta?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.osAberta?'var(--green)':'var(--text3)'}">
-        <i class="ti ${l.osAberta?'ti-clipboard-check':'ti-clipboard'}" style="font-size:15px"></i>
-        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">SCI</span>
-      </button>
-    </div>`;
-  }).join('');
+  wrap.innerHTML = filtered.map(construirItemLeakHTML).join('');
+}
+
+// Mesma Lista, só que dentro de Gestão (Desktop) — filtros próprios (flpc-*), pra não
+// precisar trocar de modo/aba só pra marcar AS ou "consertado" em vários pontos seguidos.
+function renderLeakListDesktop() {
+  const wrap = document.getElementById('leak-list-wrap-pc');
+  if (!wrap) return;
+  const fc = document.getElementById('flpc-cidade')?.value||'';
+  const fs = document.getElementById('flpc-sev')?.value||'';
+  const fe = document.getElementById('flpc-equipe')?.value||'';
+  const fp = document.getElementById('flpc-periodo')?.value||'';
+  const filtered = S.leaks.filter(l=>
+    (!fc||l.cidade===fc)&&
+    (!fs||l.severidade===fs)&&
+    (!fe||l.equipe===fe)&&
+    dataNoPeriodo(l, fp)
+  ).slice().reverse();
+  if (!filtered.length) {
+    wrap.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:30px">Nenhum ponto encontrado.</p>';
+    return;
+  }
+  wrap.innerHTML = filtered.map(construirItemLeakHTML).join('');
 }
 
 // ================================================================
@@ -5559,9 +5628,17 @@ async function buscarGeometriaBruta(camadaId, silencioso) {
   } catch(e) {
     if (!silencioso) {
       const pareceCors = /failed to fetch/i.test(e.message||'');
-      toast(pareceCors
-        ? '⚠️ Erro de CORS ao ler geometria — configure o CORS do bucket do Storage'
-        : 'Erro ao ler geometria da camada: ' + (e.message||e));
+      // Evita o mesmo aviso repetido várias vezes seguidas (ex.: 3 camadas falhando ao
+      // mesmo tempo no carregamento inicial) — mostra só uma vez a cada alguns segundos.
+      const agora = Date.now();
+      if (pareceCors) {
+        if (!S._ultimoAvisoCors || agora - S._ultimoAvisoCors > 8000) {
+          S._ultimoAvisoCors = agora;
+          toast('⚠️ Erro de CORS ao ler geometria do Storage — configuração do bucket precisa ser revisada (fale com quem administra o Firebase)');
+        }
+      } else {
+        toast('Erro ao ler geometria da camada: ' + (e.message||e));
+      }
     }
     console.warn('Erro ao buscar geometria de ' + camadaId + ':', e);
     return null;
@@ -7562,7 +7639,7 @@ function restaurarSecaoConfig() {
 // Mesma ideia da barra lateral de Configurações, aplicada à Gestão — "Cidades e DMCs",
 // "Carregar camadas" e "Pontos registrados" cada uma na sua tela, em vez das duas
 // colunas fixas de antes.
-const GESTAO_SECOES = ['cidades-dmc', 'camadas', 'pontos'];
+const GESTAO_SECOES = ['cidades-dmc', 'camadas', 'pontos', 'lista'];
 function mostrarSecaoGestao(nome) {
   if (!GESTAO_SECOES.includes(nome)) nome = GESTAO_SECOES[0];
   GESTAO_SECOES.forEach(id => {

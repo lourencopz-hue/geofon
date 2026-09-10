@@ -1163,6 +1163,29 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<div class="modal-overlay" id="modal-vincular-dmc">
+  <div class="modal" style="max-width:440px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Vincular arquivo a um DMC</h3>
+    <p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+      Não encontrei automaticamente um DMC correspondente a "<b id="vincular-dmc-nome-kml"></b>" nesta cidade.
+    </p>
+    <div id="vincular-dmc-sugestao"></div>
+    <div class="field">
+      <label>Ou escolha um DMC já cadastrado</label>
+      <select id="vincular-dmc-select"></select>
+    </div>
+    <button class="btn primary btn-block" style="justify-content:center;margin-bottom:8px" onclick="confirmarVinculoDMCSelect()">
+      <i class="ti ti-link"></i> Vincular ao DMC selecionado
+    </button>
+    <button class="btn btn-block" style="justify-content:center;margin-bottom:8px" onclick="confirmarVinculoDMCNovo()">
+      <i class="ti ti-plus"></i> Criar como novo DMC "<span id="vincular-dmc-nome-kml2"></span>"
+    </button>
+    <button class="btn btn-block" style="justify-content:center;background:var(--bg2)" onclick="cancelarVinculoDMC()">
+      Cancelar — não vincular este arquivo
+    </button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-remover-dmc-kml">
   <div class="modal" style="max-width:400px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Este DMC tem uma camada de KML vinculada</h3>
@@ -1538,7 +1561,7 @@ const DMC_SEM_DMC = 'Sem DMC';
 // funcionando sem precisar de uma migração manual separada.
 function normalizarDMC(d) {
   if (typeof d === 'string') {
-    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null };
+    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null };
   }
   return {
     nome: d.nome || '', sigla: d.sigla || '', ligacoes: (d.ligacoes ?? null),
@@ -1547,7 +1570,13 @@ function normalizarDMC(d) {
     ultimaAtualizacao: d.ultimaAtualizacao || null,
     // Cor do contorno no mapa — sobrescreve a cor original do arquivo KML, sem precisar
     // editar/reexportar a curva. null = mantém a cor que veio do arquivo, como sempre foi.
-    corPersonalizada: d.corPersonalizada || null
+    corPersonalizada: d.corPersonalizada || null,
+    // Vínculo explícito com o nome da feature dentro do KML — usado quando o nome real
+    // do arquivo não bate com o nome cadastrado do DMC (ex.: erro de digitação na
+    // origem, tipo "Linha Batistta" vs "Linha Batista") e a pessoa confirma manualmente
+    // que aquele arquivo É esse DMC. Sem isso, o vínculo automático por nome nunca
+    // acharia esse KML.
+    nomeFeatureKml: d.nomeFeatureKml || null
   };
 }
 // Normaliza todos os DMCs de uma cidade e garante que "Sem DMC" sempre exista nela.
@@ -1593,7 +1622,7 @@ const S = {
   // Quais campos aparecem no popup do mapa / card de detalhes. "foto" sempre é tentada
   // primeiro (se existir), os demais campos são exibidos na ordem desta lista.
   // Configurável em Configurações → Exibição (renderConfigCamposPopup).
-  camposPopup: { data:true, severidade:true, tipo:true, dmc:false, servico:false, desc:false, diam:false, rua:false },
+  camposPopup: { data:true, severidade:true, tipo:true, dmc:false, servico:false, desc:false, diam:false, rua:false, pavimento:false, parecer:false },
   // Quais campos aparecem direto em cada item da Lista, sem precisar tocar pra abrir os
   // detalhes — pensado especialmente pra quem precisa da rua e do código do município
   // (AS) rapidinho, sem abrir cada ponto um por um. Desligados por padrão pra manter a
@@ -1601,7 +1630,7 @@ const S = {
   camposLista: { rua:false, codigoAS:false },
   // Quais campos entram na mensagem de WhatsApp enviada ao notificar a equipe.
   // Todos ligados por padrão, para manter o comportamento atual quem já usa o app.
-  camposWhatsApp: { rua:true, dmc:true, tipo:true, servico:true, diam:true, severidade:true, equipe:true, obs:true, localizacao:true, data:true },
+  camposWhatsApp: { rua:true, dmc:true, tipo:true, servico:true, diam:true, severidade:true, equipe:true, obs:true, localizacao:true, data:true, pavimento:false, parecer:false },
   // Cor da rede por diâmetro (mm) — { "50": "#RRGGBB", "100": "#RRGGBB", ... }. Prioridade
   // na hora de desenhar: cor por diâmetro (se o KML tiver o diâmetro identificável e
   // houver uma regra aqui) > cor original do KML (_corKml) > cor padrão da camada.
@@ -1840,6 +1869,7 @@ function iniciarSincronizacaoFirestore() {
     S.leaks = snap.docs.map(d => d.data()).filter(l => !l.cancelado);
     addFieldMarkers();
     renderLeakList();
+  renderLeakListDesktop();
     renderManage();
     if (mapPC) refreshPCMap();
     if (document.getElementById('register-select-wrap') && !document.getElementById('register-select-wrap').classList.contains('hidden')) {
@@ -1917,6 +1947,7 @@ function iniciarSincronizacaoFirestore() {
     refreshPCMap();
     redesenharCamadasComCorAtualizada();
     renderLeakList();
+  renderLeakListDesktop();
   });
 
   // Campanhas de geofonamento — sincronizadas em tempo real, para que toda a equipe
@@ -2316,7 +2347,7 @@ function popularSelectGeofoneEquipe() {
 const CAMPOS_POPUP_LABELS = {
   data: 'Data e hora', severidade: 'Severidade', tipo: 'Tipo de vazamento',
   dmc: 'DMC / Setor', servico: 'Código de serviço', diam: 'Diâmetro estimado',
-  rua: 'Rua', desc: 'Observações / Descrição'
+  rua: 'Rua', pavimento: 'Tipo de pavimento', desc: 'Observações / Descrição', parecer: 'Parecer (gerado automaticamente)'
 };
 function renderConfigCamposPopup() {
   const el = document.getElementById('config-campos-popup');
@@ -2360,6 +2391,7 @@ async function toggleCampoLista(campo, valor) {
 const CAMPOS_WHATSAPP_LABELS = {
   rua: 'Endereço', dmc: 'DMC / Setor', tipo: 'Tipo de vazamento', servico: 'Código de serviço',
   diam: 'Diâmetro estimado', severidade: 'Severidade', equipe: 'Equipe', obs: 'Observações',
+  pavimento: 'Tipo de pavimento', parecer: 'Parecer (gerado automaticamente)',
   localizacao: 'Link do mapa', data: 'Data e hora'
 };
 function renderConfigCamposWhatsApp() {
@@ -3901,7 +3933,9 @@ function popupHtml(l) {
   if (cfg.rua && l.rua) partes.push(`<div style="font-size:11.5px;color:#555">Endereço: ${l.rua}</div>`);
   if (cfg.servico && l.servico) partes.push(`<div style="font-size:11px;color:#666">${l.servico}</div>`);
   if (cfg.diam && l.diam) partes.push(`<div style="font-size:11px;color:#666">Ø ${l.diam}mm</div>`);
+  if (cfg.pavimento && l.pavimento) partes.push(`<div style="font-size:11px;color:#666">Pavimento: ${LABEL_PAVIMENTO_PARECER[l.pavimento] || (l.pavimento==='sem_revestimento'?'sem revestimento':l.pavimento)}</div>`);
   if (cfg.desc && l.desc) partes.push(`<div style="font-size:11px;color:#666;margin-top:3px">${l.desc}</div>`);
+  if (cfg.parecer && (l.tipo || l.desc)) partes.push(`<div style="font-size:11px;color:#666;margin-top:3px">${gerarParecerAutomatico(l)}</div>`);
   if (cfg.data) partes.push(`<div style="font-size:10.5px;color:#888;margin-top:4px">${l.data}</div>`);
 
   return partes.join('');
@@ -4323,7 +4357,7 @@ async function salvarPonto() {
     }).catch(err => console.warn('Erro ao salvar fotos do vazamento ' + id + ':', err));
   }
 
-  S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, obs, diam, rua, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };
+  S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, pavimento: S.pavimentoAtual || null, obs, diam, rua, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };
 
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
@@ -4646,7 +4680,7 @@ async function confirmarQuick() {
   S._ultimoPontoSalvo = {
     id, cidade:cid, equipeId:eqId, dmc:dmcPadrao,
     tipo: tipoNome || 'Não categorizado', servico: servicoTexto,
-    severidade:S.sevQuick, obs:desc, diam:diamCompleto, rua:ruaCompleto,
+    severidade:S.sevQuick, pavimento: S.pavimentoQuick || null, obs:desc, diam:diamCompleto, rua:ruaCompleto,
     lat:S.pos.lat, lng:S.pos.lng, fotosBase64: temFoto?[S.quickPhotoBase64]:[]
   };
   S.quickPhotoBase64 = null;
@@ -4810,9 +4844,11 @@ function enviarWhatsAppDoponto(ponto) {
     (cfg.tipo !== false ? '🔧 *Tipo:* ' + ponto.tipo + '\n' : '') +
     (cfg.servico !== false && ponto.servico ? '🛠️ *Serviço:* ' + ponto.servico + '\n' : '') +
     (cfg.diam !== false && ponto.diam ? '📏 *Diâmetro est.:* ' + ponto.diam + 'mm\n' : '') +
+    (cfg.pavimento && ponto.pavimento ? '🧱 *Pavimento:* ' + (LABEL_PAVIMENTO_PARECER[ponto.pavimento] || (ponto.pavimento==='sem_revestimento'?'sem revestimento':ponto.pavimento)) + '\n' : '') +
     (cfg.severidade !== false ? '⚠️ *Severidade:* ' + ponto.severidade.toUpperCase() + '\n' : '') +
     (cfg.equipe !== false ? '👥 *Equipe:* ' + (eq?eq.nome:'—') + '\n' : '') +
     (cfg.obs !== false ? '📝 *Obs:* ' + (ponto.obs||'—') + '\n\n' : '\n') +
+    (cfg.parecer && (ponto.tipo || ponto.obs) ? '📋 *Parecer:* ' + gerarParecerAutomatico({...ponto, desc: ponto.obs}) + '\n\n' : '') +
     // O link fica dentro de uma frase (não solto numa linha própria) para o WhatsApp
     // não gerar o card grande de prévia de mapa — continua clicável, só não "ocupa a tela".
     (cfg.localizacao !== false ? '📍 Toque para abrir no mapa: ' + maps + ' .\n' : '') +
@@ -4950,6 +4986,7 @@ async function toggleConsertado(leakId) {
   }
   l.consertado = novoValor;
   renderLeakList();
+  renderLeakListDesktop();
   renderManage();
   toast(novoValor ? '✓ Marcado como consertado' : 'Desmarcado');
 }
@@ -5071,6 +5108,7 @@ async function salvarOS() {
   if (l) { l.osAberta = aberta; l.osNumero = numeroOS; delete l.osDataHora; delete l.osMatricula; }
   closeModal('modal-os');
   renderLeakList();
+  renderLeakListDesktop();
   renderManage();
   toast(aberta ? '✓ AS marcada como aberta' : 'AS desmarcada');
 }
@@ -5176,6 +5214,135 @@ S.dmcCidadeFiltro = '';
 // Upload de REDE afeta todos os DMCs da cidade (compartilham a mesma rede); upload de
 // DMC (polígono) só precisa recalcular os DMCs cujo nome está NESSE arquivo específico
 // — os outros DMCs da cidade não mudaram de contorno, não há motivo pra mexer neles.
+// ================================================================
+// CONFIRMAÇÃO DE VÍNCULO DMC↔KML NO UPLOAD — quando o nome da feature no KML não bate
+// (nem por aproximação) com nenhum DMC já cadastrado na cidade, em vez de criar um DMC
+// novo silenciosamente (o que gerava duplicado quando era só erro de digitação na
+// origem, ex.: "Linha Batista" vs "Linha Batistta"), pergunta o que fazer: vincular a um
+// DMC já existente, criar como novo mesmo, ou cancelar.
+// ================================================================
+
+// Distância de edição simples (Levenshtein) — só usada pra SUGERIR o candidato mais
+// parecido; nunca decide/vincula sozinha, é só o ponto de partida pra pessoa confirmar.
+function distanciaEdicao(a, b) {
+  a = (a||'').toUpperCase(); b = (b||'').toUpperCase();
+  const m = a.length, n = b.length;
+  const dp = Array.from({length: m+1}, () => new Array(n+1).fill(0));
+  for (let i=0;i<=m;i++) dp[i][0]=i;
+  for (let j=0;j<=n;j++) dp[0][j]=j;
+  for (let i=1;i<=m;i++) for (let j=1;j<=n;j++) {
+    dp[i][j] = a[i-1]===b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  }
+  return dp[m][n];
+}
+
+S._filaVinculoDMC = [];
+S._vinculoDMCAtual = null;
+
+async function verificarVinculoDMCAposUpload(geojson, cidadeId) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return;
+  const nomes = new Set();
+  (geojson.features||[]).forEach(ft => {
+    if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) return;
+    const p = ft.properties || {};
+    const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+    if (nome) nomes.add(nome.trim());
+  });
+  // Só entra na fila de confirmação quem NÃO tem match confiável nenhum (nem por
+  // nomesDMCBatem, nem por um vínculo manual já feito antes) — pra quem já funciona
+  // liso hoje, continua liso, sem interromper nada.
+  const pendentes = [...nomes].filter(n => !c.dmcs.some(d => nomesDMCBatem(d.nome, n) || (d.nomeFeatureKml && d.nomeFeatureKml.trim() === n)));
+  if (!pendentes.length) return;
+  S._filaVinculoDMC.push(...pendentes.map(n => ({ nome: n, cidadeId })));
+  processarProximoVinculoDMC();
+}
+
+function processarProximoVinculoDMC() {
+  if (!S._filaVinculoDMC.length) return;
+  if (document.getElementById('modal-vincular-dmc').classList.contains('open')) return; // já tem um em andamento
+  const { nome, cidadeId } = S._filaVinculoDMC[0];
+  S._vinculoDMCAtual = { nome, cidadeId };
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) { S._filaVinculoDMC.shift(); processarProximoVinculoDMC(); return; }
+
+  document.getElementById('vincular-dmc-nome-kml').textContent = nome;
+  document.getElementById('vincular-dmc-nome-kml2').textContent = nome;
+
+  const candidatos = c.dmcs.filter(d => d.nome !== DMC_SEM_DMC);
+  let melhor = null, melhorDist = Infinity;
+  candidatos.forEach(d => {
+    const dist = distanciaEdicao(nomeBaseDMC(d.nome), nomeBaseDMC(nome));
+    if (dist < melhorDist) { melhorDist = dist; melhor = d; }
+  });
+  const sugestaoEl = document.getElementById('vincular-dmc-sugestao');
+  // Distância pequena (até 3 caracteres) é o território típico de erro de digitação —
+  // além disso já vira mais palpite aleatório que sugestão de verdade.
+  if (melhor && melhorDist <= 3) {
+    sugestaoEl.innerHTML = `<div class="card" style="background:var(--blue-l);margin-bottom:10px">
+      <p style="font-size:12px;color:var(--blue-d)">Parece com <b>"${melhor.nome}"</b>, já cadastrado — pode ser só um erro de digitação no arquivo?</p>
+      <button class="btn sm primary" style="margin-top:6px" onclick="vincularDMCExistente('${melhor.nome.replace(/'/g,"\\'")}')">Vincular a "${melhor.nome}"</button>
+    </div>`;
+  } else {
+    sugestaoEl.innerHTML = '';
+  }
+
+  const sel = document.getElementById('vincular-dmc-select');
+  sel.innerHTML = '<option value="">Selecione...</option>' + candidatos.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
+
+  openModal('modal-vincular-dmc');
+}
+
+async function vincularDMCExistente(nomeDMC) {
+  const { nome, cidadeId } = S._vinculoDMCAtual;
+  const c = S.cidades.find(c => c.id === cidadeId);
+  const d = c.dmcs.find(x => x.nome === nomeDMC);
+  if (!d) return;
+  // Se esse DMC já parece ter uma camada vinculada, confirma antes de trocar — evita
+  // perder o vínculo anterior sem perceber.
+  const jaTemPoligono = await encontrarPoligonoDMC(cidadeId, d.nome, d.nomeFeatureKml);
+  if (jaTemPoligono) {
+    if (!confirm('O DMC "' + d.nome + '" já parece ter uma camada de KML vinculada. Confirma vincular este novo arquivo mesmo assim (o vínculo antigo deixa de ser usado)?')) return;
+  }
+  d.nomeFeatureKml = nome;
+  await salvarCidadeFirestore(c);
+  toast('✓ Vinculado a "' + d.nome + '"');
+  fecharVinculoDMCAtual();
+  await recalcularExtensaoRedeCidade(cidadeId, d.nome);
+  renderConfigCidades();
+  renderDMCsEditaveis(cidadeId);
+}
+
+function confirmarVinculoDMCSelect() {
+  const nomeDMC = document.getElementById('vincular-dmc-select').value;
+  if (!nomeDMC) { toast('Escolha um DMC na lista, ou crie como novo'); return; }
+  vincularDMCExistente(nomeDMC);
+}
+
+async function confirmarVinculoDMCNovo() {
+  const { nome, cidadeId } = S._vinculoDMCAtual;
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (c && !c.dmcs.some(d => nomesDMCBatem(d.nome, nome))) {
+    c.dmcs.push(normalizarDMC(nome));
+    await salvarCidadeFirestore(c);
+    toast('✓ "' + nome + '" criado como novo DMC');
+  }
+  fecharVinculoDMCAtual();
+  renderConfigCidades();
+}
+
+function cancelarVinculoDMC() {
+  toast('Arquivo não vinculado a nenhum DMC');
+  fecharVinculoDMCAtual();
+}
+
+function fecharVinculoDMCAtual() {
+  closeModal('modal-vincular-dmc');
+  S._filaVinculoDMC.shift();
+  S._vinculoDMCAtual = null;
+  setTimeout(processarProximoVinculoDMC, 300);
+}
+
 async function dispararRecalculoExtensaoAposUpload(tipo, geojson, cidadeId) {
   if (tipo === 'redes') {
     const { atualizados } = await recalcularExtensaoRedeCidade(cidadeId);
@@ -5227,6 +5394,7 @@ function handleLayerUpload(input, tipo) {
             definirVisibilidadeLocal(novoId, true);
             toast('✓ "' + f.name + '" carregada e disponível para todos!');
             centralizarEmGeoJSON(geojson);
+            if (tipo === 'dmc') await verificarVinculoDMCAposUpload(geojson, cidadeId);
             dispararRecalculoExtensaoAposUpload(tipo, geojson, cidadeId);
           }
         }
@@ -5280,6 +5448,7 @@ async function confirmarCidadeCamada() {
     definirVisibilidadeLocal(novoId, true);
     toast('✓ "' + pend.nome + '" carregada e disponível para todos!');
     centralizarEmGeoJSON(pend.geojson);
+    if (pend.tipo === 'dmc') await verificarVinculoDMCAposUpload(pend.geojson, cidadeId);
     dispararRecalculoExtensaoAposUpload(pend.tipo, pend.geojson, cidadeId);
   }
   S._camadaPendenteUpload = null;
@@ -5592,7 +5761,7 @@ function removerGeometriaDoMapa(item) {
 // Acha, entre todas as camadas de DMC já cadastradas de uma cidade, a feature (polígono)
 // cujo nome bate com o DMC procurado — mesma lista de propriedades candidatas usada em
 // sincronizarDMCsCidade/detectarCidadeEDMCPorCoordenada, pra manter os dois consistentes.
-async function encontrarPoligonoDMC(cidadeId, dmcNome) {
+async function encontrarPoligonoDMC(cidadeId, dmcNome, nomeFeatureKmlOverride) {
   const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   for (const item of camadas) {
     await garantirGeometriaCarregada(item);
@@ -5601,7 +5770,11 @@ async function encontrarPoligonoDMC(cidadeId, dmcNome) {
       if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) continue;
       const p = ft.properties || {};
       const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
-      if (nome && nomesDMCBatem(nome, dmcNome)) return ft;
+      if (!nome) continue;
+      // Vínculo manual explícito tem prioridade — resolve o caso de nome com erro de
+      // digitação na origem, que nunca bateria pelo nomesDMCBatem sozinho.
+      if (nomeFeatureKmlOverride && nome.trim() === nomeFeatureKmlOverride.trim()) return ft;
+      if (nomesDMCBatem(nome, dmcNome)) return ft;
     }
   }
   return null;
@@ -5635,9 +5808,9 @@ function comprimentoDentroDoPoligono(feature, poligono, passoM = 10) {
 // Recalcula a extensão real de um DMC específico, recortando toda a rede já carregada
 // da cidade pelo polígono desse DMC. Retorna o total em metros (ou null se faltar
 // polígono ou rede — nesse caso o app continua usando a extensão percorrida aproximada).
-async function calcularExtensaoRedeDMC(cidadeId, dmcNome) {
+async function calcularExtensaoRedeDMC(cidadeId, dmcNome, nomeFeatureKmlOverride) {
   if (typeof turf === 'undefined') return null;
-  const poligono = await encontrarPoligonoDMC(cidadeId, dmcNome);
+  const poligono = await encontrarPoligonoDMC(cidadeId, dmcNome, nomeFeatureKmlOverride);
   if (!poligono) return null;
   const camadasRede = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
   if (!camadasRede.length) return null;
@@ -5671,7 +5844,7 @@ async function recalcularExtensaoRedeCidade(cidadeId, apenasDmcNome) {
   const dmcsAlvo = c.dmcs.filter(d => d.nome !== DMC_SEM_DMC && (!apenasDmcNome || nomesDMCBatem(d.nome, apenasDmcNome)));
   let atualizados = 0;
   for (const d of dmcsAlvo) {
-    const metros = await calcularExtensaoRedeDMC(cidadeId, d.nome);
+    const metros = await calcularExtensaoRedeDMC(cidadeId, d.nome, d.nomeFeatureKml);
     if (metros != null) {
       d.extensaoRede = metros;
       d.ultimaAtualizacao = new Date().toISOString();
@@ -6345,7 +6518,7 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
         <i class="ti ti-map-pin-off" style="font-size:13px"></i> Sem DMC <span style="margin-left:auto;font-size:10px">(fixo — usado quando o ponto não pertence a nenhum DMC)</span>
       </div>`;
     }
-    const temCamada = nomesVinculados ? nomesVinculados.some(n => nomesDMCBatem(n, d.nome)) : null;
+    const temCamada = nomesVinculados ? nomesVinculados.some(n => nomesDMCBatem(n, d.nome) || (d.nomeFeatureKml && n.trim() === d.nomeFeatureKml.trim())) : null;
     const iconeVinculo = temCamada === null ? ''
       : temCamada ? '<i class="ti ti-map-check" style="color:var(--green);font-size:14px" title="Tem camada de KML vinculada"></i>'
       : '<i class="ti ti-map-pin-question" style="color:var(--amber);font-size:14px" title="Nenhuma camada de KML vinculada a este DMC ainda — a extensão de rede real não pode ser calculada até isso existir"></i>';
@@ -6448,7 +6621,7 @@ async function removerDMC(cidadeId, idx) {
   // vai recriar o DMC sozinha na próxima vez que essa camada for carregada, porque o
   // polígono continua existindo. Isso é exatamente o bug relatado: "o DMC volta a
   // aparecer depois". Por isso, avisa e oferece remover a camada também.
-  const poligonoVinculado = await encontrarPoligonoDMC(cidadeId, dmc.nome);
+  const poligonoVinculado = await encontrarPoligonoDMC(cidadeId, dmc.nome, dmc.nomeFeatureKml);
   if (poligonoVinculado) {
     S._dmcParaRemover = { cidadeId, idx };
     document.getElementById('remover-dmc-nome').textContent = dmc.nome;

@@ -552,7 +552,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             </div>
             <div class="field">
               <label>Observações / Descrição</label>
-              <textarea id="reg-obs" placeholder="Descreva o vazamento, condições do local, acesso ao ponto..."></textarea>
+              <textarea id="reg-obs" placeholder="Ex: Em frente ao 471, vários cavaletes com barulho, ponto mais alto foi onde foi demarcado"></textarea>
+              <p style="font-size:10px;color:var(--text2);margin-top:3px">Vai direto pra dentro do parecer (tipo, severidade e pavimento já entram automático) — não precisa repetir "vazamento" nem escrever ponto final.</p>
             </div>
           </div>
 
@@ -1092,7 +1093,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div class="field">
       <label>Descrição rápida</label>
-      <textarea id="quick-desc" placeholder="Descreva brevemente o vazamento..." style="min-height:56px"></textarea>
+      <textarea id="quick-desc" placeholder="Ex: Em frente ao 585, abrir na pedra brita, ramal pode estar atravessando" style="min-height:56px"></textarea>
+      <p style="font-size:10px;color:var(--text2);margin-top:3px">Vai direto pra dentro do parecer — não precisa repetir "vazamento" nem escrever ponto final.</p>
     </div>
     <div class="field">
       <label>Foto rápida <span style="color:var(--text3);font-weight:400">(pra lembrar onde era)</span></label>
@@ -4911,7 +4913,7 @@ function renderLeakList() {
       <div class="leak-info">
         <div class="lid">${l.id}${l.tipo?` <span style="color:var(--text);font-weight:600;font-family:'Segoe UI',Arial,sans-serif">- ${l.tipo}</span>`:` <span style="color:var(--text2);font-weight:400;font-family:'Segoe UI',Arial,sans-serif">(aguardando complementação)</span>`}</div>
         <div class="lmeta">${codigoPrefixo}${c?c.nome:l.cidade} · ${l.dmc} · ${l.data}</div>
-        ${l.desc?`<div class="lmeta" style="margin-top:2px">${l.desc}</div>`:''}
+        ${(l.tipo||l.desc)?`<div class="lmeta" style="margin-top:2px">${gerarParecerAutomatico(l)}</div>`:''}
         ${linhaRua}
       </div>
       ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
@@ -4952,13 +4954,44 @@ async function toggleConsertado(leakId) {
   toast(novoValor ? '✓ Marcado como consertado' : 'Desmarcado');
 }
 
-// Copia o parecer (observações/descrição) pro clipboard com um toque — antes precisava
-// selecionar o texto manualmente, incômodo no celular.
+// Monta um "parecer" pronto a partir dos próprios dados já preenchidos no registro —
+// tipo, severidade, observação e pavimento — em vez de só repetir a observação crua.
+// Frauda/Gato tem frase de abertura diferente (não "Vazamento de Fraude-Gato"), e
+// pavimento "sem revestimento" não usa "de" antes ("Em via sem revestimento", não
+// "Em via de sem revestimento").
+const LABEL_SEVERIDADE_PARECER = { baixa: 'baixa', media: 'média', alta: 'alta' };
+const LABEL_PAVIMENTO_PARECER = { asfalto: 'asfalto', concreto: 'concreto', lajota: 'lajota' };
+function gerarParecerAutomatico(l) {
+  const partes = [];
+  const tipo = (l.tipo || '').trim();
+  const ehFraude = /fraude/i.test(tipo);
+
+  if (ehFraude) {
+    partes.push('Possível Fraude/Gato');
+  } else if (tipo) {
+    const sevTxt = LABEL_SEVERIDADE_PARECER[l.severidade] || l.severidade;
+    partes.push('Vazamento de ' + tipo + (sevTxt ? ', ' + sevTxt + ' severidade' : ''));
+  }
+
+  if (l.desc) partes.push(l.desc.trim().replace(/\.$/, ''));
+
+  if (l.pavimento === 'sem_revestimento') {
+    partes.push('Em via sem revestimento');
+  } else if (l.pavimento && LABEL_PAVIMENTO_PARECER[l.pavimento]) {
+    partes.push('Em via de ' + LABEL_PAVIMENTO_PARECER[l.pavimento]);
+  }
+
+  return partes.filter(Boolean).join('. ') + '.';
+}
+
+// Copia o parecer (gerado automaticamente a partir do registro) pro clipboard com um
+// toque — antes precisava selecionar o texto manualmente, incômodo no celular.
 async function copiarParecer(leakId) {
   const l = S.leaks.find(l => l.id === leakId);
-  if (!l || !l.desc) { toast('Este ponto não tem parecer registrado'); return; }
+  if (!l || (!l.tipo && !l.desc)) { toast('Este ponto ainda não tem informação suficiente pra gerar um parecer'); return; }
+  const parecer = gerarParecerAutomatico(l);
   try {
-    await navigator.clipboard.writeText(l.desc);
+    await navigator.clipboard.writeText(parecer);
     toast('✓ Parecer copiado');
   } catch(err) {
     toast('⚠️ Não consegui copiar automaticamente — selecione o texto manualmente');
@@ -4984,8 +5017,8 @@ function abrirModalOS(leakId) {
   document.getElementById('os-resumo-endereco').textContent = l.rua || '';
   document.getElementById('os-resumo-servico').textContent = l.servico || '';
   const wrapParecer = document.getElementById('os-resumo-parecer-wrap');
-  document.getElementById('os-resumo-parecer').textContent = l.desc || 'Sem parecer registrado';
-  wrapParecer.style.opacity = l.desc ? '1' : '.6';
+  document.getElementById('os-resumo-parecer').textContent = (l.tipo || l.desc) ? gerarParecerAutomatico(l) : 'Sem parecer registrado';
+  wrapParecer.style.opacity = (l.tipo || l.desc) ? '1' : '.6';
 
   openModal('modal-os');
 }

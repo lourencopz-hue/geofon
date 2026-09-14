@@ -816,10 +816,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div class="panel" id="editor-dmc">
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg);flex-wrap:wrap">
-        <select id="editor-dmc-cidade" style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
+        <select id="editor-dmc-cidade" onchange="editorDMC_popularSelectDMC()" style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
           <option value="">Selecione a cidade...</option>
         </select>
-        <button class="btn sm" onclick="editorDMC_carregarExistentes()"><i class="ti ti-download"></i> Carregar DMCs desta cidade</button>
+        <select id="editor-dmc-especifico" disabled style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
+          <option value="">Todos os DMCs desta cidade</option>
+        </select>
+        <button class="btn sm" onclick="editorDMC_carregarExistentes()"><i class="ti ti-download"></i> Carregar</button>
         <button class="btn sm" onclick="editorDMC_importarKML()"><i class="ti ti-file-upload"></i> Importar KML</button>
         <input type="file" id="editor-dmc-import-input" accept=".kml,.geojson,.json" style="display:none" onchange="editorDMC_handleImport(this)">
         <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
@@ -827,10 +830,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       </div>
       <div class="card" style="margin:10px 14px 0;background:var(--blue-l)">
         <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-          <b>Fase 1:</b> desenhe, edite ou importe um KML pra ajustar, depois baixe o resultado. Ainda não salva direto no app — isso vem numa próxima etapa. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir).
+          <b>Fase 1:</b> desenhe, edite ou importe um KML pra ajustar, depois baixe o resultado. Ainda não salva direto no app — isso vem numa próxima etapa. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele.
         </p>
       </div>
-      <div id="editor-dmc-map" style="flex:1;margin-top:10px"></div>
+      <div id="editor-dmc-selecao-info" style="padding:0 14px;font-size:11.5px;color:var(--red);font-weight:600;min-height:16px;margin-top:4px"></div>
+      <div id="editor-dmc-map" style="flex:1;margin-top:6px"></div>
     </div>
   </div>
 
@@ -2803,7 +2807,12 @@ function iniciarSincronizacaoCamadas() {
         lgField: existente ? existente.lgField : null,
         lgPC: existente ? existente.lgPC : null,
         _geojson: existente ? existente._geojson : null,
-        _carregando: false
+        // Preserva uma busca já em andamento (se houver) através desse rebuild — sem
+        // isso, uma busca que começou antes do metadado atualizar ficava "órfã": ela
+        // ainda terminava, mas escrevia num objeto de item que não fazia mais parte de
+        // S.leafletLayers, e o item novo nunca via o resultado (causava busca duplicada
+        // e mais uma chance de dar a impressão de "carregamento ignorado").
+        _carregandoPromise: existente ? existente._carregandoPromise : null
       };
       S.leafletLayers[tipo].push(item);
       // Se este dispositivo já tinha marcado como visível e a geometria ainda não foi
@@ -3928,6 +3937,7 @@ function initPCMap() {
 // ================================================================
 let mapEditorDMC = null;
 let editorDMCLayerGroup = null; // guarda tudo que está desenhado/importado e editável agora
+let editorDMCSelecionadas = new Set(); // layers clicadas/selecionadas — controla o "baixar só isso"
 
 function initEditorDMCMap() {
   if (mapEditorDMC) return;
@@ -3936,10 +3946,14 @@ function initEditorDMCMap() {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapEditorDMC);
   editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
 
-  // Barra de ferramentas do próprio Geoman — desenhar polígono/linha/marcador, editar
-  // vértice, arrastar, excluir. Deixamos de fora círculo/retângulo/corte/rotação por
-  // enquanto, já que contorno de DMC é sempre polígono; a ferramenta já nasce genérica
-  // o bastante (linha incluída) pra futuramente desenhar rede também, sem refazer nada.
+  // Geoman já vem com um pacote de português do Brasil pronto — sem isso, a barra de
+  // ferramentas aparecia inteira em inglês.
+  mapEditorDMC.pm.setLang('pt_br');
+
+  // Barra de ferramentas do próprio Geoman — desenhar polígono/linha, editar vértice,
+  // arrastar, excluir. Ferramenta de texto (rótulo solto no mapa) desligada de
+  // propósito: não tem uso aqui, o nome do DMC já vem do cadastro, não de um texto
+  // desenhado à mão — só deixaria a barra mais confusa.
   mapEditorDMC.pm.addControls({
     position: 'topleft',
     drawMarker: false,
@@ -3948,6 +3962,7 @@ function initEditorDMCMap() {
     drawRectangle: false,
     drawPolygon: true,
     drawCircle: false,
+    drawText: false,
     editMode: true,
     dragMode: true,
     cutPolygon: false,
@@ -3955,9 +3970,16 @@ function initEditorDMCMap() {
     rotateMode: false,
   });
 
-  // Todo desenho novo feito na hora entra automaticamente no grupo editável
+  // Todo desenho novo feito na hora entra automaticamente no grupo editável, já com o
+  // clique-pra-selecionar habilitado (mesmo tratamento usado pra tudo que é carregado).
   mapEditorDMC.on('pm:create', (e) => {
     editorDMCLayerGroup.addLayer(e.layer);
+    editorDMC_habilitarSelecao(e.layer);
+  });
+  // Se a ferramenta de excluir do Geoman apagar uma layer que estava selecionada,
+  // limpa a seleção também — senão sobrava uma referência morta.
+  mapEditorDMC.on('pm:remove', (e) => {
+    if (editorDMCSelecionadas.delete(e.layer)) editorDMC_atualizarContadorSelecao();
   });
 
   popularSelectEditorDMCCidade();
@@ -3970,25 +3992,83 @@ function popularSelectEditorDMCCidade() {
   sel.innerHTML = '<option value="">Selecione a cidade...</option>' +
     [...S.cidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
   sel.value = atual;
+  editorDMC_popularSelectDMC();
 }
 
-// Carrega os DMCs já cadastrados da cidade escolhida pra dentro do editor, prontos
-// pra ajustar (reaproveita a mesma camada usada no resto do app — não duplica nada).
+// Segundo seletor, com os DMCs da cidade escolhida — pra carregar só UM por vez, em
+// vez de trazer todos os DMCs da cidade de uma vez (o que atrapalhava tanto pra editar
+// quanto na hora de baixar, como foi relatado).
+function editorDMC_popularSelectDMC() {
+  const selCidade = document.getElementById('editor-dmc-cidade');
+  const selDMC = document.getElementById('editor-dmc-especifico');
+  if (!selCidade || !selDMC) return;
+  const c = S.cidades.find(c => c.id === selCidade.value);
+  const dmcs = c ? c.dmcs.filter(d => d.nome !== DMC_SEM_DMC) : [];
+  selDMC.innerHTML = '<option value="">Todos os DMCs desta cidade</option>' +
+    dmcs.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
+  selDMC.disabled = !c;
+}
+
+// Marca uma layer como selecionável: clicar destaca (fica vermelha) e permite baixar só
+// ela; clicar de novo desmarca. Sem isso, "Baixar KML" sempre levava tudo que estava no
+// editor junto, mesmo quem só queria um DMC específico.
+function editorDMC_habilitarSelecao(layer) {
+  if (!layer.setStyle) return; // marcador não tem estilo de linha/preenchimento
+  layer._corOriginal = layer.options.color;
+  layer.on('click', (e) => {
+    // Não seleciona enquanto a ferramenta de edição/arrastar/exclusão do Geoman está
+    // ativa — nesses modos o clique já tem outro significado (editar vértice, etc.).
+    if (mapEditorDMC.pm.globalEditModeEnabled() || mapEditorDMC.pm.globalDragModeEnabled() || mapEditorDMC.pm.globalRemovalModeEnabled()) return;
+    L.DomEvent.stopPropagation(e);
+    const jaSelecionada = editorDMCSelecionadas.has(layer);
+    if (jaSelecionada) {
+      editorDMCSelecionadas.delete(layer);
+      layer.setStyle({ color: layer._corOriginal, weight: 3 });
+    } else {
+      editorDMCSelecionadas.add(layer);
+      layer.setStyle({ color: '#FF3B30', weight: 5 });
+    }
+    editorDMC_atualizarContadorSelecao();
+  });
+}
+
+function editorDMC_atualizarContadorSelecao() {
+  const el = document.getElementById('editor-dmc-selecao-info');
+  if (!el) return;
+  const n = editorDMCSelecionadas.size;
+  el.textContent = n ? `${n} selecionado(s) — "Baixar KML" vai exportar só isso` : '';
+}
+
+// Carrega os DMCs já cadastrados pra dentro do editor, prontos pra ajustar (reaproveita
+// a mesma camada usada no resto do app — não duplica nada). Se um DMC específico foi
+// escolhido no segundo seletor, carrega só esse; senão, carrega todos os da cidade.
 async function editorDMC_carregarExistentes() {
   const cidadeId = document.getElementById('editor-dmc-cidade').value;
+  const dmcEspecifico = document.getElementById('editor-dmc-especifico').value;
   if (!cidadeId) { toast('Selecione uma cidade primeiro'); return; }
   const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   if (!camadas.length) { toast('Essa cidade ainda não tem nenhuma camada de DMC cadastrada'); return; }
-  toast('Carregando DMCs existentes...');
+  toast(dmcEspecifico ? ('Carregando "' + dmcEspecifico + '"...') : 'Carregando todos os DMCs da cidade...');
   let algumaCarregada = false;
   for (const item of camadas) {
     await garantirGeometriaCarregada(item);
     if (!item._geojson) continue;
-    L.geoJSON(item._geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); algumaCarregada = true; });
+    for (const ft of item._geojson.features) {
+      if (dmcEspecifico) {
+        // Só traz a feature cujo nome bate com o DMC escolhido (mesma comparação
+        // tolerante a prefixo/erro de digitação usada no resto do app).
+        const p = ft.properties || {};
+        const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+        const dmcObj = S.cidades.find(c=>c.id===cidadeId)?.dmcs.find(d=>d.nome===dmcEspecifico);
+        const bate = nome && (nomesDMCBatem(nome, dmcEspecifico) || (dmcObj?.nomeFeatureKml && nome.trim()===dmcObj.nomeFeatureKml.trim()));
+        if (!bate) continue;
+      }
+      L.geoJSON(ft).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); algumaCarregada = true; });
+    }
   }
-  if (!algumaCarregada) { toast('⚠️ Não consegui carregar a geometria — confira o CORS do Storage'); return; }
+  if (!algumaCarregada) { toast(dmcEspecifico ? '⚠️ Não achei esse DMC nas camadas de KML desta cidade' : '⚠️ Não consegui carregar a geometria — confira o CORS do Storage'); return; }
   if (editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
-  toast('✓ DMCs carregados — já dá pra editar');
+  toast('✓ Carregado — já dá pra editar');
 }
 
 function editorDMC_importarKML() {
@@ -4003,7 +4083,7 @@ function editorDMC_handleImport(input) {
     try {
       const geojson = kmlToGeoJSON(ev.target.result);
       let n = 0;
-      L.geoJSON(geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); n++; });
+      L.geoJSON(geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); n++; });
       if (n && editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
       toast(n ? ('✓ KML importado — ' + n + ' trecho(s)') : 'Não achei nenhuma geometria válida nesse arquivo');
     } catch(err) {
@@ -4016,16 +4096,22 @@ function editorDMC_handleImport(input) {
 
 function editorDMC_limpar() {
   if (editorDMCLayerGroup) editorDMCLayerGroup.clearLayers();
+  editorDMCSelecionadas.clear();
+  editorDMC_atualizarContadorSelecao();
   toast('Mapa limpo');
 }
 
-// Exporta tudo que está no editor agora pra um arquivo .kml, pronto pra baixar. Usa o
-// MESMO dado que futuramente será salvo (Fase 2) — o que se baixa aqui é sempre
-// consistente com o que estaria salvo, sem duas fontes de verdade diferentes.
+// Exporta pra um arquivo .kml, pronto pra baixar. Se algo estiver selecionado (clicado
+// em vermelho), baixa só isso; senão, baixa tudo que está no editor. Usa o MESMO dado
+// que futuramente será salvo (Fase 2) — o que se baixa aqui é sempre consistente com o
+// que estaria salvo, sem duas fontes de verdade diferentes.
 function editorDMC_baixarKML() {
   if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) { toast('Nada desenhado ainda pra baixar'); return; }
   if (typeof tokml === 'undefined') { toast('⚠️ Biblioteca de exportação ainda não carregou — tente de novo em alguns segundos'); return; }
-  const geojson = editorDMCLayerGroup.toGeoJSON();
+
+  const baixandoSoSelecionado = editorDMCSelecionadas.size > 0;
+  const grupoParaExportar = baixandoSoSelecionado ? L.featureGroup([...editorDMCSelecionadas]) : editorDMCLayerGroup;
+  const geojson = grupoParaExportar.toGeoJSON();
   let kmlStr;
   try {
     kmlStr = tokml(geojson);
@@ -4036,10 +4122,10 @@ function editorDMC_baixarKML() {
   const blob = new Blob([kmlStr], { type: 'application/vnd.google-earth.kml+xml' });
   const url = URL.createObjectURL(blob);
   const cidadeSel = document.getElementById('editor-dmc-cidade');
-  const nomeCidade = (cidadeSel && cidadeSel.selectedOptions[0] && cidadeSel.value) ? cidadeSel.selectedOptions[0].textContent : 'dmc';
+  const nomeBase = (cidadeSel && cidadeSel.selectedOptions[0] && cidadeSel.value) ? cidadeSel.selectedOptions[0].textContent : 'dmc';
   const a = document.createElement('a');
   a.href = url;
-  a.download = nomeCidade.replace(/\s+/g,'_') + '_editado.kml';
+  a.download = nomeBase.replace(/\s+/g,'_') + (baixandoSoSelecionado ? '_selecionado' : '_editado') + '.kml';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -5864,18 +5950,32 @@ function redesenharCamadasComCorAtualizada() {
 // uma vez nesta sessão, fica em memória — não precisa buscar de novo ao só ligar/desligar.
 async function carregarGeometriaCamada(tipo, camadaId) {
   const item = (S.leafletLayers[tipo]||[]).find(i => i.id === camadaId);
-  if (!item || item._carregando) return;
+  if (!item) return;
   if (item._geojson && (item.lgField || item.lgPC)) {
     // Já carregada nesta sessão — só reanexa ao(s) mapa(s) que ainda não tiverem
     if (mapField && item.lgField && !mapField.hasLayer(item.lgField)) item.lgField.addTo(mapField);
     if (mapPC && item.lgPC && !mapPC.hasLayer(item.lgPC)) item.lgPC.addTo(mapPC);
     return;
   }
-  item._carregando = true;
-  try {
-    const geojson = item._geojson || await buscarGeometriaBruta(camadaId, false);
-    if (!geojson) return;
-    item._geojson = geojson;
+  // Busca o geojson bruto. Se já existir uma busca em andamento para essa mesma camada
+  // (seja por um clique anterior, seja pela busca em segundo plano de
+  // garantirGeometriaCarregada — usada pela detecção de DMC por GPS e pelo cálculo de
+  // extensão de rede), ESPERA ela terminar em vez de desistir. Antes, as duas funções
+  // usavam uma marcação simples de "já estou buscando" que fazia a segunda chamada
+  // simplesmente devolver sem fazer nada — se um clique em "mostrar" calhasse de
+  // acontecer bem no meio de uma busca em segundo plano pra essa mesma camada, o clique
+  // era ignorado silenciosamente. Isso batia exatamente com o relatado: "às vezes
+  // funciona, às vezes não", sem padrão visível, porque o gatilho real era uma corrida
+  // interna invisível, não algo que dependesse da ação da pessoa.
+  if (!item._geojson) {
+    if (!item._carregandoPromise) {
+      item._carregandoPromise = buscarGeometriaBruta(camadaId, false).finally(() => { item._carregandoPromise = null; });
+    }
+    item._geojson = await item._carregandoPromise;
+  }
+  if (!item._geojson) return;
+  const geojson = item._geojson;
+  {
 
     const corPadrao = LAYER_STYLE[tipo];
     // IMPORTANTE: o Leaflet não deve ter a mesma instância de layer compartilhada entre
@@ -5941,19 +6041,21 @@ async function carregarGeometriaCamada(tipo, camadaId) {
     if (mapField) { item.lgField = criarLayer(); item.lgField.addTo(mapField); }
     if (mapPC)    { item.lgPC = criarLayer(); item.lgPC.addTo(mapPC); }
     if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
-  } finally {
-    item._carregando = false;
   }
 }
 
 // Garante que item._geojson esteja preenchido, SEM exibir nada no mapa — usada pela
 // detecção automática de DMC por coordenada, que precisa calcular contra o polígono
 // de todos os DMCs conhecidos, mesmo os que o técnico nunca marcou como "visível".
+// Compartilha a mesma promessa de carregarGeometriaCamada (ver comentário lá) — as duas
+// funções podem disputar a mesma camada ao mesmo tempo, e agora esperam uma pela outra
+// em vez de uma desistir silenciosamente.
 async function garantirGeometriaCarregada(item) {
-  if (item._geojson || item._carregando) return;
-  item._carregando = true;
-  try { item._geojson = await buscarGeometriaBruta(item.id, true); }
-  finally { item._carregando = false; }
+  if (item._geojson) return;
+  if (!item._carregandoPromise) {
+    item._carregandoPromise = buscarGeometriaBruta(item.id, true).finally(() => { item._carregandoPromise = null; });
+  }
+  item._geojson = await item._carregandoPromise;
 }
 
 // Detecta em qual DMC (e, por consequência, em qual cidade) uma coordenada cai,

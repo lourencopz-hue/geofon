@@ -7,11 +7,14 @@
 <meta name="mobile-web-app-capable" content="yes">
 <title>GeoFon — Sistema de Geofonamento</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.20.1/dist/leaflet-geoman.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.20.1/dist/leaflet-geoman.min.js"></script>
+<script src="https://unpkg.com/tokml@0.4.0/tokml.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif}
@@ -273,6 +276,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <strong>O que fazer:</strong><br>
       Avise o administrador do sistema para liberar seu acesso e definir seu nível (Administrador, Supervisor ou Técnico de campo).
     </div>
+    <div class="pending-card" style="margin-top:8px;background:var(--bg2);border-color:var(--border)">
+      <strong style="display:flex;align-items:center;gap:5px"><i class="ti ti-shield-lock" style="font-size:14px"></i> Privacidade</strong>
+      <span style="font-size:11.5px;color:var(--text2);line-height:1.6">Seu nome, e-mail e foto ficam visíveis apenas para quem administra o seu setor, para fins de liberação e gestão de acesso. Vazamentos que você registrar (localização, fotos e horário) ficam associados ao seu usuário para controle operacional da equipe.</span>
+    </div>
     <button class="btn sm" style="width:100%;justify-content:center;margin-top:14px" onclick="fazerLogout()">
       <i class="ti ti-logout"></i> Sair
     </button>
@@ -331,6 +338,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
   <div class="tab" onclick="switchTab('manage','tabs-pc')" data-tab="manage">
     <i class="ti ti-database"></i>Gestão
+  </div>
+  <div class="tab" onclick="switchTab('editor-dmc','tabs-pc')" data-tab="editor-dmc">
+    <i class="ti ti-vector-triangle"></i>Editor DMC
   </div>
   <div class="tab" onclick="switchTab('usuarios','tabs-pc')" data-tab="usuarios">
     <i class="ti ti-users"></i>Usuários
@@ -799,6 +809,28 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <div id="leak-list-wrap-pc" class="section"></div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- PC: EDITOR DE DMC (Fase 1 — desenho/edição + download, sem persistência ainda) -->
+  <div class="panel" id="editor-dmc">
+    <div style="display:flex;flex-direction:column;height:100%">
+      <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg);flex-wrap:wrap">
+        <select id="editor-dmc-cidade" style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
+          <option value="">Selecione a cidade...</option>
+        </select>
+        <button class="btn sm" onclick="editorDMC_carregarExistentes()"><i class="ti ti-download"></i> Carregar DMCs desta cidade</button>
+        <button class="btn sm" onclick="editorDMC_importarKML()"><i class="ti ti-file-upload"></i> Importar KML</button>
+        <input type="file" id="editor-dmc-import-input" accept=".kml,.geojson,.json" style="display:none" onchange="editorDMC_handleImport(this)">
+        <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
+        <button class="btn sm primary" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
+      </div>
+      <div class="card" style="margin:10px 14px 0;background:var(--blue-l)">
+        <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+          <b>Fase 1:</b> desenhe, edite ou importe um KML pra ajustar, depois baixe o resultado. Ainda não salva direto no app — isso vem numa próxima etapa. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir).
+        </p>
+      </div>
+      <div id="editor-dmc-map" style="flex:1;margin-top:10px"></div>
     </div>
   </div>
 
@@ -1833,6 +1865,7 @@ function aplicarPermissoesUI() {
   const btnSwitch = document.getElementById('btn-switch-mode');
   const tabConfig = document.querySelector('[data-tab="config"]');
   const tabManage = document.querySelector('[data-tab="manage"]');
+  const tabEditorDMC = document.querySelector('[data-tab="editor-dmc"]');
   const tabUsuarios = document.querySelector('[data-tab="usuarios"]');
   const tabCampanhas = document.querySelector('[data-tab="campanhas-pc"]');
 
@@ -1846,8 +1879,9 @@ function aplicarPermissoesUI() {
   // Apenas admin vê Configurações e Usuários (cadastros e permissões)
   if (tabConfig) tabConfig.classList.toggle('hidden', role !== 'admin');
   if (tabUsuarios) tabUsuarios.classList.toggle('hidden', role !== 'admin');
-  // Supervisor e admin podem ver Gestão e programar Campanhas; técnico não usa modo PC mesmo
+  // Supervisor e admin podem ver Gestão, Editor DMC e programar Campanhas; técnico não usa modo PC mesmo
   if (tabManage) tabManage.classList.toggle('hidden', role === 'tecnico');
+  if (tabEditorDMC) tabEditorDMC.classList.toggle('hidden', role === 'tecnico');
   if (tabCampanhas) tabCampanhas.classList.toggle('hidden', role === 'tecnico');
 }
 
@@ -3886,6 +3920,133 @@ function initPCMap() {
   setTimeout(() => mapPC.invalidateSize(), 300);
 }
 
+// ================================================================
+// EDITOR DE DMC (Desktop, Fase 1) — desenho/edição de perímetro com Leaflet-Geoman,
+// importação de KML existente e exportação pra download. Restrito a Supervisor/Admin
+// via aplicarPermissoesUI (mesma regra da aba Gestão). Ainda sem persistência no
+// Firestore — isso é a Fase 2, combinada no documento de orientação.
+// ================================================================
+let mapEditorDMC = null;
+let editorDMCLayerGroup = null; // guarda tudo que está desenhado/importado e editável agora
+
+function initEditorDMCMap() {
+  if (mapEditorDMC) return;
+  const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-27.5, -50.2];
+  mapEditorDMC = L.map('editor-dmc-map', { zoomControl: true }).setView(centroInicial, S.pos ? 13 : 8);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapEditorDMC);
+  editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
+
+  // Barra de ferramentas do próprio Geoman — desenhar polígono/linha/marcador, editar
+  // vértice, arrastar, excluir. Deixamos de fora círculo/retângulo/corte/rotação por
+  // enquanto, já que contorno de DMC é sempre polígono; a ferramenta já nasce genérica
+  // o bastante (linha incluída) pra futuramente desenhar rede também, sem refazer nada.
+  mapEditorDMC.pm.addControls({
+    position: 'topleft',
+    drawMarker: false,
+    drawCircleMarker: false,
+    drawPolyline: true,
+    drawRectangle: false,
+    drawPolygon: true,
+    drawCircle: false,
+    editMode: true,
+    dragMode: true,
+    cutPolygon: false,
+    removalMode: true,
+    rotateMode: false,
+  });
+
+  // Todo desenho novo feito na hora entra automaticamente no grupo editável
+  mapEditorDMC.on('pm:create', (e) => {
+    editorDMCLayerGroup.addLayer(e.layer);
+  });
+
+  popularSelectEditorDMCCidade();
+}
+
+function popularSelectEditorDMCCidade() {
+  const sel = document.getElementById('editor-dmc-cidade');
+  if (!sel) return;
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Selecione a cidade...</option>' +
+    [...S.cidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  sel.value = atual;
+}
+
+// Carrega os DMCs já cadastrados da cidade escolhida pra dentro do editor, prontos
+// pra ajustar (reaproveita a mesma camada usada no resto do app — não duplica nada).
+async function editorDMC_carregarExistentes() {
+  const cidadeId = document.getElementById('editor-dmc-cidade').value;
+  if (!cidadeId) { toast('Selecione uma cidade primeiro'); return; }
+  const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!camadas.length) { toast('Essa cidade ainda não tem nenhuma camada de DMC cadastrada'); return; }
+  toast('Carregando DMCs existentes...');
+  let algumaCarregada = false;
+  for (const item of camadas) {
+    await garantirGeometriaCarregada(item);
+    if (!item._geojson) continue;
+    L.geoJSON(item._geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); algumaCarregada = true; });
+  }
+  if (!algumaCarregada) { toast('⚠️ Não consegui carregar a geometria — confira o CORS do Storage'); return; }
+  if (editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
+  toast('✓ DMCs carregados — já dá pra editar');
+}
+
+function editorDMC_importarKML() {
+  document.getElementById('editor-dmc-import-input').click();
+}
+
+function editorDMC_handleImport(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const geojson = kmlToGeoJSON(ev.target.result);
+      let n = 0;
+      L.geoJSON(geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); n++; });
+      if (n && editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
+      toast(n ? ('✓ KML importado — ' + n + ' trecho(s)') : 'Não achei nenhuma geometria válida nesse arquivo');
+    } catch(err) {
+      toast('⚠️ Erro ao importar KML: ' + (err.message||err));
+    }
+  };
+  reader.readAsText(f);
+  input.value = '';
+}
+
+function editorDMC_limpar() {
+  if (editorDMCLayerGroup) editorDMCLayerGroup.clearLayers();
+  toast('Mapa limpo');
+}
+
+// Exporta tudo que está no editor agora pra um arquivo .kml, pronto pra baixar. Usa o
+// MESMO dado que futuramente será salvo (Fase 2) — o que se baixa aqui é sempre
+// consistente com o que estaria salvo, sem duas fontes de verdade diferentes.
+function editorDMC_baixarKML() {
+  if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) { toast('Nada desenhado ainda pra baixar'); return; }
+  if (typeof tokml === 'undefined') { toast('⚠️ Biblioteca de exportação ainda não carregou — tente de novo em alguns segundos'); return; }
+  const geojson = editorDMCLayerGroup.toGeoJSON();
+  let kmlStr;
+  try {
+    kmlStr = tokml(geojson);
+  } catch(err) {
+    toast('⚠️ Erro ao gerar o KML: ' + (err.message||err));
+    return;
+  }
+  const blob = new Blob([kmlStr], { type: 'application/vnd.google-earth.kml+xml' });
+  const url = URL.createObjectURL(blob);
+  const cidadeSel = document.getElementById('editor-dmc-cidade');
+  const nomeCidade = (cidadeSel && cidadeSel.selectedOptions[0] && cidadeSel.value) ? cidadeSel.selectedOptions[0].textContent : 'dmc';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nomeCidade.replace(/\s+/g,'_') + '_editado.kml';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('✓ KML baixado');
+}
+
 function addFieldMarkers() {
   if (!mapField) return;
   fMarkers.forEach(m => m.remove()); fMarkers = [];
@@ -4072,6 +4233,8 @@ function populateSelects() {
   renderProgEquipesCheckboxes();
   // Regionais (extraídas das cidades cadastradas que têm o campo preenchido)
   popularSelectRegionais();
+  // Select de cidade do Editor de DMC (mantém ordenado alfabeticamente, lista própria)
+  popularSelectEditorDMCCidade();
 }
 
 // Preenche os selects de Regional com os valores únicos já cadastrados nas cidades
@@ -8039,6 +8202,7 @@ function switchTab(tabId, tabsId) {
   if(tab) tab.classList.add('active');
   if(tabId==='map-field') setTimeout(()=>{if(mapField)mapField.invalidateSize();},100);
   if(tabId==='map-pc'){initPCMap();setTimeout(()=>{if(mapPC)mapPC.invalidateSize();},100);}
+  if(tabId==='editor-dmc'){initEditorDMCMap();setTimeout(()=>{if(mapEditorDMC)mapEditorDMC.invalidateSize();},100);}
   if(tabId==='manage') renderManage();
   if(tabId==='usuarios') renderUsuariosPanel();
   if(tabId==='campanhas-pc') { renderProgEquipesCheckboxes(); renderCampanhasProgramadasDesktop(); }

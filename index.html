@@ -826,14 +826,18 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="btn sm" onclick="editorDMC_importarKML()"><i class="ti ti-file-upload"></i> Importar KML</button>
         <input type="file" id="editor-dmc-import-input" accept=".kml,.geojson,.json" style="display:none" onchange="editorDMC_handleImport(this)">
         <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
+        <button class="btn sm" id="editor-dmc-desfazer-btn" onclick="editorDMC_desfazer()" disabled><i class="ti ti-arrow-back-up"></i> Desfazer</button>
         <button class="btn sm primary" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
       </div>
       <div class="card" style="margin:10px 14px 0;background:var(--blue-l)">
         <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-          <b>Fase 1:</b> desenhe, edite ou importe um KML pra ajustar, depois baixe o resultado. Ainda não salva direto no app — isso vem numa próxima etapa. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele.
+          <b>Fase 1:</b> desenhe, edite ou importe um KML pra ajustar, depois baixe o resultado. Ainda não salva direto no app — isso vem numa próxima etapa. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo.
         </p>
       </div>
-      <div id="editor-dmc-selecao-info" style="padding:0 14px;font-size:11.5px;color:var(--red);font-weight:600;min-height:16px;margin-top:4px"></div>
+      <div style="display:flex;justify-content:space-between;padding:0 14px;margin-top:4px">
+        <div id="editor-dmc-selecao-info" style="font-size:11.5px;color:var(--red);font-weight:600;min-height:16px"></div>
+        <div id="editor-dmc-vertices-info" style="font-size:11.5px;color:var(--text2);min-height:16px"></div>
+      </div>
       <div id="editor-dmc-map" style="flex:1;margin-top:6px"></div>
     </div>
   </div>
@@ -2812,7 +2816,8 @@ function iniciarSincronizacaoCamadas() {
         // ainda terminava, mas escrevia num objeto de item que não fazia mais parte de
         // S.leafletLayers, e o item novo nunca via o resultado (causava busca duplicada
         // e mais uma chance de dar a impressão de "carregamento ignorado").
-        _carregandoPromise: existente ? existente._carregandoPromise : null
+        _carregandoPromise: existente ? existente._carregandoPromise : null,
+        _carregamentoEmAndamento: existente ? existente._carregamentoEmAndamento : null
       };
       S.leafletLayers[tipo].push(item);
       // Se este dispositivo já tinha marcado como visível e a geometria ainda não foi
@@ -3938,6 +3943,8 @@ function initPCMap() {
 let mapEditorDMC = null;
 let editorDMCLayerGroup = null; // guarda tudo que está desenhado/importado e editável agora
 let editorDMCSelecionadas = new Set(); // layers clicadas/selecionadas — controla o "baixar só isso"
+let editorDMCHistorico = []; // pilha de estados (GeoJSON em texto) pra desfazer
+const EDITOR_DMC_HISTORICO_MAX = 20;
 
 function initEditorDMCMap() {
   if (mapEditorDMC) return;
@@ -3975,14 +3982,93 @@ function initEditorDMCMap() {
   mapEditorDMC.on('pm:create', (e) => {
     editorDMCLayerGroup.addLayer(e.layer);
     editorDMC_habilitarSelecao(e.layer);
+    editorDMC_aoMudar();
   });
   // Se a ferramenta de excluir do Geoman apagar uma layer que estava selecionada,
   // limpa a seleção também — senão sobrava uma referência morta.
   mapEditorDMC.on('pm:remove', (e) => {
     if (editorDMCSelecionadas.delete(e.layer)) editorDMC_atualizarContadorSelecao();
+    editorDMC_aoMudar();
   });
+  // Cobre edição de vértice (arrastar, apagar com clique direito — ver dica na tela) e
+  // arrastar a forma inteira. Cada uma dessas ações vira um ponto pra poder desfazer.
+  mapEditorDMC.on('pm:edit pm:vertexremoved pm:dragend', () => editorDMC_aoMudar());
 
   popularSelectEditorDMCCidade();
+  // Estado inicial (vazio) também entra no histórico, pra "Desfazer" sempre ter algo
+  // pra voltar mesmo logo no começo.
+  editorDMC_aoMudar();
+}
+
+// Chamada depois de qualquer mudança no editor (desenhar, apagar, mover vértice,
+// carregar, importar, limpar) — atualiza o contador de vértices e empilha o estado
+// atual no histórico de "Desfazer".
+function editorDMC_aoMudar() {
+  editorDMC_salvarHistorico();
+  editorDMC_atualizarContadorVertices();
+}
+
+// Guarda uma "foto" do estado atual (GeoJSON) pra poder voltar depois. Pedido direto:
+// apagar um vértice sem querer tinha apagado a curva inteira, sem chance de desfazer.
+function editorDMC_salvarHistorico() {
+  if (!editorDMCLayerGroup) return;
+  const snap = JSON.stringify(editorDMCLayerGroup.toGeoJSON());
+  if (editorDMCHistorico.length && editorDMCHistorico[editorDMCHistorico.length-1] === snap) return;
+  editorDMCHistorico.push(snap);
+  if (editorDMCHistorico.length > EDITOR_DMC_HISTORICO_MAX) editorDMCHistorico.shift();
+  editorDMC_atualizarBotaoDesfazer();
+}
+
+function editorDMC_atualizarBotaoDesfazer() {
+  const btn = document.getElementById('editor-dmc-desfazer-btn');
+  if (btn) btn.disabled = editorDMCHistorico.length < 2;
+}
+
+// Volta pro estado imediatamente anterior — reconstrói tudo a partir do GeoJSON salvo.
+function editorDMC_desfazer() {
+  if (editorDMCHistorico.length < 2) { toast('Nada pra desfazer'); return; }
+  editorDMCHistorico.pop(); // descarta o estado atual
+  const anterior = editorDMCHistorico[editorDMCHistorico.length - 1];
+  editorDMCLayerGroup.clearLayers();
+  editorDMCSelecionadas.clear();
+  L.geoJSON(JSON.parse(anterior)).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); });
+  editorDMC_atualizarContadorSelecao();
+  editorDMC_atualizarContadorVertices();
+  editorDMC_atualizarBotaoDesfazer();
+  toast('↩️ Desfeito');
+}
+
+// Conta os vértices de UMA layer (polígono ou linha), incluindo buracos/multipartes.
+function editorDMC_contarVertices(layer) {
+  if (!layer.getLatLngs) return 0;
+  let total = 0;
+  const percorrer = (v) => {
+    if (!Array.isArray(v)) return;
+    if (v.length && typeof v[0].lat === 'number') { total += v.length; return; }
+    v.forEach(percorrer);
+  };
+  percorrer(layer.getLatLngs());
+  return total;
+}
+
+// Mostra o total de vértices no editor (e destaca em vermelho se alguma forma passar de
+// 100 — limite da outra plataforma pra onde os dados vão depois).
+function editorDMC_atualizarContadorVertices() {
+  const el = document.getElementById('editor-dmc-vertices-info');
+  if (!el || !editorDMCLayerGroup) return;
+  const porForma = [];
+  editorDMCLayerGroup.eachLayer(l => {
+    const n = editorDMC_contarVertices(l);
+    if (n > 0) porForma.push(n);
+  });
+  if (!porForma.length) { el.textContent = ''; return; }
+  const total = porForma.reduce((a,b)=>a+b, 0);
+  const acimaDoLimite = porForma.filter(n => n > 100).length;
+  let txt = `${total} vértice(s) no total`;
+  if (porForma.length > 1) txt += ` — ${porForma.length} forma(s), maior com ${Math.max(...porForma)}`;
+  if (acimaDoLimite) txt += ` ⚠️ ${acimaDoLimite} forma(s) passam de 100 vértices`;
+  el.textContent = txt;
+  el.style.color = acimaDoLimite ? 'var(--red)' : 'var(--text2)';
 }
 
 function popularSelectEditorDMCCidade() {
@@ -4068,6 +4154,7 @@ async function editorDMC_carregarExistentes() {
   }
   if (!algumaCarregada) { toast(dmcEspecifico ? '⚠️ Não achei esse DMC nas camadas de KML desta cidade' : '⚠️ Não consegui carregar a geometria — confira o CORS do Storage'); return; }
   if (editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
+  editorDMC_aoMudar();
   toast('✓ Carregado — já dá pra editar');
 }
 
@@ -4085,6 +4172,7 @@ function editorDMC_handleImport(input) {
       let n = 0;
       L.geoJSON(geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); n++; });
       if (n && editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
+      editorDMC_aoMudar();
       toast(n ? ('✓ KML importado — ' + n + ' trecho(s)') : 'Não achei nenhuma geometria válida nesse arquivo');
     } catch(err) {
       toast('⚠️ Erro ao importar KML: ' + (err.message||err));
@@ -4098,6 +4186,7 @@ function editorDMC_limpar() {
   if (editorDMCLayerGroup) editorDMCLayerGroup.clearLayers();
   editorDMCSelecionadas.clear();
   editorDMC_atualizarContadorSelecao();
+  editorDMC_aoMudar();
   toast('Mapa limpo');
 }
 
@@ -5951,107 +6040,125 @@ function redesenharCamadasComCorAtualizada() {
 async function carregarGeometriaCamada(tipo, camadaId) {
   const item = (S.leafletLayers[tipo]||[]).find(i => i.id === camadaId);
   if (!item) return;
-  if (item._geojson && (item.lgField || item.lgPC)) {
-    // Já carregada nesta sessão — só reanexa ao(s) mapa(s) que ainda não tiverem
-    if (mapField && item.lgField && !mapField.hasLayer(item.lgField)) item.lgField.addTo(mapField);
-    if (mapPC && item.lgPC && !mapPC.hasLayer(item.lgPC)) item.lgPC.addTo(mapPC);
-    return;
-  }
-  // Busca o geojson bruto. Se já existir uma busca em andamento para essa mesma camada
-  // (seja por um clique anterior, seja pela busca em segundo plano de
-  // garantirGeometriaCarregada — usada pela detecção de DMC por GPS e pelo cálculo de
-  // extensão de rede), ESPERA ela terminar em vez de desistir. Antes, as duas funções
-  // usavam uma marcação simples de "já estou buscando" que fazia a segunda chamada
-  // simplesmente devolver sem fazer nada — se um clique em "mostrar" calhasse de
-  // acontecer bem no meio de uma busca em segundo plano pra essa mesma camada, o clique
-  // era ignorado silenciosamente. Isso batia exatamente com o relatado: "às vezes
-  // funciona, às vezes não", sem padrão visível, porque o gatilho real era uma corrida
-  // interna invisível, não algo que dependesse da ação da pessoa.
-  if (!item._geojson) {
-    if (!item._carregandoPromise) {
-      item._carregandoPromise = buscarGeometriaBruta(camadaId, false).finally(() => { item._carregandoPromise = null; });
-    }
-    item._geojson = await item._carregandoPromise;
-  }
-  if (!item._geojson) return;
-  const geojson = item._geojson;
-  {
 
-    const corPadrao = LAYER_STYLE[tipo];
-    // IMPORTANTE: o Leaflet não deve ter a mesma instância de layer compartilhada entre
-    // dois mapas diferentes — cada mapa tem seu próprio zoom/projeção, e uma única
-    // instância "disputada" entre os dois causa remoção inconsistente e desalinhamento
-    // visual ao dar zoom (o sintoma relatado: camada que "não fica oculta" e aparece
-    // "deslocada"). Por isso criamos UMA instância de L.geoJSON por mapa.
-    const criarLayer = () => {
-      // Trecho de rede é uma linha bem fina — difícil de tocar com precisão no celular
-      // ("dedo gordo"). Tentamos antes resolver com a opção "tolerance" do renderer
-      // Canvas do Leaflet, mas causou uma regressão real: em vez de facilitar, ficou
-      // impossível clicar em qualquer trecho. Essa é a técnica clássica e testada pra
-      // isso — desenhar, por baixo de cada linha visível (fina, colorida), uma segunda
-      // linha BEM mais grossa e totalmente invisível (opacity 0), só pra capturar o
-      // toque. O visual não muda nadinha; só a área que responde ao toque fica maior.
-      const linhasDeToque = [];
-      const nomePane = tipo === 'redes' ? 'paneRedes' : 'paneDMC';
-      const grupoVisivel = L.geoJSON(geojson, {
-        pane: nomePane,
-        style: (ft) => {
-          const cor = resolverCorFeature(ft, tipo, item);
-          return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
-        },
-        pointToLayer: (ft, ll) => {
-          const cor = resolverCorFeature(ft, tipo, item);
-          const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
-          return L.circleMarker(ll, { radius:5, pane: nomePane, ...estilo });
-        },
-        onEachFeature: (ft, layer) => {
-          const p=ft.properties||{};
-          const lbl=p.name||p.Nome||p.nome||item.nome;
-          // Se o diâmetro foi identificado (pasta do KML tipo "T_50"), mostra no popup —
-          // ajuda a conferir se a extração/regra de cor bateu certo com o trecho certo.
-          const diamTxt = p._diametroMm ? ` <small>(DN/DE ${p._diametroMm}mm)</small>` : '';
-          // Mostra a cidade a que essa camada está vinculada — ajuda a pegar rápido um
-          // arquivo que foi associado à cidade errada (ex.: rede de Braço do Norte
-          // aparecendo dentro de Criciúma), sem precisar ir procurar na Gestão.
-          const cidadeVinculada = S.cidades.find(c => c.id === item.cidade);
-          const cidadeTxt = cidadeVinculada ? `<br><small style="color:#888">Cidade: ${cidadeVinculada.nome}</small>` : '';
-          const popupTxt = (lbl || diamTxt || cidadeTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt+cidadeTxt) : null;
-          if (popupTxt) layer.bindPopup(popupTxt);
-
-          if (tipo === 'redes' && ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type) && layer.getLatLngs) {
-            // Peso 24 (testado antes) era largo demais: em trechos onde duas tubulações
-            // de diâmetro diferente passam perto uma da outra (paralelas, ou perto de
-            // uma junção), as áreas invisíveis de toque se sobrepunham, e o clique podia
-            // "pegar" o trecho errado — exatamente o problema relatado (linha verde
-            // respondendo com dado de outro diâmetro). 12 ainda amplia bastante a área
-            // de toque em relação ao traço fino original (peso 2), sem invadir tanto o
-            // espaço de trechos vizinhos.
-            const linhaToque = L.polyline(layer.getLatLngs(), { pane: 'paneRedes', weight: 12, opacity: 0, interactive: true });
-            if (popupTxt) linhaToque.bindPopup(popupTxt);
-            linhasDeToque.push(linhaToque);
+  // Se uma operação completa (buscar + montar as layers) já está rodando pra essa
+  // camada, espera ela terminar em vez de rodar tudo de novo em paralelo. Isso resolve
+  // uma segunda camada do mesmo bug relatado: mesmo depois de corrigir a corrida na
+  // BUSCA (ver comentário abaixo), duas chamadas que caíssem nesse ponto ao mesmo tempo
+  // ainda podiam MONTAR a camada duas vezes cada uma, e a segunda instância montada
+  // sobrescrevia a referência da primeira — a primeira ficava "presa" no mapa (ou fora
+  // dele) sem mais ninguém conseguir controlar sua visibilidade. Isso explica por que o
+  // Desktop podia ficar com camadas faltando mesmo a busca tendo funcionado (dava pra
+  // confirmar que os dados chegaram, porque trocar pro modo Campo mostrava tudo certo
+  // — o Campo só via a versão "vencedora" da disputa, que por acaso estava correta lá).
+  if (item._carregamentoEmAndamento) {
+    await item._carregamentoEmAndamento;
+  } else if (!(item._geojson && (item.lgField || item.lgPC))) {
+    item._carregamentoEmAndamento = (async () => {
+      try {
+        // Busca o geojson bruto. Se já existir uma busca em andamento pra essa mesma
+        // camada (por garantirGeometriaCarregada, usada pela detecção de DMC por GPS e
+        // pelo cálculo de extensão de rede), aproveita o resultado dela em vez de
+        // duplicar a chamada de rede.
+        if (!item._geojson) {
+          if (!item._carregandoPromise) {
+            item._carregandoPromise = buscarGeometriaBruta(camadaId, false).finally(() => { item._carregandoPromise = null; });
           }
+          item._geojson = await item._carregandoPromise;
         }
-      });
-      // As linhas de toque ficam num grupo junto com a camada visível — pro resto do
-      // código (mostrar/ocultar/remover) continuar tratando isso como "uma camada só",
-      // sem precisar saber que por dentro são duas coisas.
-      return linhasDeToque.length ? L.layerGroup([...linhasDeToque, grupoVisivel]) : grupoVisivel;
-    };
+        if (!item._geojson) return;
+        const geojson = item._geojson;
 
-    if (mapField) { item.lgField = criarLayer(); item.lgField.addTo(mapField); }
-    if (mapPC)    { item.lgPC = criarLayer(); item.lgPC.addTo(mapPC); }
-    if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
+        const corPadrao = LAYER_STYLE[tipo];
+        // IMPORTANTE: o Leaflet não deve ter a mesma instância de layer compartilhada entre
+        // dois mapas diferentes — cada mapa tem seu próprio zoom/projeção, e uma única
+        // instância "disputada" entre os dois causa remoção inconsistente e desalinhamento
+        // visual ao dar zoom (o sintoma relatado: camada que "não fica oculta" e aparece
+        // "deslocada"). Por isso criamos UMA instância de L.geoJSON por mapa.
+        const criarLayer = () => {
+          // Trecho de rede é uma linha bem fina — difícil de tocar com precisão no celular
+          // ("dedo gordo"). Tentamos antes resolver com a opção "tolerance" do renderer
+          // Canvas do Leaflet, mas causou uma regressão real: em vez de facilitar, ficou
+          // impossível clicar em qualquer trecho. Essa é a técnica clássica e testada pra
+          // isso — desenhar, por baixo de cada linha visível (fina, colorida), uma segunda
+          // linha BEM mais grossa e totalmente invisível (opacity 0), só pra capturar o
+          // toque. O visual não muda nadinha; só a área que responde ao toque fica maior.
+          const linhasDeToque = [];
+          const nomePane = tipo === 'redes' ? 'paneRedes' : 'paneDMC';
+          const grupoVisivel = L.geoJSON(geojson, {
+            pane: nomePane,
+            style: (ft) => {
+              const cor = resolverCorFeature(ft, tipo, item);
+              return cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
+            },
+            pointToLayer: (ft, ll) => {
+              const cor = resolverCorFeature(ft, tipo, item);
+              const estilo = cor ? { ...corPadrao, color: cor, fillColor: cor } : corPadrao;
+              return L.circleMarker(ll, { radius:5, pane: nomePane, ...estilo });
+            },
+            onEachFeature: (ft, layer) => {
+              const p=ft.properties||{};
+              const lbl=p.name||p.Nome||p.nome||item.nome;
+              // Se o diâmetro foi identificado (pasta do KML tipo "T_50"), mostra no popup —
+              // ajuda a conferir se a extração/regra de cor bateu certo com o trecho certo.
+              const diamTxt = p._diametroMm ? ` <small>(DN/DE ${p._diametroMm}mm)</small>` : '';
+              // Mostra a cidade a que essa camada está vinculada — ajuda a pegar rápido um
+              // arquivo que foi associado à cidade errada (ex.: rede de Braço do Norte
+              // aparecendo dentro de Criciúma), sem precisar ir procurar na Gestão.
+              const cidadeVinculada = S.cidades.find(c => c.id === item.cidade);
+              const cidadeTxt = cidadeVinculada ? `<br><small style="color:#888">Cidade: ${cidadeVinculada.nome}</small>` : '';
+              const popupTxt = (lbl || diamTxt || cidadeTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt+cidadeTxt) : null;
+              if (popupTxt) layer.bindPopup(popupTxt);
+
+              if (tipo === 'redes' && ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type) && layer.getLatLngs) {
+                // Peso 24 (testado antes) era largo demais: em trechos onde duas tubulações
+                // de diâmetro diferente passam perto uma da outra (paralelas, ou perto de
+                // uma junção), as áreas invisíveis de toque se sobrepunham, e o clique podia
+                // "pegar" o trecho errado — exatamente o problema relatado (linha verde
+                // respondendo com dado de outro diâmetro). 12 ainda amplia bastante a área
+                // de toque em relação ao traço fino original (peso 2), sem invadir tanto o
+                // espaço de trechos vizinhos.
+                const linhaToque = L.polyline(layer.getLatLngs(), { pane: 'paneRedes', weight: 12, opacity: 0, interactive: true });
+                if (popupTxt) linhaToque.bindPopup(popupTxt);
+                linhasDeToque.push(linhaToque);
+              }
+            }
+          });
+          // As linhas de toque ficam num grupo junto com a camada visível — pro resto do
+          // código (mostrar/ocultar/remover) continuar tratando isso como "uma camada só",
+          // sem precisar saber que por dentro são duas coisas.
+          return linhasDeToque.length ? L.layerGroup([...linhasDeToque, grupoVisivel]) : grupoVisivel;
+        };
+
+        // Só monta uma layer nova pra cada mapa se ele ainda não tiver uma — evita
+        // duplicar caso essa mesma operação seja revisitada.
+        if (mapField && !item.lgField) item.lgField = criarLayer();
+        if (mapPC && !item.lgPC) item.lgPC = criarLayer();
+        if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
+      } finally {
+        item._carregamentoEmAndamento = null;
+      }
+    })();
+    await item._carregamentoEmAndamento;
   }
+
+  // Garante que este mapa específico recebeu a camada, não importa quem montou ela nem
+  // quando esse mapa passou a existir (ex.: Desktop "Mapa" só é criado na primeira vez
+  // que a pessoa visita essa aba — se a camada foi carregada antes disso, por exemplo
+  // pelo painel de DMC acessado de outro lugar, o mapa PC podia nunca receber a layer
+  // até agora, mesmo com o dado já pronto).
+  if (mapField && item.lgField && !mapField.hasLayer(item.lgField)) item.lgField.addTo(mapField);
+  if (mapPC && item.lgPC && !mapPC.hasLayer(item.lgPC)) item.lgPC.addTo(mapPC);
 }
 
 // Garante que item._geojson esteja preenchido, SEM exibir nada no mapa — usada pela
 // detecção automática de DMC por coordenada, que precisa calcular contra o polígono
 // de todos os DMCs conhecidos, mesmo os que o técnico nunca marcou como "visível".
-// Compartilha a mesma promessa de carregarGeometriaCamada (ver comentário lá) — as duas
-// funções podem disputar a mesma camada ao mesmo tempo, e agora esperam uma pela outra
-// em vez de uma desistir silenciosamente.
+// Aproveita uma operação de carregarGeometriaCamada já em andamento pra essa camada, se
+// houver, em vez de duplicar a busca.
 async function garantirGeometriaCarregada(item) {
   if (item._geojson) return;
+  if (item._carregamentoEmAndamento) { await item._carregamentoEmAndamento; return; }
   if (!item._carregandoPromise) {
     item._carregandoPromise = buscarGeometriaBruta(item.id, true).finally(() => { item._carregandoPromise = null; });
   }

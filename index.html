@@ -3992,7 +3992,13 @@ function initEditorDMCMap() {
   });
   // Cobre edição de vértice (arrastar, apagar com clique direito — ver dica na tela) e
   // arrastar a forma inteira. Cada uma dessas ações vira um ponto pra poder desfazer.
-  mapEditorDMC.on('pm:edit pm:vertexremoved pm:dragend', () => editorDMC_aoMudar());
+  // pm:edit foi descartado de propósito: ele dispara até só de CLICAR num polígono, sem
+  // mudar nada de verdade — isso enchia o histórico de "passos" que não eram edições
+  // reais, empurrando o estado bom (ex.: logo depois de carregar um DMC) pra fora da
+  // pilha rapidinho, e "Desfazer" acabava voltando longe demais (até o mapa vazio),
+  // exatamente o bug relatado. Esses três eventos abaixo só disparam em mudança real:
+  // arrastar terminado, vértice removido, vértice adicionado no meio de uma aresta.
+  mapEditorDMC.on('pm:dragend pm:vertexremoved pm:vertexadded', () => editorDMC_aoMudar());
 
   popularSelectEditorDMCCidade();
   // Estado inicial (vazio) também entra no histórico, pra "Desfazer" sempre ter algo
@@ -4056,17 +4062,29 @@ function editorDMC_contarVertices(layer) {
 function editorDMC_atualizarContadorVertices() {
   const el = document.getElementById('editor-dmc-vertices-info');
   if (!el || !editorDMCLayerGroup) return;
+
+  // Contando tudo que está carregado de uma vez, quando tem mais de um DMC, virava uma
+  // soma sem sentido prático (o limite de 100 é por DMC, não pelo total da cidade toda).
+  // Agora conta só o que estiver selecionado (clicado, em vermelho) — sem seleção, só
+  // convida a selecionar em vez de mostrar um número que mistura formas diferentes.
+  if (!editorDMCSelecionadas.size) {
+    const temAlgo = editorDMCLayerGroup.getLayers().length > 0;
+    el.textContent = temAlgo ? 'Clique num DMC pra ver a contagem de vértices dele' : '';
+    el.style.color = 'var(--text2)';
+    return;
+  }
+
   const porForma = [];
-  editorDMCLayerGroup.eachLayer(l => {
+  editorDMCSelecionadas.forEach(l => {
     const n = editorDMC_contarVertices(l);
     if (n > 0) porForma.push(n);
   });
   if (!porForma.length) { el.textContent = ''; return; }
   const total = porForma.reduce((a,b)=>a+b, 0);
   const acimaDoLimite = porForma.filter(n => n > 100).length;
-  let txt = `${total} vértice(s) no total`;
+  let txt = `Selecionado: ${total} vértice(s)`;
   if (porForma.length > 1) txt += ` — ${porForma.length} forma(s), maior com ${Math.max(...porForma)}`;
-  if (acimaDoLimite) txt += ` ⚠️ ${acimaDoLimite} forma(s) passam de 100 vértices`;
+  if (acimaDoLimite) txt += ` ⚠️ passa de 100 vértices`;
   el.textContent = txt;
   el.style.color = acimaDoLimite ? 'var(--red)' : 'var(--text2)';
 }
@@ -4083,16 +4101,45 @@ function popularSelectEditorDMCCidade() {
 
 // Segundo seletor, com os DMCs da cidade escolhida — pra carregar só UM por vez, em
 // vez de trazer todos os DMCs da cidade de uma vez (o que atrapalhava tanto pra editar
-// quanto na hora de baixar, como foi relatado).
-function editorDMC_popularSelectDMC() {
+// quanto na hora de baixar, como foi relatado). Só entram DMCs que JÁ têm um contorno de
+// KML vinculado — não faz sentido oferecer pra "carregar" algo que ainda não existe.
+async function editorDMC_popularSelectDMC() {
   const selCidade = document.getElementById('editor-dmc-cidade');
   const selDMC = document.getElementById('editor-dmc-especifico');
   if (!selCidade || !selDMC) return;
   const c = S.cidades.find(c => c.id === selCidade.value);
-  const dmcs = c ? c.dmcs.filter(d => d.nome !== DMC_SEM_DMC) : [];
-  selDMC.innerHTML = '<option value="">Todos os DMCs desta cidade</option>' +
+  if (!c) {
+    selDMC.innerHTML = '<option value="">Todos os DMCs desta cidade</option>';
+    selDMC.disabled = true;
+    return;
+  }
+  selDMC.disabled = true;
+  selDMC.innerHTML = '<option value="">Carregando...</option>';
+
+  const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === c.id && !i.removida);
+  const nomesVinculados = new Set();
+  for (const item of camadas) {
+    await garantirGeometriaCarregada(item);
+    if (!item._geojson) continue;
+    item._geojson.features.forEach(ft => {
+      const p = ft.properties || {};
+      const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+      if (nome) nomesVinculados.add(nome.trim());
+    });
+  }
+  const dmcs = c.dmcs.filter(d => {
+    if (d.nome === DMC_SEM_DMC) return false;
+    return [...nomesVinculados].some(n => nomesDMCBatem(n, d.nome)) || (d.nomeFeatureKml && nomesVinculados.has(d.nomeFeatureKml.trim()));
+  });
+
+  // Se a cidade escolhida mudou de novo enquanto isso carregava, descarta — evita
+  // preencher o seletor com o resultado de uma escolha antiga.
+  if (document.getElementById('editor-dmc-cidade').value !== c.id) return;
+
+  selDMC.innerHTML = '<option value="">Todos os DMCs vinculados desta cidade</option>' +
     dmcs.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
-  selDMC.disabled = !c;
+  selDMC.disabled = false;
+  if (!dmcs.length) toast('Essa cidade ainda não tem nenhum DMC com KML vinculado');
 }
 
 // Marca uma layer como selecionável: clicar destaca (fica vermelha) e permite baixar só
@@ -4115,6 +4162,7 @@ function editorDMC_habilitarSelecao(layer) {
       layer.setStyle({ color: '#FF3B30', weight: 5 });
     }
     editorDMC_atualizarContadorSelecao();
+    editorDMC_atualizarContadorVertices();
   });
 }
 

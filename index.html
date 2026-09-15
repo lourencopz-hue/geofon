@@ -4028,7 +4028,11 @@ function initEditorDMCMap() {
   // vértice individual (o caso mais comum de edição) dispara pm:markerdragend, um
   // evento diferente. Faltava esse aqui, por isso "Desfazer" não pegava edição de
   // vértice — só criação/exclusão de forma inteira.
-  mapEditorDMC.on('pm:markerdragend pm:dragend pm:vertexremoved pm:vertexadded', () => editorDMC_aoMudar());
+  // Escuta um conjunto amplo de eventos do Geoman em vez de tentar adivinhar qual é
+  // "o" evento certo pra cada tipo de edição — com a espera de 600ms e a comparação de
+  // conteúdo em editorDMC_salvarHistorico, disparos repetidos ou sem mudança real não
+  // causam problema (viram só uma gravação, ou nenhuma se nada mudou de fato).
+  mapEditorDMC.on('pm:edit pm:update pm:markerdragend pm:dragend pm:vertexremoved pm:vertexadded pm:rotateend', () => editorDMC_aoMudar());
 
   popularSelectEditorDMCCidade();
   // Estado inicial (vazio) também entra no histórico, pra "Desfazer" sempre ter algo
@@ -4037,11 +4041,16 @@ function initEditorDMCMap() {
 }
 
 // Chamada depois de qualquer mudança no editor (desenhar, apagar, mover vértice,
-// carregar, importar, limpar) — atualiza o contador de vértices e empilha o estado
-// atual no histórico de "Desfazer".
+// carregar, importar, limpar) — atualiza o contador de vértices na hora, mas o
+// histórico de "Desfazer" só é gravado depois de uma pausa curta (ver comentário em
+// editorDMC_salvarHistorico) — tentar acertar exatamente qual evento do Geoman
+// representa "uma edição completa" se mostrou frágil (o mesmo tipo de bug voltou depois
+// de já ter trocado o evento uma vez), então agora não depende mais de adivinhar isso.
+let _editorDMCDebounceHistorico = null;
 function editorDMC_aoMudar() {
-  editorDMC_salvarHistorico();
   editorDMC_atualizarContadorVertices();
+  clearTimeout(_editorDMCDebounceHistorico);
+  _editorDMCDebounceHistorico = setTimeout(editorDMC_salvarHistorico, 600);
 }
 
 // Guarda uma "foto" do estado atual (GeoJSON) pra poder voltar depois. Pedido direto:
@@ -4079,6 +4088,11 @@ function editorDMC_atualizarBotaoDesfazer() {
 // removendo-a das propriedades antes de deixar a layer pronta pro uso normal (não deve
 // vazar pro KML baixado nem pro que é salvo).
 function editorDMC_desfazer() {
+  // Se a pessoa mexeu em algo e clicou em "Desfazer" rápido (antes da pausa de 600ms
+  // terminar), garante que essa última mudança entrou no histórico antes de voltar —
+  // senão o clique não pareceria fazer efeito nenhum na tela.
+  clearTimeout(_editorDMCDebounceHistorico);
+  editorDMC_salvarHistorico();
   if (editorDMCHistorico.length < 2) { toast('Nada pra desfazer'); return; }
   editorDMCHistorico.pop(); // descarta o estado atual
   const anterior = JSON.parse(editorDMCHistorico[editorDMCHistorico.length - 1]);

@@ -4005,7 +4005,6 @@ function initEditorDMCMap() {
 
   // Todo desenho novo feito na hora entra automaticamente no grupo editável, já com o
   // clique-pra-selecionar habilitado (mesmo tratamento usado pra tudo que é carregado).
-  // O "antes" pro Desfazer já foi gravado em pm:drawstart — aqui só falta contar vértices.
   mapEditorDMC.on('pm:create', (e) => {
     editorDMCLayerGroup.addLayer(e.layer);
     editorDMC_habilitarSelecao(e.layer);
@@ -4017,27 +4016,28 @@ function initEditorDMCMap() {
     if (editorDMCSelecionadas.delete(e.layer)) editorDMC_atualizarContadorSelecao();
   });
 
-  // ESTRATÉGIA NOVA pro histórico de "Desfazer": em vez de tentar detectar quando uma
-  // edição TERMINOU (por evento específico, ou por uma pausa de tempo — ambas as
-  // tentativas anteriores ainda juntavam edições diferentes num "Desfazer" só, como foi
-  // relatado com prints mostrando dois vértices puxados voltando juntos de uma vez),
-  // agora grava o estado ANTES de cada ação começar. "Desfazer" simplesmente restaura o
-  // último "antes" guardado — sem precisar adivinhar quando uma ação "realmente" acabou.
-  // pm:markerdragstart = começou a arrastar um vértice. pm:dragstart = começou a
-  // arrastar a forma inteira (modo "arrastar").
-  mapEditorDMC.on('pm:markerdragstart pm:dragstart pm:drawstart', () => editorDMC_salvarHistorico());
-  // Clique com botão direito (apaga só o vértice) e clique em modo de exclusão (apaga a
-  // forma inteira) não têm um evento "começando" no Geoman — capturamos o clique nativo
-  // ANTES dele chegar ao Geoman (fase de captura do navegador), garantindo que o
-  // "antes" seja salvo mesmo pra essas duas ações.
+  // ESTRATÉGIA DO HISTÓRICO PRO "DESFAZER" — depois de três tentativas tentando acertar
+  // qual evento específico do Geoman marca "uma edição" (pm:edit disparava até em
+  // clique sem mudança real; pm:markerdragstart, que deveria disparar ao começar a
+  // arrastar um vértice, simplesmente não disparou nesta versão — testado e confirmado
+  // pelo relato: nenhum passo intermediário foi gravado depois de 4 vértices puxados),
+  // parei de depender de eventos do Geoman pra isso. Agora escuta o clique/toque NATIVO
+  // do navegador (mousedown/touchstart) direto no mapa, na fase de CAPTURA — ou seja,
+  // antes de QUALQUER coisa do Geoman processar aquele clique. Toda edição possível
+  // (arrastar vértice, arrastar forma, apagar com botão direito, clicar pra desenhar)
+  // começa com um clique/toque no mapa — então isso garante um "antes" salvo pra
+  // qualquer ação, sem precisar saber qual delas está acontecendo. Cliques que não
+  // mudam nada (só selecionar, só navegar) não geram entradas extras no histórico,
+  // porque o "antes" e o estado seguinte ficam idênticos e a comparação de conteúdo em
+  // editorDMC_salvarHistorico já ignora isso.
+  const salvarAntesDoClique = () => editorDMC_salvarHistorico();
   const containerEditorDMC = mapEditorDMC.getContainer();
-  containerEditorDMC.addEventListener('contextmenu', () => editorDMC_salvarHistorico(), true);
-  containerEditorDMC.addEventListener('click', () => {
-    if (mapEditorDMC.pm.globalRemovalModeEnabled()) editorDMC_salvarHistorico();
-  }, true);
-  // Ainda mantém uma rede de segurança: se algo mudar sem passar por nenhum dos
-  // gatilhos acima, ao menos atualiza o contador de vértices (não afeta o histórico).
-  mapEditorDMC.on('pm:edit pm:vertexadded pm:markerdragend pm:dragend', () => editorDMC_atualizarContadorVertices());
+  containerEditorDMC.addEventListener('mousedown', salvarAntesDoClique, true);
+  containerEditorDMC.addEventListener('touchstart', salvarAntesDoClique, true);
+
+  // Rede de segurança: mantém o contador de vértices sempre atualizado depois de
+  // qualquer edição, independente do histórico.
+  mapEditorDMC.on('pm:edit pm:vertexadded pm:vertexremoved pm:markerdragend pm:dragend', () => editorDMC_atualizarContadorVertices());
 
   popularSelectEditorDMCCidade();
   // Estado inicial (vazio) também entra no histórico, pra "Desfazer" sempre ter algo

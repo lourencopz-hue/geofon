@@ -812,7 +812,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
   </div>
 
-  <!-- PC: EDITOR DE DMC (Fase 1 — desenho/edição + download, sem persistência ainda) -->
+  <!-- PC: EDITOR DE DMC (Fase 2 — agora já salva no Firestore/Storage) -->
   <div class="panel" id="editor-dmc">
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg);flex-wrap:wrap">
@@ -827,11 +827,12 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <input type="file" id="editor-dmc-import-input" accept=".kml,.geojson,.json" style="display:none" onchange="editorDMC_handleImport(this)">
         <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
         <button class="btn sm" id="editor-dmc-desfazer-btn" onclick="editorDMC_desfazer()" disabled><i class="ti ti-arrow-back-up"></i> Desfazer</button>
-        <button class="btn sm primary" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
+        <button class="btn sm" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
+        <button class="btn sm primary" onclick="editorDMC_salvarNoApp()"><i class="ti ti-device-floppy"></i> Salvar</button>
       </div>
       <div class="card" style="margin:10px 14px 0;background:var(--blue-l)">
         <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-          <b>Fase 1:</b> desenhe, edite ou importe um KML pra ajustar, depois baixe o resultado. Ainda não salva direto no app — isso vem numa próxima etapa. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo.
+          <b>Salvar</b> grava direto no app — cada polígono volta pro DMC de onde veio (mesmo carregando vários juntos). Polígono novo ou importado pergunta a qual DMC vincular antes de gravar. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo.
         </p>
       </div>
       <div style="display:flex;justify-content:space-between;padding:0 14px;margin-top:4px">
@@ -1244,6 +1245,31 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<div class="modal-overlay" id="modal-vincular-editor-dmc">
+  <div class="modal" style="max-width:420px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Vincular polígono a um DMC</h3>
+    <p id="vincular-editor-dmc-info" style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px"></p>
+    <div class="field">
+      <label>DMC já cadastrado</label>
+      <select id="vincular-editor-dmc-select"><option value="">Selecione...</option></select>
+    </div>
+    <button class="btn primary btn-block" style="justify-content:center;margin-bottom:12px" onclick="editorDMC_resolverVinculo('existente')">
+      <i class="ti ti-link"></i> Vincular ao selecionado
+    </button>
+    <div style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:10px">— ou —</div>
+    <div class="field">
+      <label>Criar como DMC novo</label>
+      <input type="text" id="vincular-editor-dmc-novo-nome" placeholder="Nome do novo DMC">
+    </div>
+    <button class="btn btn-block" style="justify-content:center;margin-bottom:8px" onclick="editorDMC_resolverVinculo('novo')">
+      <i class="ti ti-plus"></i> Criar novo DMC com esse nome
+    </button>
+    <button class="btn btn-block" style="justify-content:center;background:var(--bg2)" onclick="editorDMC_resolverVinculo(null)">
+      Cancelar salvamento
+    </button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-vincular-dmc">
   <div class="modal" style="max-width:440px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Vincular arquivo a um DMC</h3>
@@ -3998,7 +4024,11 @@ function initEditorDMCMap() {
   // pilha rapidinho, e "Desfazer" acabava voltando longe demais (até o mapa vazio),
   // exatamente o bug relatado. Esses três eventos abaixo só disparam em mudança real:
   // arrastar terminado, vértice removido, vértice adicionado no meio de uma aresta.
-  mapEditorDMC.on('pm:dragend pm:vertexremoved pm:vertexadded', () => editorDMC_aoMudar());
+  // pm:dragend sozinho só cobre arrastar a FORMA INTEIRA (modo "arrastar") — mover um
+  // vértice individual (o caso mais comum de edição) dispara pm:markerdragend, um
+  // evento diferente. Faltava esse aqui, por isso "Desfazer" não pegava edição de
+  // vértice — só criação/exclusão de forma inteira.
+  mapEditorDMC.on('pm:markerdragend pm:dragend pm:vertexremoved pm:vertexadded', () => editorDMC_aoMudar());
 
   popularSelectEditorDMCCidade();
   // Estado inicial (vazio) também entra no histórico, pra "Desfazer" sempre ter algo
@@ -4016,9 +4046,23 @@ function editorDMC_aoMudar() {
 
 // Guarda uma "foto" do estado atual (GeoJSON) pra poder voltar depois. Pedido direto:
 // apagar um vértice sem querer tinha apagado a curva inteira, sem chance de desfazer.
+// Monta o GeoJSON do estado atual, embutindo em cada feature qual DMC/camada ela
+// representa (l._origemDMC) — sem isso, "Desfazer" reconstrói os polígonos do zero e
+// perde essa marcação, fazendo o salvamento tratar tudo como "novo" depois de um
+// desfazer, mesmo quando o polígono era de um DMC já existente.
+function editorDMC_construirSnapshot() {
+  const features = editorDMCLayerGroup.getLayers().filter(l => l.toGeoJSON).map(l => {
+    const ft = l.toGeoJSON();
+    ft.properties = ft.properties || {};
+    ft.properties.__origemDMC = l._origemDMC || null;
+    return ft;
+  });
+  return { type: 'FeatureCollection', features };
+}
+
 function editorDMC_salvarHistorico() {
   if (!editorDMCLayerGroup) return;
-  const snap = JSON.stringify(editorDMCLayerGroup.toGeoJSON());
+  const snap = JSON.stringify(editorDMC_construirSnapshot());
   if (editorDMCHistorico.length && editorDMCHistorico[editorDMCHistorico.length-1] === snap) return;
   editorDMCHistorico.push(snap);
   if (editorDMCHistorico.length > EDITOR_DMC_HISTORICO_MAX) editorDMCHistorico.shift();
@@ -4030,14 +4074,22 @@ function editorDMC_atualizarBotaoDesfazer() {
   if (btn) btn.disabled = editorDMCHistorico.length < 2;
 }
 
-// Volta pro estado imediatamente anterior — reconstrói tudo a partir do GeoJSON salvo.
+// Volta pro estado imediatamente anterior — reconstrói tudo a partir do GeoJSON salvo,
+// recuperando a marcação de origem embutida (ver editorDMC_construirSnapshot) e
+// removendo-a das propriedades antes de deixar a layer pronta pro uso normal (não deve
+// vazar pro KML baixado nem pro que é salvo).
 function editorDMC_desfazer() {
   if (editorDMCHistorico.length < 2) { toast('Nada pra desfazer'); return; }
   editorDMCHistorico.pop(); // descarta o estado atual
-  const anterior = editorDMCHistorico[editorDMCHistorico.length - 1];
+  const anterior = JSON.parse(editorDMCHistorico[editorDMCHistorico.length - 1]);
   editorDMCLayerGroup.clearLayers();
   editorDMCSelecionadas.clear();
-  L.geoJSON(JSON.parse(anterior)).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); });
+  L.geoJSON(anterior).eachLayer(l => {
+    l._origemDMC = (l.feature && l.feature.properties && l.feature.properties.__origemDMC) || null;
+    if (l.feature && l.feature.properties) delete l.feature.properties.__origemDMC;
+    editorDMCLayerGroup.addLayer(l);
+    editorDMC_habilitarSelecao(l);
+  });
   editorDMC_atualizarContadorSelecao();
   editorDMC_atualizarContadorVertices();
   editorDMC_atualizarBotaoDesfazer();
@@ -4182,22 +4234,32 @@ async function editorDMC_carregarExistentes() {
   if (!cidadeId) { toast('Selecione uma cidade primeiro'); return; }
   const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   if (!camadas.length) { toast('Essa cidade ainda não tem nenhuma camada de DMC cadastrada'); return; }
+  const cidadeObj = S.cidades.find(c=>c.id===cidadeId);
   toast(dmcEspecifico ? ('Carregando "' + dmcEspecifico + '"...') : 'Carregando todos os DMCs da cidade...');
   let algumaCarregada = false;
   for (const item of camadas) {
     await garantirGeometriaCarregada(item);
     if (!item._geojson) continue;
     for (const ft of item._geojson.features) {
+      const p = ft.properties || {};
+      const nomeNaFeature = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+      // Acha a qual DMC cadastrado essa feature corresponde — mesma comparação
+      // tolerante a prefixo/erro de digitação usada no resto do app. Isso é o que
+      // permite, na hora de salvar, devolver cada polígono pro DMC certo em vez de
+      // misturar tudo (mesmo carregando vários DMCs juntos de uma vez).
+      const dmcCorrespondente = cidadeObj?.dmcs.find(d =>
+        nomeNaFeature && (nomesDMCBatem(nomeNaFeature, d.nome) || (d.nomeFeatureKml && nomeNaFeature.trim() === d.nomeFeatureKml.trim()))
+      );
       if (dmcEspecifico) {
-        // Só traz a feature cujo nome bate com o DMC escolhido (mesma comparação
-        // tolerante a prefixo/erro de digitação usada no resto do app).
-        const p = ft.properties || {};
-        const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
-        const dmcObj = S.cidades.find(c=>c.id===cidadeId)?.dmcs.find(d=>d.nome===dmcEspecifico);
-        const bate = nome && (nomesDMCBatem(nome, dmcEspecifico) || (dmcObj?.nomeFeatureKml && nome.trim()===dmcObj.nomeFeatureKml.trim()));
+        const bate = dmcCorrespondente && dmcCorrespondente.nome === dmcEspecifico;
         if (!bate) continue;
       }
-      L.geoJSON(ft).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); algumaCarregada = true; });
+      L.geoJSON(ft).eachLayer(l => {
+        l._origemDMC = dmcCorrespondente ? { camadaId: item.id, nomeDMC: dmcCorrespondente.nome, cidadeId } : null;
+        editorDMCLayerGroup.addLayer(l);
+        editorDMC_habilitarSelecao(l);
+        algumaCarregada = true;
+      });
     }
   }
   if (!algumaCarregada) { toast(dmcEspecifico ? '⚠️ Não achei esse DMC nas camadas de KML desta cidade' : '⚠️ Não consegui carregar a geometria — confira o CORS do Storage'); return; }
@@ -4268,6 +4330,173 @@ function editorDMC_baixarKML() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('✓ KML baixado');
+}
+
+// ================================================================
+// SALVAR NO APP (Fase 2) — dois cuidados combinados antes de implementar:
+// 1) Vários polígonos podem estar carregados ao mesmo tempo (ex.: "todos os DMCs da
+//    cidade") — cada um tem que voltar pro SEU DMC de origem, nunca virar um só. Isso é
+//    resolvido rastreando l._origemDMC em cada layer desde o carregamento (ver
+//    editorDMC_carregarExistentes) e agrupando por essa origem na hora de salvar.
+// 2) Polígono novo (desenhado do zero ou importado de outro KML) não tem origem — o
+//    salvamento pergunta a qual DMC ele pertence antes de gravar qualquer coisa.
+// ================================================================
+let _editorDMCResolverVinculo = null;
+
+function editorDMC_perguntarVinculo(layer, cidadeId) {
+  return new Promise((resolve) => {
+    _editorDMCResolverVinculo = resolve;
+    const c = S.cidades.find(c => c.id === cidadeId);
+    document.getElementById('vincular-editor-dmc-info').textContent =
+      'Este polígono ainda não está vinculado a nenhum DMC cadastrado em ' + (c?c.nome:'') + '. Escolha um já existente ou crie um novo.';
+    const sel = document.getElementById('vincular-editor-dmc-select');
+    const candidatos = c ? c.dmcs.filter(d => d.nome !== DMC_SEM_DMC) : [];
+    sel.innerHTML = '<option value="">Selecione...</option>' + candidatos.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
+    document.getElementById('vincular-editor-dmc-novo-nome').value = '';
+    // Deixa a layer em questão destacada no mapa, pra ficar claro qual polígono está
+    // sendo perguntado quando há mais de um pendente.
+    if (layer.setStyle) layer.setStyle({ color: '#F08C00', weight: 5 });
+    openModal('modal-vincular-editor-dmc');
+  });
+}
+
+async function editorDMC_resolverVinculo(modo) {
+  const resolve = _editorDMCResolverVinculo;
+  if (!resolve) return;
+  if (modo === 'existente') {
+    const nomeDMC = document.getElementById('vincular-editor-dmc-select').value;
+    if (!nomeDMC) { toast('Escolha um DMC na lista, ou crie um novo'); return; }
+    _editorDMCResolverVinculo = null;
+    closeModal('modal-vincular-editor-dmc');
+    const cidadeId = document.getElementById('editor-dmc-cidade').value;
+    // Acha em qual arquivo (camada) esse DMC já vive, se algum — senão vira camada nova.
+    const camadasCidade = (S.leafletLayers.dmc||[]).filter(i=>i.cidade===cidadeId && !i.removida);
+    let camadaId = null;
+    for (const item of camadasCidade) {
+      await garantirGeometriaCarregada(item);
+      const acheiAqui = item._geojson?.features?.some(ft => {
+        const p=ft.properties||{};
+        const nome=p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+        return nome && nomesDMCBatem(nome, nomeDMC);
+      });
+      if (acheiAqui) { camadaId = item.id; break; }
+    }
+    resolve({ camadaId: camadaId || 'NOVO', nomeDMC, cidadeId });
+  } else if (modo === 'novo') {
+    const nome = document.getElementById('vincular-editor-dmc-novo-nome').value.trim();
+    if (!nome) { toast('Digite um nome pro novo DMC'); return; }
+    _editorDMCResolverVinculo = null;
+    closeModal('modal-vincular-editor-dmc');
+    const cidadeId = document.getElementById('editor-dmc-cidade').value;
+    resolve({ camadaId: 'NOVO', nomeDMC: nome, cidadeId, criarDMCNovo: true });
+  } else {
+    _editorDMCResolverVinculo = null;
+    closeModal('modal-vincular-editor-dmc');
+    resolve(null);
+  }
+}
+
+async function editorDMC_salvarNoApp() {
+  if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) { toast('Nada desenhado pra salvar'); return; }
+  const cidadeId = document.getElementById('editor-dmc-cidade').value;
+  if (!cidadeId) { toast('Selecione a cidade antes de salvar'); return; }
+  const cidadeObj = S.cidades.find(c => c.id === cidadeId);
+  if (!cidadeObj) { toast('Cidade inválida'); return; }
+
+  const layers = editorDMCLayerGroup.getLayers().filter(l => l.getLatLngs);
+  if (!layers.length) { toast('Nenhum polígono/linha válido pra salvar'); return; }
+
+  // Resolve o vínculo de quem ainda não tem (desenhado do zero ou importado) ANTES de
+  // gravar qualquer coisa — assim a pessoa vê/decide tudo de uma vez, e pode cancelar
+  // sem ter salvo só uma parte do trabalho.
+  for (const layer of layers) {
+    if (layer._origemDMC) continue;
+    const vinculo = await editorDMC_perguntarVinculo(layer, cidadeId);
+    if (!vinculo) { toast('Salvamento cancelado'); return; }
+    layer._origemDMC = vinculo;
+  }
+
+  // Resumo antes de confirmar — mostra exatamente quais DMCs serão tocados.
+  const porDMC = {};
+  layers.forEach(l => { porDMC[l._origemDMC.nomeDMC] = (porDMC[l._origemDMC.nomeDMC]||0) + 1; });
+  const linhasResumo = Object.entries(porDMC).map(([nome,n]) => nome + (n>1?` (${n} formas)`:''));
+  if (!confirm('Confirma salvar? Isso vai gravar:\n\n' + linhasResumo.join('\n'))) return;
+
+  toast('Salvando...');
+
+  // Agrupa por camada de destino — várias formas do mesmo arquivo (ex.: um KML com
+  // vários DMCs dentro) precisam ser gravadas JUNTAS numa única atualização, senão uma
+  // sobrescreveria a outra.
+  const porCamadaExistente = {}; // camadaId -> [layers]
+  const porDMCNovo = {}; // nomeDMC -> { cidadeId, layers: [] } — vira camada nova
+
+  layers.forEach(l => {
+    const { camadaId, nomeDMC, cidadeId: cid } = l._origemDMC;
+    if (camadaId === 'NOVO') {
+      porDMCNovo[nomeDMC] = porDMCNovo[nomeDMC] || { cidadeId: cid, criarDMCNovo: l._origemDMC.criarDMCNovo, layers: [] };
+      porDMCNovo[nomeDMC].layers.push(l);
+    } else {
+      porCamadaExistente[camadaId] = porCamadaExistente[camadaId] || [];
+      porCamadaExistente[camadaId].push(l);
+    }
+  });
+
+  let erros = 0;
+
+  // Atualiza camadas já existentes — substitui SÓ a feature editada, preservando as
+  // outras formas que porventura estejam no mesmo arquivo.
+  for (const [camadaId, layersDaCamada] of Object.entries(porCamadaExistente)) {
+    const item = (S.leafletLayers.dmc||[]).find(i => i.id === camadaId);
+    const geojsonAtual = item && item._geojson
+      ? JSON.parse(JSON.stringify(item._geojson))
+      : { type: 'FeatureCollection', features: [] };
+    layersDaCamada.forEach(layer => {
+      const { nomeDMC } = layer._origemDMC;
+      const novaFeature = layer.toGeoJSON();
+      const idx = geojsonAtual.features.findIndex(ft => {
+        const p = ft.properties||{};
+        const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+        return nome && nomesDMCBatem(nome, nomeDMC);
+      });
+      if (idx === -1) {
+        novaFeature.properties = novaFeature.properties || {};
+        novaFeature.properties.name = nomeDMC;
+        geojsonAtual.features.push(novaFeature);
+      } else {
+        novaFeature.properties = geojsonAtual.features[idx].properties; // preserva nome/propriedades originais
+        geojsonAtual.features[idx] = novaFeature;
+      }
+    });
+    const ok = await atualizarGeometriaCamada(camadaId, geojsonAtual);
+    if (!ok) erros++;
+  }
+
+  // Cria camada nova pra cada DMC que ainda não tinha nenhum arquivo vinculado.
+  for (const [nomeDMC, info] of Object.entries(porDMCNovo)) {
+    const geojsonNovo = { type: 'FeatureCollection', features: info.layers.map(l => {
+      const ft = l.toGeoJSON();
+      ft.properties = ft.properties || {};
+      ft.properties.name = nomeDMC;
+      return ft;
+    }) };
+    const novoId = await salvarCamadaFirestore(geojsonNovo, 'dmc', nomeDMC + '.kml (editor)', info.cidadeId);
+    if (!novoId) { erros++; continue; }
+    // Se o DMC em si ainda não existia no cadastro da cidade, cria também.
+    if (info.criarDMCNovo) {
+      const c = S.cidades.find(c => c.id === info.cidadeId);
+      if (c && !c.dmcs.some(d => nomesDMCBatem(d.nome, nomeDMC))) {
+        c.dmcs.push(normalizarDMC(nomeDMC));
+        await salvarCidadeFirestore(c);
+      }
+    }
+  }
+
+  if (erros) toast(`⚠️ ${erros} de ${Object.keys(porCamadaExistente).length + Object.keys(porDMCNovo).length} não foram salvos — confira os avisos acima`);
+  else toast('✓ Tudo salvo com sucesso');
+
+  await recalcularExtensaoRedeCidade(cidadeId);
+  renderConfigCidades();
+  renderManage();
 }
 
 function addFieldMarkers() {
@@ -5977,6 +6206,36 @@ async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
     toast('📋 Camada incluída! Um admin/supervisor vai validar em breve.');
   }
   return id;
+}
+
+// Atualiza o CONTEÚDO de uma camada que já existe (mesmo ID, mesmo documento) — usada
+// pelo Editor de DMC (Fase 2) pra salvar edição sem criar um registro duplicado.
+// Sobrescreve o arquivo no Storage e atualiza o link no Firestore; depois força
+// qualquer mapa que já tenha essa camada carregada a redesenhar com a geometria nova.
+async function atualizarGeometriaCamada(camadaId, novoGeojson) {
+  const { db, doc, setDoc, serverTimestamp, storage, ref, uploadString, getDownloadURL } = window.FB;
+  try {
+    const fileRef = ref(storage, `camadas/${camadaId}.json`);
+    await uploadString(fileRef, JSON.stringify(novoGeojson), 'raw', { contentType: 'application/json' });
+    const geojsonUrl = await getDownloadURL(fileRef);
+    await setDoc(doc(db, 'camadas', camadaId), {
+      geojsonUrl, ultimaAtualizacao: serverTimestamp(), atualizadoPor: S.user?.uid || ''
+    }, { merge: true });
+  } catch(err) {
+    console.warn('Erro ao atualizar geometria da camada ' + camadaId + ':', err);
+    toast('⚠️ Erro ao salvar: ' + (err.code || err.message || err));
+    return false;
+  }
+  // Atualiza o cache em memória e redesenha nos mapas que já tiverem essa camada
+  ['dmc','redes'].forEach(tipo => {
+    const item = (S.leafletLayers[tipo]||[]).find(i => i.id === camadaId);
+    if (!item) return;
+    item._geojson = novoGeojson;
+    if (item.lgField && mapField) { mapField.removeLayer(item.lgField); item.lgField = null; }
+    if (item.lgPC && mapPC) { mapPC.removeLayer(item.lgPC); item.lgPC = null; }
+    if (item.visible) carregarGeometriaCamada(tipo, camadaId);
+  });
+  return true;
 }
 
 function centralizarEmGeoJSON(geojson) {

@@ -4005,34 +4005,39 @@ function initEditorDMCMap() {
 
   // Todo desenho novo feito na hora entra automaticamente no grupo editável, já com o
   // clique-pra-selecionar habilitado (mesmo tratamento usado pra tudo que é carregado).
+  // O "antes" pro Desfazer já foi gravado em pm:drawstart — aqui só falta contar vértices.
   mapEditorDMC.on('pm:create', (e) => {
     editorDMCLayerGroup.addLayer(e.layer);
     editorDMC_habilitarSelecao(e.layer);
-    editorDMC_aoMudar();
+    editorDMC_atualizarContadorVertices();
   });
   // Se a ferramenta de excluir do Geoman apagar uma layer que estava selecionada,
   // limpa a seleção também — senão sobrava uma referência morta.
   mapEditorDMC.on('pm:remove', (e) => {
     if (editorDMCSelecionadas.delete(e.layer)) editorDMC_atualizarContadorSelecao();
-    editorDMC_aoMudar();
   });
-  // Cobre edição de vértice (arrastar, apagar com clique direito — ver dica na tela) e
-  // arrastar a forma inteira. Cada uma dessas ações vira um ponto pra poder desfazer.
-  // pm:edit foi descartado de propósito: ele dispara até só de CLICAR num polígono, sem
-  // mudar nada de verdade — isso enchia o histórico de "passos" que não eram edições
-  // reais, empurrando o estado bom (ex.: logo depois de carregar um DMC) pra fora da
-  // pilha rapidinho, e "Desfazer" acabava voltando longe demais (até o mapa vazio),
-  // exatamente o bug relatado. Esses três eventos abaixo só disparam em mudança real:
-  // arrastar terminado, vértice removido, vértice adicionado no meio de uma aresta.
-  // pm:dragend sozinho só cobre arrastar a FORMA INTEIRA (modo "arrastar") — mover um
-  // vértice individual (o caso mais comum de edição) dispara pm:markerdragend, um
-  // evento diferente. Faltava esse aqui, por isso "Desfazer" não pegava edição de
-  // vértice — só criação/exclusão de forma inteira.
-  // Escuta um conjunto amplo de eventos do Geoman em vez de tentar adivinhar qual é
-  // "o" evento certo pra cada tipo de edição — com a espera de 600ms e a comparação de
-  // conteúdo em editorDMC_salvarHistorico, disparos repetidos ou sem mudança real não
-  // causam problema (viram só uma gravação, ou nenhuma se nada mudou de fato).
-  mapEditorDMC.on('pm:edit pm:update pm:markerdragend pm:dragend pm:vertexremoved pm:vertexadded pm:rotateend', () => editorDMC_aoMudar());
+
+  // ESTRATÉGIA NOVA pro histórico de "Desfazer": em vez de tentar detectar quando uma
+  // edição TERMINOU (por evento específico, ou por uma pausa de tempo — ambas as
+  // tentativas anteriores ainda juntavam edições diferentes num "Desfazer" só, como foi
+  // relatado com prints mostrando dois vértices puxados voltando juntos de uma vez),
+  // agora grava o estado ANTES de cada ação começar. "Desfazer" simplesmente restaura o
+  // último "antes" guardado — sem precisar adivinhar quando uma ação "realmente" acabou.
+  // pm:markerdragstart = começou a arrastar um vértice. pm:dragstart = começou a
+  // arrastar a forma inteira (modo "arrastar").
+  mapEditorDMC.on('pm:markerdragstart pm:dragstart pm:drawstart', () => editorDMC_salvarHistorico());
+  // Clique com botão direito (apaga só o vértice) e clique em modo de exclusão (apaga a
+  // forma inteira) não têm um evento "começando" no Geoman — capturamos o clique nativo
+  // ANTES dele chegar ao Geoman (fase de captura do navegador), garantindo que o
+  // "antes" seja salvo mesmo pra essas duas ações.
+  const containerEditorDMC = mapEditorDMC.getContainer();
+  containerEditorDMC.addEventListener('contextmenu', () => editorDMC_salvarHistorico(), true);
+  containerEditorDMC.addEventListener('click', () => {
+    if (mapEditorDMC.pm.globalRemovalModeEnabled()) editorDMC_salvarHistorico();
+  }, true);
+  // Ainda mantém uma rede de segurança: se algo mudar sem passar por nenhum dos
+  // gatilhos acima, ao menos atualiza o contador de vértices (não afeta o histórico).
+  mapEditorDMC.on('pm:edit pm:vertexadded pm:markerdragend pm:dragend', () => editorDMC_atualizarContadorVertices());
 
   popularSelectEditorDMCCidade();
   // Estado inicial (vazio) também entra no histórico, pra "Desfazer" sempre ter algo
@@ -4040,17 +4045,12 @@ function initEditorDMCMap() {
   editorDMC_aoMudar();
 }
 
-// Chamada depois de qualquer mudança no editor (desenhar, apagar, mover vértice,
-// carregar, importar, limpar) — atualiza o contador de vértices na hora, mas o
-// histórico de "Desfazer" só é gravado depois de uma pausa curta (ver comentário em
-// editorDMC_salvarHistorico) — tentar acertar exatamente qual evento do Geoman
-// representa "uma edição completa" se mostrou frágil (o mesmo tipo de bug voltou depois
-// de já ter trocado o evento uma vez), então agora não depende mais de adivinhar isso.
-let _editorDMCDebounceHistorico = null;
+// Ponto de checkpoint manual, chamado ANTES de ações discretas de botão (carregar,
+// importar, limpar) — assim "Desfazer" consegue voltar pro estado de antes dessas
+// ações também, não só de edição de vértice.
 function editorDMC_aoMudar() {
+  editorDMC_salvarHistorico();
   editorDMC_atualizarContadorVertices();
-  clearTimeout(_editorDMCDebounceHistorico);
-  _editorDMCDebounceHistorico = setTimeout(editorDMC_salvarHistorico, 600);
 }
 
 // Guarda uma "foto" do estado atual (GeoJSON) pra poder voltar depois. Pedido direto:
@@ -4080,22 +4080,15 @@ function editorDMC_salvarHistorico() {
 
 function editorDMC_atualizarBotaoDesfazer() {
   const btn = document.getElementById('editor-dmc-desfazer-btn');
-  if (btn) btn.disabled = editorDMCHistorico.length < 2;
+  if (btn) btn.disabled = editorDMCHistorico.length === 0;
 }
 
-// Volta pro estado imediatamente anterior — reconstrói tudo a partir do GeoJSON salvo,
-// recuperando a marcação de origem embutida (ver editorDMC_construirSnapshot) e
-// removendo-a das propriedades antes de deixar a layer pronta pro uso normal (não deve
-// vazar pro KML baixado nem pro que é salvo).
+// Cada entrada do histórico é o estado de ANTES de uma ação (ver os gatilhos em
+// initEditorDMCMap) — "Desfazer" só precisa tirar a última e restaurá-la direto, sem
+// precisar descartar/comparar com o estado atual na tela.
 function editorDMC_desfazer() {
-  // Se a pessoa mexeu em algo e clicou em "Desfazer" rápido (antes da pausa de 600ms
-  // terminar), garante que essa última mudança entrou no histórico antes de voltar —
-  // senão o clique não pareceria fazer efeito nenhum na tela.
-  clearTimeout(_editorDMCDebounceHistorico);
-  editorDMC_salvarHistorico();
-  if (editorDMCHistorico.length < 2) { toast('Nada pra desfazer'); return; }
-  editorDMCHistorico.pop(); // descarta o estado atual
-  const anterior = JSON.parse(editorDMCHistorico[editorDMCHistorico.length - 1]);
+  if (!editorDMCHistorico.length) { toast('Nada pra desfazer'); return; }
+  const anterior = JSON.parse(editorDMCHistorico.pop());
   editorDMCLayerGroup.clearLayers();
   editorDMCSelecionadas.clear();
   L.geoJSON(anterior).eachLayer(l => {
@@ -4249,6 +4242,7 @@ async function editorDMC_carregarExistentes() {
   const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   if (!camadas.length) { toast('Essa cidade ainda não tem nenhuma camada de DMC cadastrada'); return; }
   const cidadeObj = S.cidades.find(c=>c.id===cidadeId);
+  editorDMC_salvarHistorico(); // estado de antes de carregar — pra poder desfazer o carregamento
   toast(dmcEspecifico ? ('Carregando "' + dmcEspecifico + '"...') : 'Carregando todos os DMCs da cidade...');
   let algumaCarregada = false;
   for (const item of camadas) {
@@ -4278,7 +4272,7 @@ async function editorDMC_carregarExistentes() {
   }
   if (!algumaCarregada) { toast(dmcEspecifico ? '⚠️ Não achei esse DMC nas camadas de KML desta cidade' : '⚠️ Não consegui carregar a geometria — confira o CORS do Storage'); return; }
   if (editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
-  editorDMC_aoMudar();
+  editorDMC_atualizarContadorVertices();
   toast('✓ Carregado — já dá pra editar');
 }
 
@@ -4292,11 +4286,12 @@ function editorDMC_handleImport(input) {
   const reader = new FileReader();
   reader.onload = (ev) => {
     try {
+      editorDMC_salvarHistorico(); // estado de antes de importar — pra poder desfazer
       const geojson = kmlToGeoJSON(ev.target.result);
       let n = 0;
       L.geoJSON(geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); n++; });
       if (n && editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
-      editorDMC_aoMudar();
+      editorDMC_atualizarContadorVertices();
       toast(n ? ('✓ KML importado — ' + n + ' trecho(s)') : 'Não achei nenhuma geometria válida nesse arquivo');
     } catch(err) {
       toast('⚠️ Erro ao importar KML: ' + (err.message||err));
@@ -4307,10 +4302,11 @@ function editorDMC_handleImport(input) {
 }
 
 function editorDMC_limpar() {
+  editorDMC_salvarHistorico(); // estado de antes de limpar — pra poder trazer de volta
   if (editorDMCLayerGroup) editorDMCLayerGroup.clearLayers();
   editorDMCSelecionadas.clear();
   editorDMC_atualizarContadorSelecao();
-  editorDMC_aoMudar();
+  editorDMC_atualizarContadorVertices();
   toast('Mapa limpo');
 }
 

@@ -812,7 +812,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
   </div>
 
-  <!-- PC: EDITOR DE DMC (Fase 2 — agora já salva no Firestore/Storage) -->
+  <!-- PC: EDITOR DE DMC (Fase 2: salva no Firestore/Storage; Fase 3: verificação de sobreposição via Turf.js) -->
   <div class="panel" id="editor-dmc">
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg);flex-wrap:wrap">
@@ -827,12 +827,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <input type="file" id="editor-dmc-import-input" accept=".kml,.geojson,.json" style="display:none" onchange="editorDMC_handleImport(this)">
         <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
         <button class="btn sm" id="editor-dmc-desfazer-btn" onclick="editorDMC_desfazer()" disabled><i class="ti ti-arrow-back-up"></i> Desfazer</button>
+        <button class="btn sm" onclick="editorDMC_verificarSobreposicao()"><i class="ti ti-stack-2"></i> Verificar sobreposição</button>
         <button class="btn sm" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
         <button class="btn sm primary" onclick="editorDMC_salvarNoApp()"><i class="ti ti-device-floppy"></i> Salvar</button>
       </div>
       <div class="card" style="margin:10px 14px 0;background:var(--blue-l)">
         <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-          <b>Salvar</b> grava direto no app — DMC já carregado só pede uma confirmação simples; polígono novo/importado (sem vínculo ainda) pergunta cidade e DMC (ou nome de um DMC novo) antes de gravar. Cada polígono sempre volta pro seu DMC certo, mesmo com vários na tela ao mesmo tempo. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo.
+          <b>Salvar</b> grava direto no app — DMC já carregado só pede uma confirmação simples; polígono novo/importado (sem vínculo ainda) pergunta cidade e DMC (ou nome de um DMC novo) antes de gravar. Cada polígono sempre volta pro seu DMC certo, mesmo com vários na tela ao mesmo tempo. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo. <b>Verificar sobreposição</b> compara os polígonos deste editor contra TODOS os DMCs já cadastrados (de qualquer cidade — pega também sobreposição com cidade vizinha/conurbada); "Salvar" já roda essa mesma checagem sozinho antes de gravar, só como aviso.
         </p>
       </div>
       <div style="display:flex;justify-content:space-between;padding:0 14px;margin-top:4px">
@@ -1270,6 +1271,20 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </button>
     <button class="btn btn-block" style="justify-content:center;background:var(--bg2)" onclick="editorDMC_resolverVinculo(null)">
       Cancelar salvamento
+    </button>
+  </div>
+</div>
+
+<!-- Modal: resultado da verificação de sobreposição do Editor de DMC (Fase 3) -->
+<div class="modal-overlay" id="modal-sobreposicao-dmc">
+  <div class="modal" style="max-width:480px">
+    <h3 id="sobreposicao-dmc-titulo" style="font-size:15px;font-weight:600;margin-bottom:8px;color:var(--amber-d,var(--amber))"><i class="ti ti-alert-triangle"></i> Sobreposição encontrada</h3>
+    <p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+      As áreas em vermelho no mapa mostram onde o desenho atual invade outro DMC já cadastrado. Isso não impede salvar — decida se corrige o contorno antes ou se a sobreposição é mesmo esperada (ex.: faixa de fronteira).
+    </p>
+    <div id="sobreposicao-dmc-lista" style="font-size:12.5px;line-height:1.7;max-height:320px;overflow:auto;margin-bottom:12px"></div>
+    <button class="btn primary btn-block" style="justify-content:center" onclick="closeModal('modal-sobreposicao-dmc')">
+      Entendi
     </button>
   </div>
 </div>
@@ -3972,9 +3987,11 @@ function initPCMap() {
 // ================================================================
 let mapEditorDMC = null;
 let editorDMCLayerGroup = null; // guarda tudo que está desenhado/importado e editável agora
+let editorDMCConflitosLayerGroup = null; // guarda só o destaque (em vermelho) das áreas de sobreposição encontradas — some ao rodar a checagem de novo ou ao limpar/desfazer
 let editorDMCSelecionadas = new Set(); // layers clicadas/selecionadas — controla o "baixar só isso"
 let editorDMCHistorico = []; // pilha de estados (GeoJSON em texto) pra desfazer
 const EDITOR_DMC_HISTORICO_MAX = 20;
+const EDITOR_DMC_AREA_MINIMA_SOBREPOSICAO_M2 = 50; // sobreposições menores que isso são ignoradas — normalmente é só arredondamento de vértice numa divisa compartilhada, não um erro real de contorno
 
 function initEditorDMCMap() {
   if (mapEditorDMC) return;
@@ -3982,6 +3999,7 @@ function initEditorDMCMap() {
   mapEditorDMC = L.map('editor-dmc-map', { zoomControl: true }).setView(centroInicial, S.pos ? 13 : 8);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapEditorDMC);
   editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
+  editorDMCConflitosLayerGroup = L.featureGroup().addTo(mapEditorDMC);
 
   // Geoman já vem com um pacote de português do Brasil pronto — sem isso, a barra de
   // ferramentas aparecia inteira em inglês.
@@ -4094,6 +4112,7 @@ function editorDMC_desfazer() {
   if (!editorDMCHistorico.length) { toast('Nada pra desfazer'); return; }
   const anterior = JSON.parse(editorDMCHistorico.pop());
   editorDMCLayerGroup.clearLayers();
+  if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers(); // geometria vai mudar — o destaque de sobreposição antigo ficaria enganoso
   editorDMCSelecionadas.clear();
   L.geoJSON(anterior).eachLayer(l => {
     l._origemDMC = (l.feature && l.feature.properties && l.feature.properties.__origemDMC) || null;
@@ -4290,6 +4309,7 @@ async function editorDMC_carregarExistentes() {
   }
 
   editorDMC_salvarHistorico(); // estado de antes de carregar — pra poder desfazer o carregamento
+  if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers(); // conteúdo do editor vai mudar — descarta o destaque de sobreposição da checagem anterior
 
   // SEGUNDA PASSADA: agora sim adiciona ao mapa — pulando silenciosamente qualquer DMC
   // duplicado (só relevante no modo "Todos os DMCs desta cidade"; no modo específico já
@@ -4325,6 +4345,7 @@ function editorDMC_handleImport(input) {
   reader.onload = (ev) => {
     try {
       editorDMC_salvarHistorico(); // estado de antes de importar — pra poder desfazer
+      if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers(); // conteúdo do editor vai mudar — descarta o destaque de sobreposição da checagem anterior
       const geojson = kmlToGeoJSON(ev.target.result);
       let n = 0;
       L.geoJSON(geojson).eachLayer(l => { editorDMCLayerGroup.addLayer(l); editorDMC_habilitarSelecao(l); n++; });
@@ -4342,6 +4363,7 @@ function editorDMC_handleImport(input) {
 function editorDMC_limpar() {
   editorDMC_salvarHistorico(); // estado de antes de limpar — pra poder trazer de volta
   if (editorDMCLayerGroup) editorDMCLayerGroup.clearLayers();
+  if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers();
   editorDMCSelecionadas.clear();
   editorDMC_atualizarContadorSelecao();
   editorDMC_atualizarContadorVertices();
@@ -4378,6 +4400,178 @@ function editorDMC_baixarKML() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('✓ KML baixado');
+}
+
+// ================================================================
+// VERIFICAÇÃO DE SOBREPOSIÇÃO (Fase 3) — compara cada polígono presente no editor agora
+// contra TODOS os DMCs já cadastrados no sistema, de QUALQUER cidade (não só a
+// selecionada na barra). É de propósito: existem regiões conurbadas, então uma
+// sobreposição real pode acontecer com o DMC de uma cidade vizinha, não só dentro da
+// mesma cidade — restringir à cidade escolhida deixaria passar batido exatamente esse
+// caso. Fica pesado? Na prática não muito: a geometria de cada DMC só é buscada uma vez
+// (fica em memória depois, igual ao resto do app — ver garantirGeometriaCarregada) e um
+// filtro por bounding box descarta a maioria dos pares antes de calcular a interseção de
+// verdade (bem mais cara).
+// ================================================================
+
+// Mesma lista de propriedades candidatas usada em vários outros pontos do app pra achar
+// o nome do DMC dentro de uma feature de KML (name/Nome/DMC/Descricao/Label, em várias
+// capitalizações). Repetida aqui como função própria só pra esta verificação não deixar
+// de funcionar caso algum desses outros trechos mude no futuro.
+function editorDMC_nomeDaFeature(ft) {
+  const p = ft.properties || {};
+  const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+  return nome ? String(nome).trim() : null;
+}
+
+// m² pra baixo de 1 hectare, hectares (2 casas) daí pra cima — mais fácil de ler numa
+// área do tamanho de um DMC do que um número grande de m².
+function editorDMC_formatarArea(m2) {
+  if (m2 >= 10000) return (m2/10000).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ha';
+  return Math.round(m2).toLocaleString('pt-BR') + ' m²';
+}
+
+// Roda a checagem e mostra o resultado (modal se achou algo, toast se não achou — a não
+// ser que silencioso=true, usado pela chamada automática dentro de "Salvar", que nesse
+// caso só quer o resultado pra decidir se avisa, sem interromper com um toast de "nada
+// encontrado" toda vez que salvar sem problema nenhum).
+async function editorDMC_verificarSobreposicao(silencioso) {
+  if (typeof turf === 'undefined') {
+    if (!silencioso) toast('⚠️ Biblioteca de geometria (Turf) ainda não carregou — tente de novo em alguns segundos');
+    return [];
+  }
+  if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) {
+    if (!silencioso) toast('Nada desenhado/carregado no editor pra verificar');
+    return [];
+  }
+
+  const formas = editorDMCLayerGroup.getLayers()
+    .filter(l => l.toGeoJSON)
+    .map(l => ({ layer: l, geojson: l.toGeoJSON() }))
+    .filter(f => f.geojson.geometry && ['Polygon','MultiPolygon'].includes(f.geojson.geometry.type));
+  if (!formas.length) {
+    if (!silencioso) toast('Nenhum polígono no editor agora — linhas não entram nesta checagem');
+    return [];
+  }
+
+  if (!silencioso) toast('Verificando sobreposição com todos os DMCs cadastrados...');
+
+  // Garante a geometria de TODAS as camadas de DMC do sistema — não só as da cidade
+  // escolhida na barra — antes de comparar. Camadas já vistas antes nesta sessão não
+  // geram nova busca (garantirGeometriaCarregada só busca o que ainda não tem _geojson).
+  const todasCamadas = (S.leafletLayers.dmc || []).filter(i => !i.removida);
+  for (const item of todasCamadas) await garantirGeometriaCarregada(item);
+
+  // Lista achatada de "candidatos": um por feature-polígono de DMC já cadastrada, com o
+  // nome do DMC e da cidade já resolvidos, pronta pra comparar contra cada forma do editor.
+  const candidatos = [];
+  todasCamadas.forEach(item => {
+    if (!item._geojson || !item._geojson.features) return;
+    const cidadeObj = S.cidades.find(c => c.id === item.cidade);
+    item._geojson.features.forEach(ft => {
+      if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) return;
+      const nome = editorDMC_nomeDaFeature(ft);
+      if (!nome) return;
+      let partes;
+      try { partes = turf.flatten(ft).features; } catch(e) { partes = [ft]; } // separa multipolígono em partes simples — deixa a interseção mais robusta
+      let bbox;
+      try { bbox = turf.bbox(ft); } catch(e) { bbox = null; }
+      candidatos.push({ nome, cidadeId: item.cidade, cidadeNome: cidadeObj ? cidadeObj.nome : '(cidade não identificada)', partes, bbox });
+    });
+  });
+
+  const cidadeSelecionada = document.getElementById('editor-dmc-cidade') ? document.getElementById('editor-dmc-cidade').value : '';
+  const resultados = []; // { layer, nomeForma, conflitos: [{ dmcNome, cidadeNome, mesmaCidade, areaM2, geojson }] }
+
+  formas.forEach(({ layer, geojson }) => {
+    const origem = layer._origemDMC; // null = polígono ainda sem vínculo de DMC/cidade
+    const cidadeDaForma = origem ? origem.cidadeId : cidadeSelecionada;
+    let partesForma, bboxForma;
+    try { partesForma = turf.flatten(geojson).features; } catch(e) { partesForma = [geojson]; }
+    try { bboxForma = turf.bbox(geojson); } catch(e) { bboxForma = null; }
+
+    const conflitos = [];
+    candidatos.forEach(cand => {
+      // Não compara a forma com o próprio DMC dela mesma (mesma cidade + mesmo nome,
+      // já considerando apelidos/grafias via nomesDMCBatem) — senão qualquer DMC já
+      // cadastrado "sobrepõe" 100% a si mesmo assim que é recarregado no editor.
+      if (origem && cand.cidadeId === origem.cidadeId && nomesDMCBatem(cand.nome, origem.nomeDMC)) return;
+
+      // Filtro rápido por bounding box antes de calcular qualquer interseção de verdade
+      // — descarta a grande maioria dos pares (DMCs de cidades distantes) sem custo.
+      if (bboxForma && cand.bbox) {
+        const semChance = cand.bbox[2] < bboxForma[0] || cand.bbox[0] > bboxForma[2] || cand.bbox[3] < bboxForma[1] || cand.bbox[1] > bboxForma[3];
+        if (semChance) return;
+      }
+
+      let areaTotal = 0;
+      const geometriasSobrepostas = [];
+      partesForma.forEach(parteForma => {
+        cand.partes.forEach(parteCand => {
+          let intersecao;
+          try { intersecao = turf.intersect(parteForma, parteCand); } catch(e) { return; } // geometria mal-formada nesse par específico — ignora só ele
+          if (!intersecao) return;
+          let areaM2;
+          try { areaM2 = turf.area(intersecao); } catch(e) { return; }
+          if (!areaM2) return;
+          areaTotal += areaM2;
+          geometriasSobrepostas.push(intersecao);
+        });
+      });
+      if (areaTotal < EDITOR_DMC_AREA_MINIMA_SOBREPOSICAO_M2) return; // sliver de arredondamento em divisa compartilhada — não é um erro real de contorno
+
+      conflitos.push({ dmcNome: cand.nome, cidadeNome: cand.cidadeNome, mesmaCidade: cand.cidadeId === cidadeDaForma, areaM2: areaTotal, geometrias: geometriasSobrepostas });
+    });
+
+    if (conflitos.length) {
+      conflitos.sort((a,b) => b.areaM2 - a.areaM2);
+      resultados.push({ layer, nomeForma: origem ? origem.nomeDMC : '(polígono ainda sem DMC vinculado)', conflitos });
+    }
+  });
+
+  editorDMC_mostrarResultadoSobreposicao(resultados, silencioso);
+  return resultados;
+}
+
+// Desenha o resultado (destaque vermelho das áreas de sobreposição) e mostra a lista —
+// num modal se achou alguma coisa, ou só um toast se estiver tudo certo.
+function editorDMC_mostrarResultadoSobreposicao(resultados, silencioso) {
+  if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers();
+
+  if (!resultados.length) {
+    if (!silencioso) toast('✓ Nenhuma sobreposição encontrada');
+    return;
+  }
+
+  resultados.forEach(r => {
+    r.conflitos.forEach(c => {
+      c.geometrias.forEach(geom => {
+        L.geoJSON(geom, { style: { color: '#A32D2D', weight: 2, fillColor: '#A32D2D', fillOpacity: 0.45 } }).addTo(editorDMCConflitosLayerGroup);
+      });
+    });
+  });
+
+  const totalConflitos = resultados.reduce((n, r) => n + r.conflitos.length, 0);
+  document.getElementById('sobreposicao-dmc-titulo').innerHTML =
+    '<i class="ti ti-alert-triangle"></i> ' + totalConflitos + ' sobreposiç' + (totalConflitos > 1 ? 'ões' : 'ão') + ' encontrada' + (totalConflitos > 1 ? 's' : '');
+
+  document.getElementById('sobreposicao-dmc-lista').innerHTML = resultados.map(r => {
+    const itens = r.conflitos.map(c =>
+      '<div style="padding:6px 0;border-top:1px solid var(--border)">' +
+        '— sobrepõe <b>"' + c.dmcNome + '"</b> (' + c.cidadeNome + (c.mesmaCidade ? '' : ' <span style="color:var(--amber-d,var(--amber))">— cidade diferente</span>') + ')' +
+        '<br><span style="color:var(--text2)">Área sobreposta: ' + editorDMC_formatarArea(c.areaM2) + '</span>' +
+      '</div>'
+    ).join('');
+    return '<div style="margin-bottom:8px"><b>' + r.nomeForma + '</b>' + itens + '</div>';
+  }).join('');
+
+  openModal('modal-sobreposicao-dmc');
+
+  // Enquadra o mapa pra mostrar tanto o que está no editor quanto as áreas de conflito
+  // destacadas — útil sobretudo quando o conflito é com um DMC de outra cidade, que pode
+  // estar fora do enquadramento atual.
+  const tudo = L.featureGroup([...editorDMCLayerGroup.getLayers(), ...editorDMCConflitosLayerGroup.getLayers()]);
+  if (tudo.getLayers().length) mapEditorDMC.fitBounds(tudo.getBounds(), { maxZoom: 16 });
 }
 
 // ================================================================
@@ -4478,6 +4672,12 @@ async function editorDMC_salvarNoApp() {
     layer._origemDMC = vinculo;
   }
 
+  // Checagem de sobreposição (Fase 3) — roda sozinha antes de salvar, só como aviso: não
+  // bloqueia o salvamento (sobreposição de fronteira às vezes é proposital), mas destaca
+  // em vermelho no mapa e num modal à parte se algum polígono invade outro DMC já
+  // cadastrado, de qualquer cidade (pega também sobreposição com cidade vizinha/conurbada).
+  const conflitosSobreposicao = await editorDMC_verificarSobreposicao(true);
+
   // Resumo antes de confirmar — mostra exatamente quais DMCs serão tocados, e alerta se
   // as formas de um mesmo DMC vêm de arquivos DIFERENTES (sinal de duplicidade de dados
   // já cadastrada, e não uma forma múltipla legítima de um único DMC).
@@ -4494,9 +4694,12 @@ async function editorDMC_salvarNoApp() {
     if (info.arquivos.size > 1) linha += ' ⚠️ vindas de ' + info.arquivos.size + ' arquivos diferentes — confira se não é duplicidade';
     return linha;
   });
-  const pergunta = linhasResumo.length === 1
+  const avisoSobreposicao = conflitosSobreposicao.length
+    ? '\n\n⚠️ Sobreposição encontrada com ' + conflitosSobreposicao.reduce((n,r) => n+r.conflitos.length, 0) + ' DMC(s) — veja o destaque vermelho no mapa e a lista que abriu. Não impede salvar, mas confira antes.'
+    : '';
+  const pergunta = (linhasResumo.length === 1
     ? 'Confirma alterar o DMC "' + Object.keys(porDMC)[0] + '"?'
-    : 'Confirma salvar? Isso vai gravar:\n\n' + linhasResumo.join('\n');
+    : 'Confirma salvar? Isso vai gravar:\n\n' + linhasResumo.join('\n')) + avisoSobreposicao;
   if (!confirm(pergunta)) return;
 
   toast('Salvando...');

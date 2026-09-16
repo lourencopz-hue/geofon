@@ -4041,6 +4041,14 @@ let editorDMCHistorico = []; // pilha de estados (GeoJSON em texto) pra desfazer
 const EDITOR_DMC_HISTORICO_MAX = 20;
 const EDITOR_DMC_AREA_MINIMA_SOBREPOSICAO_M2 = 50; // sobreposições menores que isso são ignoradas — normalmente é só arredondamento de vértice numa divisa compartilhada, não um erro real de contorno
 
+// Cor automática por DMC — pedido depois de carregar vários DMCs de uma vez e todos
+// aparecerem na mesma cor padrão do Leaflet, dificultando saber qual polígono é qual.
+// Cada DMC (cidade+nome) recebe uma cor na primeira vez que aparece nesta sessão do
+// editor e mantém ela depois (inclusive depois de um "Desfazer") — não é persistido,
+// reinicia a cada visita à aba.
+const editorDMCCoresPorChave = new Map(); // "cidadeId|nomeDMC" -> cor
+let editorDMCProximoIndiceCor = 0;
+
 function initEditorDMCMap() {
   if (mapEditorDMC) return;
   const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-27.5, -50.2];
@@ -4165,6 +4173,7 @@ function editorDMC_desfazer() {
   L.geoJSON(anterior).eachLayer(l => {
     l._origemDMC = (l.feature && l.feature.properties && l.feature.properties.__origemDMC) || null;
     if (l.feature && l.feature.properties) delete l.feature.properties.__origemDMC;
+    editorDMC_aplicarCorAutomatica(l);
     editorDMCLayerGroup.addLayer(l);
     editorDMC_habilitarSelecao(l);
   });
@@ -4272,6 +4281,39 @@ async function editorDMC_popularSelectDMC() {
   if (!dmcs.length) toast('Essa cidade ainda não tem nenhum DMC com KML vinculado');
 }
 
+// Gera uma cor bem diferente da anterior usando o "ângulo dourado" (137.508°) — dá cores
+// bem espalhadas mesmo depois de dezenas de DMCs, sem repetir como uma lista fixa curta
+// repetiria. Fica fora da faixa de 0°-55° (vermelho/laranja/âmbar) de propósito: essas
+// cores já têm significado no editor (vermelho = selecionado/sobreposição, laranja =
+// vínculo pendente) — um DMC não pode nascer com uma cor que pareça um desses avisos.
+function editorDMC_gerarCorAutomatica(indice) {
+  const hue = (55 + (indice * 137.508)) % 300;
+  return 'hsl(' + hue.toFixed(0) + ',62%,40%)';
+}
+
+// Cor estável por DMC (cidade+nome) — a primeira vez que a chave aparece nesta sessão do
+// editor ganha a próxima cor da sequência; depois disso sempre devolve a mesma. Chave
+// null (polígono ainda sem DMC vinculado) devolve null, e quem chamar mantém o estilo
+// padrão do Leaflet nesse caso.
+function editorDMC_corParaChave(chave) {
+  if (!chave) return null;
+  if (!editorDMCCoresPorChave.has(chave)) {
+    editorDMCCoresPorChave.set(chave, editorDMC_gerarCorAutomatica(editorDMCProximoIndiceCor++));
+  }
+  return editorDMCCoresPorChave.get(chave);
+}
+
+// Aplica a cor automática do DMC de origem da layer (se houver) — chamada sempre ANTES
+// de editorDMC_habilitarSelecao, que guarda a cor atual como "cor original" pra poder
+// restaurar depois de desselecionar.
+function editorDMC_aplicarCorAutomatica(layer) {
+  if (!layer.setStyle) return;
+  const origem = layer._origemDMC;
+  if (!origem || !origem.nomeDMC || !origem.cidadeId) return;
+  const cor = editorDMC_corParaChave(origem.cidadeId + '|' + origem.nomeDMC);
+  if (cor) layer.setStyle({ color: cor, fillColor: cor });
+}
+
 // Marca uma layer como selecionável: clicar destaca (fica vermelha) e permite baixar só
 // ela; clicar de novo desmarca. Sem isso, "Baixar KML" sempre levava tudo que estava no
 // editor junto, mesmo quem só queria um DMC específico.
@@ -4367,6 +4409,7 @@ async function editorDMC_carregarExistentes() {
     if (dmcCorrespondente && duplicados.has(dmcCorrespondente.nome)) return; // pulado — duplicado
     L.geoJSON(ft).eachLayer(l => {
       l._origemDMC = dmcCorrespondente ? { camadaId: item.id, nomeDMC: dmcCorrespondente.nome, cidadeId } : null;
+      editorDMC_aplicarCorAutomatica(l);
       editorDMCLayerGroup.addLayer(l);
       editorDMC_habilitarSelecao(l);
       algumaCarregada = true;
@@ -4594,7 +4637,16 @@ function editorDMC_mostrarResultadoSobreposicao(resultados, silencioso) {
   resultados.forEach(r => {
     r.conflitos.forEach(c => {
       c.geometrias.forEach(geom => {
-        L.geoJSON(geom, { style: { color: '#A32D2D', weight: 2, fillColor: '#A32D2D', fillOpacity: 0.45 } }).addTo(editorDMCConflitosLayerGroup);
+        // interactive:false + pmIgnore:true — isto é só um destaque visual da área de
+        // conflito, não um polígono de verdade. Sem isso, o Geoman tratava esse contorno
+        // como se fosse mais uma forma desenhada no mapa: entrava no modo de editar/
+        // arrastar/excluir global e atrapalhava clicar no polígono de baixo (relatado
+        // como "ficou ruim de mexer" e "criando um novo polígono").
+        L.geoJSON(geom, {
+          interactive: false,
+          pmIgnore: true,
+          style: { color: '#A32D2D', weight: 2, fillColor: '#A32D2D', fillOpacity: 0.45 }
+        }).addTo(editorDMCConflitosLayerGroup);
       });
     });
   });

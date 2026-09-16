@@ -3938,6 +3938,54 @@ function sugerirCidadePorGPS() {
 // ================================================================
 // MAPAS
 // ================================================================
+// Camadas base (Ruas / Satélite) + seletor no canto do mapa. Um módulo único usado por
+// todos os mapas do app (campo, PC, editor de DMC, escolher coordenada) pra não repetir
+// a definição de camada em cada tela — se um dia trocar o provedor de satélite ou o
+// maxZoom, muda só aqui.
+const LS_MAP_BASE_LAYER = 'geofon_map_base_layer'; // por dispositivo, mesmo padrão já usado no accordion
+
+function criarCamadaRuas() {
+  return L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    maxZoom: 19,
+  });
+}
+
+function criarCamadaSatelite() {
+  // Esri World Imagery — não exige chave de API. Atribuição obrigatória pelos termos de
+  // uso da Esri, por isso fica sempre visível no controle de camadas do canto do mapa.
+  return L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+      maxZoom: 19,
+    }
+  );
+}
+
+// Adiciona a camada base certa (a última escolhida neste dispositivo, ou "Ruas" por
+// padrão — pesa menos dados, importante pra quem tá em campo com 3G/4G fraco) e o
+// seletor de camadas no canto do mapa. Chamar uma vez na criação de cada mapa, no lugar
+// do L.tileLayer(...).addTo(mapa) direto. Cria uma instância nova de camada a cada
+// chamada (cada mapa Leaflet precisa da sua própria instância — não dá pra reusar a
+// mesma camada em dois mapas ao mesmo tempo).
+function addBaseLayerControl(mapa) {
+  const camadaRuas = criarCamadaRuas();
+  const camadaSatelite = criarCamadaSatelite();
+  const baseLayers = { 'Ruas': camadaRuas, 'Satélite': camadaSatelite };
+
+  let salva = null;
+  try { salva = localStorage.getItem(LS_MAP_BASE_LAYER); } catch (e) {}
+  const camadaInicial = salva === 'Satélite' ? camadaSatelite : camadaRuas;
+  camadaInicial.addTo(mapa);
+
+  L.control.layers(baseLayers, null, { position: 'topright' }).addTo(mapa);
+
+  mapa.on('baselayerchange', (e) => {
+    try { localStorage.setItem(LS_MAP_BASE_LAYER, e.name); } catch (e) {}
+  });
+}
+
 // Cria dois "panes" (camadas de desenho) do Leaflet com prioridades fixas: rede sempre
 // por CIMA do DMC, não importa qual das duas foi carregada/ligada primeiro. Antes, quem
 // carregava por último ficava por cima (ordem de inserção no DOM), o que deixava a rede
@@ -3959,7 +4007,7 @@ function initFieldMap() {
   const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-28.6775,-49.3680];
   const zoomInicial = S.pos ? 15 : 13;
   mapField = L.map('map-field-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapField);
+  addBaseLayerControl(mapField);
   criarPanesDeCamadas(mapField);
   addFieldMarkers();
   setTimeout(() => mapField.invalidateSize(), 300);
@@ -3972,7 +4020,7 @@ function initPCMap() {
   const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-28.6775,-49.3680];
   const zoomInicial = S.pos ? 13 : 11;
   mapPC = L.map('map-pc-map', { zoomControl: true }).setView(centroInicial, zoomInicial);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapPC);
+  addBaseLayerControl(mapPC);
   criarPanesDeCamadas(mapPC);
   refreshPCMap();
   redesenharCampanhasNoMapa(); // mapa PC é criado sob demanda, pode já existir campanhas ativas
@@ -3997,7 +4045,7 @@ function initEditorDMCMap() {
   if (mapEditorDMC) return;
   const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-27.5, -50.2];
   mapEditorDMC = L.map('editor-dmc-map', { zoomControl: true }).setView(centroInicial, S.pos ? 13 : 8);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(mapEditorDMC);
+  addBaseLayerControl(mapEditorDMC);
   editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
   editorDMCConflitosLayerGroup = L.featureGroup().addTo(mapEditorDMC);
 
@@ -8210,7 +8258,7 @@ function abrirEscolherCoordenada(inputId) {
     const centro = temAtual ? atual : [-28.6775, -49.3680];
     if (!_mapaEscolherCoord) {
       _mapaEscolherCoord = L.map('mapa-escolher-coord').setView(centro, temAtual ? 14 : 8);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(_mapaEscolherCoord);
+      addBaseLayerControl(_mapaEscolherCoord);
       _mapaEscolherCoord.on('click', (e) => marcarCoordenadaEscolhida(e.latlng.lat, e.latlng.lng));
     } else {
       _mapaEscolherCoord.setView(centro, temAtual ? 14 : 8);

@@ -831,9 +831,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="btn sm" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
         <button class="btn sm primary" onclick="editorDMC_salvarNoApp()"><i class="ti ti-device-floppy"></i> Salvar</button>
       </div>
-      <div class="card" style="margin:10px 14px 0;background:var(--blue-l)">
-        <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
-          <b>Salvar</b> grava direto no app — DMC já carregado só pede uma confirmação simples; polígono novo/importado (sem vínculo ainda) pergunta cidade e DMC (ou nome de um DMC novo) antes de gravar. Cada polígono sempre volta pro seu DMC certo, mesmo com vários na tela ao mesmo tempo. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo. <b>Verificar sobreposição</b> compara os polígonos deste editor contra TODOS os DMCs já cadastrados (de qualquer cidade — pega também sobreposição com cidade vizinha/conurbada); "Salvar" já roda essa mesma checagem sozinho antes de gravar, só como aviso.
+      <div class="card" id="editor-dmc-info-card" style="margin:10px 14px 0;background:var(--blue-l);padding:8px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b style="font-size:11.5px;color:var(--blue-d)"><i class="ti ti-info-circle"></i> Como usar o editor</b>
+          <button class="btn sm" id="editor-dmc-info-toggle-btn" onclick="editorDMC_toggleInfo()" title="Minimizar — aumenta a área de desenho" style="padding:2px 8px;background:transparent">
+            <i class="ti ti-chevron-up"></i>
+          </button>
+        </div>
+        <p id="editor-dmc-info-texto" style="font-size:11.5px;color:var(--blue-d);line-height:1.6;margin-top:6px">
+          <b>Salvar</b> grava direto no app — DMC já carregado só pede uma confirmação simples; polígono novo/importado (sem vínculo ainda) pergunta cidade e DMC (ou nome de um DMC novo) antes de gravar. Cada polígono sempre volta pro seu DMC certo, mesmo com vários na tela ao mesmo tempo. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo. <b>Verificar sobreposição</b> compara os polígonos deste editor contra TODOS os DMCs já cadastrados (de qualquer cidade — pega também sobreposição com cidade vizinha/conurbada); "Salvar" já roda essa mesma checagem sozinho antes de gravar, só como aviso. Passe o mouse num DMC carregado pra ver nome e sigla.
         </p>
       </div>
       <div style="display:flex;justify-content:space-between;padding:0 14px;margin-top:4px">
@@ -1047,6 +1053,18 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               <input type="number" id="cfg-gps" value="20">
             </div>
             <button class="btn primary" onclick="salvarConfig()"><i class="ti ti-device-floppy"></i> Salvar configurações</button>
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <div class="field">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+                <input type="checkbox" id="cfg-hover-dmc-campo" style="width:16px;height:16px;cursor:pointer" onchange="salvarPreferenciaHoverCampo(this.checked)">
+                Mostrar nome/sigla do DMC ao passar o mouse também no modo Campo
+              </label>
+              <p style="font-size:11px;color:var(--text2);margin-top:4px">
+                Já funciona sempre no Mapa e no Editor de DMC (desktop). Essa opção é só deste aparelho — não muda nada pros outros usuários.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -4049,6 +4067,26 @@ const EDITOR_DMC_AREA_MINIMA_SOBREPOSICAO_M2 = 50; // sobreposições menores qu
 const editorDMCCoresPorChave = new Map(); // "cidadeId|nomeDMC" -> cor
 let editorDMCProximoIndiceCor = 0;
 
+// Minimizar as orientações — pedido pra sobrar mais área de desenho na tela. Lembrado
+// por aparelho (mesmo padrão de LS_MAP_BASE_LAYER), então quem já sabe usar o editor não
+// precisa reabrir o texto toda vez que troca de aba.
+const LS_EDITOR_DMC_INFO_KEY = 'geofon_editor_dmc_info_aberto';
+
+function editorDMC_toggleInfo(forcarAberto) {
+  const texto = document.getElementById('editor-dmc-info-texto');
+  const btn = document.getElementById('editor-dmc-info-toggle-btn');
+  if (!texto || !btn) return;
+  const aberto = forcarAberto !== undefined ? forcarAberto : texto.style.display === 'none';
+  texto.style.display = aberto ? '' : 'none';
+  btn.innerHTML = '<i class="ti ti-chevron-' + (aberto ? 'up' : 'down') + '"></i>';
+  btn.title = aberto ? 'Minimizar — aumenta a área de desenho' : 'Mostrar orientações';
+  try { localStorage.setItem(LS_EDITOR_DMC_INFO_KEY, aberto ? '1' : '0'); } catch(e) {}
+  // O mapa (flex:1) só recupera o espaço liberado pelo card depois do reflow do CSS —
+  // sem o setTimeout o Leaflet media o tamanho antigo e os tiles ficavam cortados até o
+  // próximo zoom/pan manual.
+  if (mapEditorDMC) setTimeout(() => mapEditorDMC.invalidateSize(), 50);
+}
+
 function initEditorDMCMap() {
   if (mapEditorDMC) return;
   const centroInicial = S.pos ? [S.pos.lat, S.pos.lng] : [-27.5, -50.2];
@@ -4056,6 +4094,12 @@ function initEditorDMCMap() {
   addBaseLayerControl(mapEditorDMC);
   editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
   editorDMCConflitosLayerGroup = L.featureGroup().addTo(mapEditorDMC);
+
+  // Restaura se as orientações estavam minimizadas (pedido: aumentar a área de desenho)
+  // — o mapa já nasce com o tamanho final, sem precisar de um segundo invalidateSize.
+  let infoAberta = true;
+  try { infoAberta = localStorage.getItem(LS_EDITOR_DMC_INFO_KEY) !== '0'; } catch(e) {}
+  editorDMC_toggleInfo(infoAberta);
 
   // Geoman já vem com um pacote de português do Brasil pronto — sem isso, a barra de
   // ferramentas aparecia inteira em inglês.
@@ -4174,6 +4218,7 @@ function editorDMC_desfazer() {
     l._origemDMC = (l.feature && l.feature.properties && l.feature.properties.__origemDMC) || null;
     if (l.feature && l.feature.properties) delete l.feature.properties.__origemDMC;
     editorDMC_aplicarCorAutomatica(l);
+    editorDMC_aplicarTooltip(l);
     editorDMCLayerGroup.addLayer(l);
     editorDMC_habilitarSelecao(l);
   });
@@ -4314,6 +4359,15 @@ function editorDMC_aplicarCorAutomatica(layer) {
   if (cor) layer.setStyle({ color: cor, fillColor: cor });
 }
 
+// Hover com nome + sigla do DMC — sempre ativo aqui (Editor de DMC é desktop only).
+// Polígono ainda sem DMC vinculado não tem tooltip (nada pra mostrar ainda).
+function editorDMC_aplicarTooltip(layer) {
+  if (!layer.bindTooltip) return;
+  const origem = layer._origemDMC;
+  if (!origem || !origem.nomeDMC) { if (layer.unbindTooltip) layer.unbindTooltip(); return; }
+  layer.bindTooltip(dmcTextoHover(origem.nomeDMC, origem.cidadeId), { sticky: true, direction: 'top', opacity: 0.95 });
+}
+
 // Marca uma layer como selecionável: clicar destaca (fica vermelha) e permite baixar só
 // ela; clicar de novo desmarca. Sem isso, "Baixar KML" sempre levava tudo que estava no
 // editor junto, mesmo quem só queria um DMC específico.
@@ -4410,6 +4464,7 @@ async function editorDMC_carregarExistentes() {
     L.geoJSON(ft).eachLayer(l => {
       l._origemDMC = dmcCorrespondente ? { camadaId: item.id, nomeDMC: dmcCorrespondente.nome, cidadeId } : null;
       editorDMC_aplicarCorAutomatica(l);
+      editorDMC_aplicarTooltip(l);
       editorDMCLayerGroup.addLayer(l);
       editorDMC_habilitarSelecao(l);
       algumaCarregada = true;
@@ -6766,7 +6821,7 @@ async function carregarGeometriaCamada(tipo, camadaId) {
         // instância "disputada" entre os dois causa remoção inconsistente e desalinhamento
         // visual ao dar zoom (o sintoma relatado: camada que "não fica oculta" e aparece
         // "deslocada"). Por isso criamos UMA instância de L.geoJSON por mapa.
-        const criarLayer = () => {
+        const criarLayer = (paraMapa) => { // paraMapa: 'field' (Campo) ou 'pc' (Mapa/PC, desktop)
           // Trecho de rede é uma linha bem fina — difícil de tocar com precisão no celular
           // ("dedo gordo"). Tentamos antes resolver com a opção "tolerance" do renderer
           // Canvas do Leaflet, mas causou uma regressão real: em vez de facilitar, ficou
@@ -6801,6 +6856,13 @@ async function carregarGeometriaCamada(tipo, camadaId) {
               const popupTxt = (lbl || diamTxt || cidadeTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt+cidadeTxt) : null;
               if (popupTxt) layer.bindPopup(popupTxt);
 
+              // Hover com nome + sigla do DMC — sempre ativo no Mapa/PC (desktop); no
+              // Campo só se a pessoa tiver ligado a preferência em Configurações → Geral
+              // (tela pequena/toque não tem hover de verdade por padrão).
+              if (tipo === 'dmc' && lbl && layer.bindTooltip && (paraMapa === 'pc' || dmcHoverAtivoNoCampo())) {
+                layer.bindTooltip(dmcTextoHover(lbl, item.cidade), { sticky: true, direction: 'top', opacity: 0.95 });
+              }
+
               if (tipo === 'redes' && ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type) && layer.getLatLngs) {
                 // Peso 24 (testado antes) era largo demais: em trechos onde duas tubulações
                 // de diâmetro diferente passam perto uma da outra (paralelas, ou perto de
@@ -6823,8 +6885,8 @@ async function carregarGeometriaCamada(tipo, camadaId) {
 
         // Só monta uma layer nova pra cada mapa se ele ainda não tiver uma — evita
         // duplicar caso essa mesma operação seja revisitada.
-        if (mapField && !item.lgField) item.lgField = criarLayer();
-        if (mapPC && !item.lgPC) item.lgPC = criarLayer();
+        if (mapField && !item.lgField) item.lgField = criarLayer('field');
+        if (mapPC && !item.lgPC) item.lgPC = criarLayer('pc');
         if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
       } finally {
         item._carregamentoEmAndamento = null;
@@ -7930,6 +7992,35 @@ function nomesDMCBatem(a, b) {
   return (ba && ba === nb) || (bb && bb === na) || (ba && ba === bb);
 }
 
+// Acha o objeto de cadastro do DMC (o que tem sigla, situação, ligações etc. — não a
+// geometria) a partir da cidade e do nome que aparece na feature/KML. Usado pelo hover
+// que mostra nome+sigla (Mapa/PC, Editor de DMC e, se ativado, Campo).
+function dmcObjPorNome(cidadeId, nomeDMC) {
+  if (!nomeDMC) return null;
+  const c = S.cidades.find(x => x.id === cidadeId);
+  return c ? (c.dmcs || []).find(d => nomesDMCBatem(d.nome, nomeDMC)) || null : null;
+}
+
+// Monta o HTML do hover: nome em negrito + sigla entre parênteses, se cadastrada.
+function dmcTextoHover(nomeDMC, cidadeId) {
+  const dmcObj = dmcObjPorNome(cidadeId, nomeDMC);
+  const sigla = dmcObj && dmcObj.sigla ? dmcObj.sigla : '';
+  return '<b>' + nomeDMC + '</b>' + (sigla ? ' <span style="color:#888">(' + sigla + ')</span>' : '');
+}
+
+// Preferência de aparelho: o hover com nome/sigla do DMC já é sempre ativo nos mapas
+// desktop (Mapa e Editor de DMC); no Campo fica desligado por padrão (tela pequena,
+// tela sensível ao toque não tem "hover" de verdade) e só liga se a pessoa marcar essa
+// opção em Configurações → Geral.
+const LS_DMC_HOVER_CAMPO_KEY = 'geofon_dmc_hover_campo_v1';
+function dmcHoverAtivoNoCampo() {
+  try { return localStorage.getItem(LS_DMC_HOVER_CAMPO_KEY) === '1'; } catch(e) { return false; }
+}
+function salvarPreferenciaHoverCampo(ativo) {
+  try { localStorage.setItem(LS_DMC_HOVER_CAMPO_KEY, ativo ? '1' : '0'); } catch(e) {}
+  toast(ativo ? '✓ Hover do DMC ativado no modo Campo' : 'Hover do DMC desativado no modo Campo');
+}
+
 // Acha o índice da coluna cujo cabeçalho contém um dos textos candidatos (comparação
 // tolerante a espaço/maiúscula — o arquivo real tinha, por exemplo, "Ligações " com
 // espaço sobrando no fim).
@@ -8691,6 +8782,12 @@ function mostrarSecaoConfig(nome) {
     if (navItem) navItem.classList.toggle('active', id === nome);
   });
   try { localStorage.setItem('configSecaoAtual', nome); } catch(e) {}
+  // Preferência por aparelho (não vem do Firestore) — só precisa ser lida ao abrir esta
+  // seção, não a cada snapshot de S.config.
+  if (nome === 'geral') {
+    const cb = document.getElementById('cfg-hover-dmc-campo');
+    if (cb) cb.checked = dmcHoverAtivoNoCampo();
+  }
 }
 
 function restaurarSecaoConfig() {

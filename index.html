@@ -87,6 +87,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg2)}
 .config-nav-item.active{background:var(--blue-l);color:var(--blue-d);font-weight:600;border-right:2px solid var(--blue)}
 .config-nav-badge{margin-left:auto;background:var(--amber);color:#fff;border-radius:10px;min-width:16px;height:16px;padding:0 5px;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .config-content{flex:1;overflow-y:auto;padding:18px}
+/* Grade dos cards de DMC na aba Gestão — largura mínima fixa por card em vez de um
+   único card ocupando a largura toda do painel (que sobrava muito espaço vazio em
+   telas largas de desktop); em telas estreitas (campo/celular) cai sozinho pra 1
+   coluna, sem precisar de media query. */
+.dmcs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:8px;align-items:start}
 .config-section-panel{max-width:640px}
 
 /* BUTTONS */
@@ -930,6 +935,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <i class="ti ti-palette"></i> <span>Cores da rede</span>
           <span class="config-nav-badge hidden" id="badge-nav-cores-diametro"></span>
         </div>
+        <div class="config-nav-item" data-config-section="situacoes-dmc" onclick="mostrarSecaoConfig('situacoes-dmc')">
+          <i class="ti ti-map-2"></i> <span>Situação dos DMCs</span>
+          <span class="config-nav-badge hidden" id="badge-nav-situacoes-dmc"></span>
+        </div>
         <div class="config-nav-item" data-config-section="geral" onclick="mostrarSecaoConfig('geral')">
           <i class="ti ti-settings"></i> <span>Configurações gerais</span>
           <span class="config-nav-badge hidden" id="badge-nav-geral"></span>
@@ -1039,6 +1048,23 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             </button>
             <input type="file" id="up-cores-diametro" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleImportarCoresPorDiametro(this)">
           </div>
+        </div>
+
+        <div id="cfgsec-situacoes-dmc" class="config-section-panel hidden">
+          <div class="section-title" style="margin-bottom:10px">Situação dos DMCs</div>
+          <div class="card" style="background:var(--blue-l);margin-bottom:10px">
+            <p style="font-size:11.5px;color:var(--blue-d);line-height:1.6">
+              As situações abaixo aparecem no seletor de cada DMC em Gestão. Dar uma cor a
+              uma situação faz o contorno desse DMC usar essa cor nos MAPAS (Mapa/PC e
+              Campo) — não muda nada no Editor de DMC, que continua com a cor automática
+              por DMC. Uma cor personalizada definida direto num DMC específico (em Gestão)
+              sempre tem prioridade sobre a cor da situação.
+            </p>
+          </div>
+          <div id="config-situacoes-dmc"></div>
+          <button class="btn sm" style="margin-top:8px" onclick="adicionarSituacaoDMC()">
+            <i class="ti ti-plus"></i> Adicionar situação
+          </button>
         </div>
 
         <div id="cfgsec-geral" class="config-section-panel hidden">
@@ -1779,6 +1805,14 @@ const S = {
   // na hora de desenhar: cor por diâmetro (se o KML tiver o diâmetro identificável e
   // houver uma regra aqui) > cor original do KML (_corKml) > cor padrão da camada.
   coresPorDiametro: {},
+  // Cor do contorno do DMC nos MAPAS (Mapa/PC e Campo) conforme a situação cadastrada —
+  // { "em Operação": "#RRGGBB", ... }. Só entra em jogo se o DMC não tiver cor
+  // personalizada própria (Gestão); o Editor de DMC não usa isso — lá a cor automática
+  // por DMC (ângulo dourado) continua igual, de propósito (decisão com o Lourenço).
+  // Editável em Configurações → Situação dos DMCs, junto com a própria lista de
+  // situações possíveis (situacoesDMC) — que por padrão é a mesma de sempre.
+  coresPorSituacaoDMC: {},
+  situacoesDMC: ['em Operação', 'em Instalação', 'em Estudo', 'Dividir DMC'],
   campanhaAtual: null,      // { id, dmc, nomeLivre, pontos:[[lat,lng],...], inicioMs } — minha campanha em andamento
   campanhasAtivas: {},      // { campanhaId: {dados do Firestore} } — campanhas de TODOS os usuários (incluindo a própria)
   campanhasPolylines: {},   // { campanhaId: L.Polyline } — referências de desenho no mapa, por mapa (field/pc)
@@ -2078,6 +2112,8 @@ function iniciarSincronizacaoFirestore() {
       if (dados.camposLista) S.camposLista = { ...S.camposLista, ...dados.camposLista };
       if (dados.camposWhatsApp) S.camposWhatsApp = { ...S.camposWhatsApp, ...dados.camposWhatsApp };
       if (dados.coresPorDiametro) S.coresPorDiametro = dados.coresPorDiametro;
+      if (dados.coresPorSituacaoDMC) S.coresPorSituacaoDMC = dados.coresPorSituacaoDMC;
+      if (dados.situacoesDMC && dados.situacoesDMC.length) S.situacoesDMC = dados.situacoesDMC;
       const cfgOrgEl = document.getElementById('cfg-org'); if (cfgOrgEl) cfgOrgEl.value = S.config.org || '';
       const cfgGpsEl = document.getElementById('cfg-gps'); if (cfgGpsEl) cfgGpsEl.value = S.config.gps || 20;
     }
@@ -2087,6 +2123,7 @@ function iniciarSincronizacaoFirestore() {
     renderConfigCamposLista();
     renderConfigCamposWhatsApp();
     renderConfigCoresPorDiametro();
+    renderConfigSituacoesDMC();
     // Redesenha os pop-ups dos mapas com a config atualizada — assim a mudança aparece
     // em tempo real em TODOS os dispositivos conectados, não só em quem alterou.
     addFieldMarkers();
@@ -2640,6 +2677,124 @@ async function removerRegraCorDiametro(diam) {
 }
 
 // ================================================================
+// SITUAÇÃO DOS DMCs — lista de situações possíveis + cor de cada uma nos MAPAS.
+// Mesmo padrão de "cores por diâmetro" acima, gravado no mesmo documento meta/config.
+// "em Estudo" é protegida (sem renomear/remover) porque dmcPermiteCadastro() depende
+// desse valor exato pra decidir se um DMC já está liberado pra cadastro de vazamentos —
+// renomear essa entrada sem atualizar aquela função quebraria essa regra silenciosamente.
+// ================================================================
+const SITUACAO_DMC_PROTEGIDA = 'em Estudo';
+
+function renderConfigSituacoesDMC() {
+  const el = document.getElementById('config-situacoes-dmc');
+  if (!el) return;
+  el.innerHTML = S.situacoesDMC.length
+    ? S.situacoesDMC.map((s, i) => {
+        const cor = S.coresPorSituacaoDMC[s] || '';
+        const protegida = s === SITUACAO_DMC_PROTEGIDA;
+        const campoNome = protegida
+          ? `<span style="flex:1;min-width:120px;padding:6px 8px;font-size:12.5px;color:var(--text2)" title="Situação usada pelo sistema pra decidir se um DMC está liberado pra cadastro — não pode ser renomeada/removida">${s} 🔒</span>`
+          : `<input type="text" value="${s}" style="flex:1;min-width:120px;padding:6px 8px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" onchange="renomearSituacaoDMC(${i}, this.value)">`;
+        return `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+          ${campoNome}
+          <div style="width:22px;height:22px;border-radius:5px;border:1px solid var(--border);background:${cor||'repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50%/8px 8px'};flex-shrink:0"></div>
+          <input type="text" value="${cor}" placeholder="sem cor (usa a do KML)"
+            style="width:170px;padding:6px 8px;font-size:11.5px;font-family:monospace;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"
+            onchange="editarCorSituacaoDMC(${i}, this.value)">
+          ${protegida ? '' : `<button onclick="removerSituacaoDMC(${i})" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)"><i class="ti ti-trash" style="font-size:12px"></i></button>`}
+        </div>`;
+      }).join('')
+    : '<p style="font-size:11.5px;color:var(--text2)">Nenhuma situação cadastrada.</p>';
+}
+
+async function salvarSituacoesDMC() {
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { situacoesDMC: S.situacoesDMC, coresPorSituacaoDMC: S.coresPorSituacaoDMC }, { merge:true });
+}
+
+async function adicionarSituacaoDMC() {
+  const nome = prompt('Nome da nova situação (ex.: "Desativado")');
+  if (!nome || !nome.trim()) return;
+  const nomeLimpo = nome.trim();
+  if (S.situacoesDMC.includes(nomeLimpo)) { toast('Já existe uma situação com esse nome'); return; }
+  S.situacoesDMC.push(nomeLimpo);
+  await salvarSituacoesDMC();
+  renderConfigSituacoesDMC();
+  renderManage();
+  toast('Situação adicionada — defina uma cor se quiser que apareça diferente nos mapas');
+}
+
+async function renomearSituacaoDMC(indice, novoNomeRaw) {
+  const antigo = S.situacoesDMC[indice];
+  if (antigo === SITUACAO_DMC_PROTEGIDA) { renderConfigSituacoesDMC(); return; }
+  const novoNome = (novoNomeRaw || '').trim();
+  if (!novoNome || novoNome === antigo) { renderConfigSituacoesDMC(); return; }
+  if (S.situacoesDMC.includes(novoNome)) { toast('Já existe uma situação com esse nome'); renderConfigSituacoesDMC(); return; }
+  S.situacoesDMC[indice] = novoNome;
+  if (S.coresPorSituacaoDMC[antigo] !== undefined) {
+    S.coresPorSituacaoDMC[novoNome] = S.coresPorSituacaoDMC[antigo];
+    delete S.coresPorSituacaoDMC[antigo];
+  }
+  await salvarSituacoesDMC();
+  // Atualiza todo DMC (de qualquer cidade) que estava com a situação antiga — senão
+  // ficaria com um valor "órfão" que não bate mais com nenhuma opção do seletor.
+  let dmcsAtualizados = 0;
+  for (const c of S.cidades) {
+    let mudou = false;
+    c.dmcs.forEach(d => { if (d.situacao === antigo) { d.situacao = novoNome; mudou = true; dmcsAtualizados++; } });
+    if (mudou) await salvarCidadeFirestore(c);
+  }
+  renderConfigSituacoesDMC();
+  renderManage();
+  redesenharCamadasComCorAtualizada();
+  toast('Situação renomeada' + (dmcsAtualizados ? ' — ' + dmcsAtualizados + ' DMC(s) atualizados' : ''));
+}
+
+async function editarCorSituacaoDMC(indice, corDigitada) {
+  const nomeSituacao = S.situacoesDMC[indice];
+  if (!nomeSituacao) return;
+  if (!corDigitada.trim()) {
+    delete S.coresPorSituacaoDMC[nomeSituacao];
+    await salvarSituacoesDMC();
+    renderConfigSituacoesDMC();
+    renderManage();
+    redesenharCamadasComCorAtualizada();
+    toast('Cor removida — DMCs nessa situação voltam a usar a cor personalizada (se tiverem) ou a do KML');
+    return;
+  }
+  const cor = normalizarCorEntrada(corDigitada);
+  if (!cor) { toast('Cor inválida — use #RRGGBB (ex: #FF00FF) ou RGB (ex: 255,0,255)'); renderConfigSituacoesDMC(); return; }
+  S.coresPorSituacaoDMC[nomeSituacao] = cor;
+  await salvarSituacoesDMC();
+  renderConfigSituacoesDMC();
+  renderManage();
+  redesenharCamadasComCorAtualizada();
+  toast('Cor da situação "' + nomeSituacao + '" atualizada');
+}
+
+async function removerSituacaoDMC(indice) {
+  const nome = S.situacoesDMC[indice];
+  if (nome === SITUACAO_DMC_PROTEGIDA) return;
+  const emUso = S.cidades.reduce((n, c) => n + c.dmcs.filter(d => d.situacao === nome).length, 0);
+  const aviso = emUso ? ('\n\n' + emUso + ' DMC(s) estão com essa situação — ficarão sem situação definida (—).') : '';
+  if (!confirm('Remover a situação "' + nome + '"?' + aviso)) return;
+  S.situacoesDMC.splice(indice, 1);
+  delete S.coresPorSituacaoDMC[nome];
+  await salvarSituacoesDMC();
+  if (emUso) {
+    for (const c of S.cidades) {
+      let mudou = false;
+      c.dmcs.forEach(d => { if (d.situacao === nome) { d.situacao = null; mudou = true; } });
+      if (mudou) await salvarCidadeFirestore(c);
+    }
+  }
+  renderConfigSituacoesDMC();
+  renderManage();
+  redesenharCamadasComCorAtualizada();
+  toast('Situação removida');
+}
+
+// ================================================================
 // IMPORTAÇÃO DE PLANILHA — cores por diâmetro (.xlsx/.csv)
 // Aceita tanto colunas já separadas (dn | hex, ou dn | r | g | b) quanto uma linha CSV
 // inteira colada numa única célula (ex.: "layer,dn,aci,r,g,b,hex") — formato comum
@@ -2870,6 +3025,12 @@ function iniciarSincronizacaoCamadas() {
       const item = {
         id: docSnap.id, nome: l.nome, cidade: l.cidade || '',
         validada: l.validada !== false, criadoPorNome: l.criadoPorNome || '', criadoPor: l.criadoPor || '',
+        // Data/autor — usados na aba Gestão pra mostrar quando cada rede/DMC foi
+        // cadastrado ou teve a curva atualizada, e por quem (melhoria pedida pelo
+        // Lourenço). ultimaAtualizacao/atualizadoPor* só existem em camadas que já
+        // passaram por uma edição depois de criadas (ver atualizarGeometriaCamada).
+        criadoEm: l.criadoEm || null, ultimaAtualizacao: l.ultimaAtualizacao || null,
+        atualizadoPor: l.atualizadoPor || '', atualizadoPorNome: l.atualizadoPorNome || '',
         visible: estaVisivelLocalmente(docSnap.id),
         lgField: existente ? existente.lgField : null,
         lgPC: existente ? existente.lgPC : null,
@@ -2904,6 +3065,11 @@ function iniciarSincronizacaoCamadas() {
     renderRedesPanel();
     renderLayerLists();
     atualizarBadgePendentes();
+    // Mantém a aba Gestão (data/autor de rede e de cada DMC, item novo) em dia mesmo
+    // quando a mudança vem de outro lugar (upload em Carregar camadas, edição no
+    // Editor de DMC, ou outro usuário/aparelho) — reaproveita o mesmo cuidado de
+    // rolagem/reidratação de renderManage() (ver ali).
+    renderManage();
   });
 }
 
@@ -6489,6 +6655,39 @@ async function dispararRecalculoExtensaoAposUpload(tipo, geojson, cidadeId) {
   if (cidExpandida && !cidExpandida.classList.contains('hidden')) renderDMCsEditaveis(cidadeId);
 }
 
+// Antes de CRIAR uma nova camada de DMC (não atualização — ver atualizarGeometriaCamada),
+// verifica se algum dos DMCs presentes no arquivo já tem uma camada vinculada nesta
+// cidade. Cada DMC deveria ter um único arquivo vinculado; subir um novo sem remover o
+// antigo deixa os dois ativos ao mesmo tempo (foi o que aconteceu com o DMC Morro Chato,
+// em Turvo: já tinha duas camadas vinculadas e virou três). Isso complementa a checagem
+// que já existia em vincularDMCExistente — aquela só cobria o caso em que o nome do DMC
+// no arquivo NÃO batia automaticamente com nenhum DMC cadastrado (fluxo do modal de
+// vínculo manual); esta cobre o caso mais comum, quando o nome bate sozinho via
+// nomesDMCBatem e o fluxo de vínculo manual nem chega a abrir. Não bloqueia — só avisa e
+// deixa a pessoa decidir (pode haver um motivo legítimo pra ter mais de um arquivo).
+async function checarDuplicidadeDMCAntesUpload(geojson, cidadeId) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  if (!c) return true;
+  const nomes = new Set();
+  (geojson.features||[]).forEach(ft => {
+    if (!ft.geometry || !['Polygon','MultiPolygon'].includes(ft.geometry.type)) return;
+    const p = ft.properties || {};
+    const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
+    if (nome) nomes.add(nome.trim());
+  });
+  const jaVinculados = [];
+  for (const nome of nomes) {
+    const dmcReg = c.dmcs.find(d => nomesDMCBatem(d.nome, nome));
+    const poligono = await encontrarPoligonoDMC(cidadeId, dmcReg ? dmcReg.nome : nome, dmcReg ? dmcReg.nomeFeatureKml : null);
+    if (poligono) jaVinculados.push(dmcReg ? dmcReg.nome : nome);
+  }
+  if (!jaVinculados.length) return true;
+  return confirm('O DMC "' + jaVinculados.join('", "') +
+    '" já tem uma camada vinculada nesta cidade. Subir este arquivo vai criar um arquivo A MAIS (os dois ficam ativos ao mesmo tempo) — cada DMC deveria ter só um.\n\n' +
+    'Se isto é uma atualização do contorno, o ideal é remover a camada antiga em "Gerenciar camadas DMC" antes de subir esta.\n\n' +
+    'Confirma subir mesmo assim?');
+}
+
 function handleLayerUpload(input, tipo) {
   Array.from(input.files).forEach(f => {
     const reader = new FileReader();
@@ -6507,6 +6706,7 @@ function handleLayerUpload(input, tipo) {
           // filtros" (comportamento removido — ver renderDMCPanel/renderRedesPanel).
           abrirPerguntaCidadeCamada(geojson, tipo, f.name);
         } else {
+          if (tipo === 'dmc' && !(await checarDuplicidadeDMCAntesUpload(geojson, cidadeId))) return;
           const novoId = await salvarCamadaFirestore(geojson, tipo, f.name, cidadeId);
           // Só mostra sucesso se REALMENTE deu certo — antes, esse toast aparecia mesmo
           // quando salvarCamadaFirestore falhava (novoId null), o que gerava os dois
@@ -6566,6 +6766,11 @@ async function confirmarCidadeCamada() {
   if (!cidadeId) { toast('Selecione uma cidade'); return; }
   const pend = S._camadaPendenteUpload;
   if (!pend) return;
+  if (pend.tipo === 'dmc' && !(await checarDuplicidadeDMCAntesUpload(pend.geojson, cidadeId))) {
+    S._camadaPendenteUpload = null;
+    closeModal('modal-camada-cidade');
+    return;
+  }
   const novoId = await salvarCamadaFirestore(pend.geojson, pend.tipo, pend.nome, cidadeId);
   if (novoId) {
     definirVisibilidadeLocal(novoId, true);
@@ -6658,7 +6863,8 @@ async function atualizarGeometriaCamada(camadaId, novoGeojson) {
     await uploadString(fileRef, JSON.stringify(novoGeojson), 'raw', { contentType: 'application/json' });
     const geojsonUrl = await getDownloadURL(fileRef);
     await setDoc(doc(db, 'camadas', camadaId), {
-      geojsonUrl, ultimaAtualizacao: serverTimestamp(), atualizadoPor: S.user?.uid || ''
+      geojsonUrl, ultimaAtualizacao: serverTimestamp(),
+      atualizadoPor: S.user?.uid || '', atualizadoPorNome: S.user?.nome || S.user?.email || ''
     }, { merge: true });
   } catch(err) {
     console.warn('Erro ao atualizar geometria da camada ' + camadaId + ':', err);
@@ -6693,27 +6899,45 @@ function centralizarEmGeoJSON(geojson) {
 // (que exibe no mapa) quanto pela detecção automática de DMC por coordenada (que só
 // precisa calcular, sem exibir nada). silencioso=true evita toast de erro repetido
 // quando está pré-carregando várias camadas em lote no fundo.
-async function buscarGeometriaBruta(camadaId, silencioso) {
+// Recebe o "item" (não só o id) para poder marcar item._erroCarregamento — um estado
+// PERSISTENTE (ao contrário do toast, que passa rápido e pode não ser notado numa falha
+// intermitente) que o painel de camadas mostra como um ícone de alerta até a próxima
+// tentativa dar certo. Motivo: relato de falha ao carregar DMCs de Içara em casa, sem
+// nenhum erro visível no Console nem toast percebido — precisa de um jeito de flagrar
+// isso depois, sem precisar estar olhando no exato momento em que acontece.
+async function buscarGeometriaBruta(item, silencioso) {
+  const camadaId = item.id;
   const { db, doc, getDoc } = window.FB;
-  const snap = await getDoc(doc(db, 'camadas', camadaId));
-  if (!snap.exists()) { if (!silencioso) toast('Camada não encontrada'); return null; }
-  const l = snap.data();
   try {
+    const snap = await getDoc(doc(db, 'camadas', camadaId));
+    if (!snap.exists()) {
+      item._erroCarregamento = 'Camada não encontrada no banco de dados';
+      if (!silencioso) toast('Camada não encontrada');
+      return null;
+    }
+    const l = snap.data();
+    let resultado = null;
     if (l.geojsonUrl) {
       const resp = await fetch(l.geojsonUrl);
       if (!resp.ok) throw new Error('Falha ao baixar geometria (HTTP ' + resp.status + ')');
-      return await resp.json();
+      resultado = await resp.json();
     } else if (l.geojsonStr) {
-      return JSON.parse(l.geojsonStr);
+      resultado = JSON.parse(l.geojsonStr);
     } else if (l.geojson) {
-      return l.geojson;
+      resultado = l.geojson;
     }
-    return null;
+    item._erroCarregamento = resultado ? null : 'Camada sem geometria salva';
+    return resultado;
   } catch(e) {
+    const pareceCors = /failed to fetch/i.test(e.message||'');
+    item._erroCarregamento = pareceCors
+      ? 'Erro de rede/CORS ao baixar do Storage'
+      : ('Erro ao ler geometria: ' + (e.message||e));
     if (!silencioso) {
-      const pareceCors = /failed to fetch/i.test(e.message||'');
       // Evita o mesmo aviso repetido várias vezes seguidas (ex.: 3 camadas falhando ao
       // mesmo tempo no carregamento inicial) — mostra só uma vez a cada alguns segundos.
+      // O toast ainda pode passar despercebido nesse caso; é por isso que agora também
+      // existe o indicador persistente no painel (item._erroCarregamento acima).
       const agora = Date.now();
       if (pareceCors) {
         if (!S._ultimoAvisoCors || agora - S._ultimoAvisoCors > 8000) {
@@ -6731,8 +6955,10 @@ async function buscarGeometriaBruta(camadaId, silencioso) {
 
 // Resolve a cor final de uma feature ao desenhar: pra rede, prioriza a regra de
 // cor-por-diâmetro (Configurações) sobre a cor original do KML. Pra DMC, prioriza a cor
-// personalizada cadastrada em Gestão (por DMC) sobre a cor original do KML — dá pra
-// ajustar sem precisar editar/reexportar o contorno.
+// personalizada cadastrada em Gestão (por DMC) sobre a cor por situação (Configurações
+// → Situação dos DMCs) sobre a cor original do KML. Só vale para os MAPAS (Mapa/PC e
+// Campo) — o Editor de DMC usa seu próprio esquema de cor automática por DMC (ângulo
+// dourado), sem passar por aqui, de propósito (decisão com o Lourenço).
 function resolverCorFeature(ft, tipo, item) {
   const p = ft.properties || {};
   if (tipo === 'redes' && p._diametroMm != null) {
@@ -6745,6 +6971,7 @@ function resolverCorFeature(ft, tipo, item) {
       const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
       const dmc = nome ? c.dmcs.find(d => nomesDMCBatem(d.nome, nome)) : null;
       if (dmc && dmc.corPersonalizada) return dmc.corPersonalizada;
+      if (dmc && dmc.situacao && S.coresPorSituacaoDMC[dmc.situacao]) return S.coresPorSituacaoDMC[dmc.situacao];
     }
   }
   return p._corKml || null;
@@ -6808,7 +7035,7 @@ async function carregarGeometriaCamada(tipo, camadaId) {
         // duplicar a chamada de rede.
         if (!item._geojson) {
           if (!item._carregandoPromise) {
-            item._carregandoPromise = buscarGeometriaBruta(camadaId, false).finally(() => { item._carregandoPromise = null; });
+            item._carregandoPromise = buscarGeometriaBruta(item, false).finally(() => { item._carregandoPromise = null; });
           }
           item._geojson = await item._carregandoPromise;
         }
@@ -6888,6 +7115,13 @@ async function carregarGeometriaCamada(tipo, camadaId) {
         if (mapField && !item.lgField) item.lgField = criarLayer('field');
         if (mapPC && !item.lgPC) item.lgPC = criarLayer('pc');
         if (tipo === 'dmc') sincronizarDMCsCidade(geojson, item.cidade);
+      } catch(e) {
+        // Sem isto, um erro aqui (ex.: geometria malformada que o L.geoJSON não consegue
+        // desenhar) virava uma "Uncaught (in promise)" silenciosa pro usuário — a camada
+        // simplesmente nunca aparecia, sem nenhum aviso visível em lugar nenhum. Agora fica
+        // registrado no indicador persistente do painel (ver renderDMCPanel/renderRedesPanel).
+        item._erroCarregamento = 'Erro ao desenhar a camada: ' + (e.message||e);
+        console.warn('Erro ao montar layer da camada ' + camadaId + ':', e);
       } finally {
         item._carregamentoEmAndamento = null;
       }
@@ -6913,7 +7147,7 @@ async function garantirGeometriaCarregada(item) {
   if (item._geojson) return;
   if (item._carregamentoEmAndamento) { await item._carregamentoEmAndamento; return; }
   if (!item._carregandoPromise) {
-    item._carregandoPromise = buscarGeometriaBruta(item.id, true).finally(() => { item._carregandoPromise = null; });
+    item._carregandoPromise = buscarGeometriaBruta(item, true).finally(() => { item._carregandoPromise = null; });
   }
   item._geojson = await item._carregandoPromise;
 }
@@ -7080,30 +7314,51 @@ function toggleCamadaIndividual(tipo, idx) {
   if (!item || !item.id) return;
   item.visible = !item.visible;
   definirVisibilidadeLocal(item.id, item.visible);
-  if (item.visible) carregarGeometriaCamada(tipo, item.id);
-  else removerGeometriaDoMapa(item);
+  if (item.visible) {
+    // Re-renderiza de novo quando a busca terminar (sucesso ou falha) — sem isso, o
+    // indicador de erro persistente só apareceria/sumiria na PRÓXIMA vez que o painel
+    // fosse redesenhado por outro motivo, já que carregarGeometriaCamada é assíncrona e
+    // esta função não espera por ela.
+    carregarGeometriaCamada(tipo, item.id).finally(() => { renderDMCPanel(); renderRedesPanel(); });
+  } else {
+    removerGeometriaDoMapa(item);
+  }
   renderDMCPanel();
   renderRedesPanel();
   invalidateSizeDosMapas();
 }
 
+// Chamada pelo link "tentar de novo" do indicador de erro persistente no painel.
+// carregarGeometriaCamada só refaz a busca se item._geojson ainda estiver vazio — como
+// uma falha anterior deixa isso vazio, chamar de novo aqui já tenta buscar de verdade,
+// sem precisar desligar e ligar a camada manualmente.
+function tentarNovamenteCamada(tipo, idx) {
+  const item = (S.leafletLayers[tipo]||[])[idx];
+  if (!item) return;
+  carregarGeometriaCamada(tipo, item.id).finally(() => { renderDMCPanel(); renderRedesPanel(); });
+}
+
 function toggleAllDMC(vis) {
+  const pendentes = [];
   (S.leafletLayers.dmc||[]).forEach(item => {
     item.visible = vis;
     definirVisibilidadeLocal(item.id, vis);
-    if (vis) carregarGeometriaCamada('dmc', item.id);
+    if (vis) pendentes.push(carregarGeometriaCamada('dmc', item.id));
     else removerGeometriaDoMapa(item);
   });
+  if (pendentes.length) Promise.allSettled(pendentes).then(renderDMCPanel);
   renderDMCPanel();
   invalidateSizeDosMapas();
 }
 function toggleAllRedes(vis) {
+  const pendentes = [];
   (S.leafletLayers.redes||[]).forEach(item => {
     item.visible = vis;
     definirVisibilidadeLocal(item.id, vis);
-    if (vis) carregarGeometriaCamada('redes', item.id);
+    if (vis) pendentes.push(carregarGeometriaCamada('redes', item.id));
     else removerGeometriaDoMapa(item);
   });
+  if (pendentes.length) Promise.allSettled(pendentes).then(renderRedesPanel);
   renderRedesPanel();
   invalidateSizeDosMapas();
 }
@@ -7247,6 +7502,14 @@ function renderDMCPanel() {
     const avisoValidacao = !item.validada
       ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
       : '';
+    // Indicador PERSISTENTE (ao contrário do toast, que passa rápido) — fica visível até a
+    // próxima tentativa de carregar essa camada dar certo. Existe porque relatos de falha
+    // intermitente ao carregar DMC (ex.: Içara, em casa) não deixavam nenhum rastro visível
+    // depois do momento em que aconteceu — agora dá pra abrir o painel depois e ver.
+    const avisoErro = item.visible && item._erroCarregamento
+      ? '<div style="font-size:9.5px;color:var(--red);font-weight:600;margin-top:2px"><i class="ti ti-alert-circle" style="font-size:10px"></i> Falhou ao carregar: ' + item._erroCarregamento +
+        ' · <a href="#" onclick="event.preventDefault();tentarNovamenteCamada(\'dmc\',' + idx + ')" style="color:var(--red);text-decoration:underline">tentar de novo</a></div>'
+      : '';
     // Admin/Supervisor podem remover qualquer camada. Técnico só pode remover
     // a própria camada enquanto ela ainda não foi validada (ex.: corrigir um erro de upload).
     const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
@@ -7257,9 +7520,9 @@ function renderDMCPanel() {
           ? '<input type="text" value="' + item.nome.replace(/"/g,'&quot;') + '" onchange="editarNomeCamada(\'dmc\',' + idx + ',this.value)" style="width:100%;padding:3px 5px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text)" onfocus="this.style.borderColor=\'var(--border)\';this.style.background=\'var(--bg)\'" onblur="this.style.borderColor=\'transparent\';this.style.background=\'transparent\'">'
           : '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>') +
         (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
-        avisoValidacao +
+        avisoValidacao + avisoErro +
       '</div>' +
-      '<button onclick="toggleCamadaIndividual(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--blue)':'var(--text2)') + '">' +
+      '<button onclick="toggleCamadaIndividual(\'dmc\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item._erroCarregamento && item.visible ? 'var(--red)' : (item.visible?'var(--blue)':'var(--text2)')) + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
       (podeRemoverEsta ? (
@@ -7301,6 +7564,10 @@ function renderRedesPanel() {
     const avisoValidacao = !item.validada
       ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
       : '';
+    const avisoErro = item.visible && item._erroCarregamento
+      ? '<div style="font-size:9.5px;color:var(--red);font-weight:600;margin-top:2px"><i class="ti ti-alert-circle" style="font-size:10px"></i> Falhou ao carregar: ' + item._erroCarregamento +
+        ' · <a href="#" onclick="event.preventDefault();tentarNovamenteCamada(\'redes\',' + idx + ')" style="color:var(--red);text-decoration:underline">tentar de novo</a></div>'
+      : '';
     const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
@@ -7309,9 +7576,9 @@ function renderRedesPanel() {
           ? '<input type="text" value="' + item.nome.replace(/"/g,'&quot;') + '" onchange="editarNomeCamada(\'redes\',' + idx + ',this.value)" style="width:100%;padding:3px 5px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text)" onfocus="this.style.borderColor=\'var(--border)\';this.style.background=\'var(--bg)\'" onblur="this.style.borderColor=\'transparent\';this.style.background=\'transparent\'">'
           : '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>') +
         (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
-        avisoValidacao +
+        avisoValidacao + avisoErro +
       '</div>' +
-      '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item.visible?'var(--teal)':'var(--text2)') + '">' +
+      '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item._erroCarregamento && item.visible ? 'var(--red)' : (item.visible?'var(--teal)':'var(--text2)')) + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
       (podeRemoverEsta ? (
@@ -7584,6 +7851,28 @@ function renderManage() {
   // Cidades
   const mc = document.getElementById('manage-cidades');
   if (mc) {
+    // O onSnapshot de 'cidades' chama renderManage() a cada edição de campo (inclusive
+    // a nossa própria, por eco local do Firestore) — sem esses dois cuidados, TODA
+    // alteração de um campo de DMC (nome, sigla, situação, cor, ligações) recriava esta
+    // lista do zero: a rolagem voltava pro topo do painel e a área de DMCs de qualquer
+    // cidade que estivesse expandida ficava em branco por um instante (só quem clica em
+    // "toggleEditarDMCs" repopula essa div — um render vindo daqui não).
+    //
+    // 1) Preserva a posição de rolagem do painel (não a da janela — é essa div interna
+    //    que rola) ao redor da troca de innerHTML.
+    const scrollEl = mc.closest('.config-content');
+    const scrollTopAntes = scrollEl ? scrollEl.scrollTop : 0;
+
+    // 2) Antes de recriar o HTML, guarda o conteúdo já renderizado de cada painel de DMC
+    //    que estiver aberto, pra reinserir na hora — assim a lista nunca fica vazia nem
+    //    muda de altura, e não precisamos esperar a checagem de vínculo (que já rodou)
+    //    rodar de novo só pra reaparecer o que já estava na tela.
+    const conteudoDMCsAberto = {};
+    mc.querySelectorAll('[id^="dmcs-list-"]').forEach(div => {
+      const cidId = div.id.slice('dmcs-list-'.length);
+      if (estaPainelExpandido('dmc-edit:' + cidId)) conteudoDMCsAberto[cidId] = div.innerHTML;
+    });
+
     const cidadesFiltradas = S._manageFiltroCidade
       ? S.cidades.filter(c => c.id === S._manageFiltroCidade)
       : S.cidades;
@@ -7598,8 +7887,9 @@ function renderManage() {
           <i class="ti ti-chevron-down" id="chev-${c.id}" style="font-size:14px;color:var(--text2);transform:${expandido?'rotate(180deg)':'rotate(0deg)'}"></i>
         </div>
         <div style="font-size:11px;color:var(--text2);margin-top:5px" id="dmcs-resumo-${c.id}">${resumoDMCsTexto(c)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px" id="rede-info-${c.id}">${textoRedeCidade(c.id)}</div>
         <div id="dmcs-edit-${c.id}" class="${expandido?'':'hidden'}" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
-          <div style="display:flex;flex-direction:column;gap:5px" id="dmcs-list-${c.id}"></div>
+          <div class="dmcs-grid" id="dmcs-list-${c.id}">${conteudoDMCsAberto[c.id] || ''}</div>
           <button class="btn sm" style="margin-top:6px;width:100%;justify-content:center" onclick="adicionarDMCManual('${c.id}')">
             <i class="ti ti-plus"></i> Adicionar DMC manualmente
           </button>
@@ -7609,6 +7899,17 @@ function renderManage() {
         </div>
       </div>`;
     }).join('');
+
+    // 3) Restaura a rolagem imediatamente após a troca síncrona de innerHTML — como o
+    //    conteúdo dos painéis abertos foi reinserido igual ao que já estava lá, a altura
+    //    não muda, e não sobra nenhum salto visível.
+    if (scrollEl) scrollEl.scrollTop = scrollTopAntes;
+
+    // 4) Refresca em segundo plano os painéis abertos que tinham conteúdo reaproveitado
+    //    (ícone de vínculo de KML pode ter mudado nesse meio-tempo, ex.: upload em outra
+    //    aba) — silencioso, sem mostrar de novo "Conferindo vínculo..." por cima do que
+    //    já está na tela.
+    Object.keys(conteudoDMCsAberto).forEach(cidId => renderDMCsEditaveis(cidId, true));
   }
   // Tabela
   const mt = document.getElementById('manage-table');
@@ -7646,6 +7947,45 @@ function renderManage() {
   }
 }
 
+// "Data · quem" da última vez que uma camada (rede ou DMC) foi cadastrada ou teve a
+// curva atualizada — usa a atualização se existir, senão cai pro cadastro original.
+// Retorna '' pra camadas antigas de antes desses campos existirem (nada pra mostrar).
+function infoUploadCamada(item) {
+  if (!item) return '';
+  const ms = msDoCampo(item.ultimaAtualizacao) || msDoCampo(item.criadoEm);
+  if (!ms) return '';
+  const nome = item.atualizadoPorNome || item.criadoPorNome || nomeDeUsuario(item.atualizadoPor || item.criadoPor);
+  const dataTxt = new Date(ms).toLocaleDateString('pt-BR');
+  return nome ? (dataTxt + ' · ' + nome) : dataTxt;
+}
+
+// Fallback pra camadas salvas antes de existir *PorNome — busca o nome atual da pessoa
+// pelo uid guardado, na lista de usuários já sincronizada (se ela ainda existir).
+function nomeDeUsuario(uid) {
+  if (!uid) return '';
+  const u = (S.usuarios||[]).find(u => u.uid === uid);
+  return u ? (u.nome || u.email || '') : '';
+}
+
+// A camada de REDE mais recente cadastrada pra uma cidade (normalmente só existe uma;
+// se houver mais de uma ativa por engano, usa a mais recente pra não mostrar data velha).
+function infoRedeCidade(cidadeId) {
+  const camadas = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!camadas.length) return null;
+  camadas.sort((a,b) => (msDoCampo(b.ultimaAtualizacao)||msDoCampo(b.criadoEm)||0) - (msDoCampo(a.ultimaAtualizacao)||msDoCampo(a.criadoEm)||0));
+  return camadas[0];
+}
+
+// Texto do estado da REDE da cidade (não dos DMCs) mostrado no cabeçalho de cada
+// cidade na aba Gestão — se já tem rede cadastrada, quando foi a última atualização e
+// por quem (melhoria 1: "apresentar se a cidade tem rede cadastrada e a data/quem").
+function textoRedeCidade(cidadeId) {
+  const item = infoRedeCidade(cidadeId);
+  if (!item) return 'Rede ainda não cadastrada';
+  const info = infoUploadCamada(item);
+  return 'Rede cadastrada' + (info ? ' — atualizada ' + info : '');
+}
+
 // Texto-resumo usado no cabeçalho de cada cidade na aba Gestão — conta quantos DMCs
 // existem e quantos já estão liberados pra cadastro (situação diferente de "em Estudo").
 function resumoDMCsTexto(c) {
@@ -7666,22 +8006,28 @@ function toggleEditarDMCs(cidadeId) {
   if (abrindo) renderDMCsEditaveis(cidadeId);
 }
 
-const SITUACOES_DMC = ['em Operação', 'em Instalação', 'em Estudo', 'Dividir DMC'];
+// Lista de situações possíveis de um DMC agora é editável em Configurações → Situação
+// dos DMCs (S.situacoesDMC, sincronizada em meta/config) — não é mais fixa no código.
 // Paleta fixa pra cor personalizada do DMC — clicável, em vez de precisar digitar hex
 // ou RGB (a maioria de quem usa não sabe o que digitar ali). Evita de propósito o
 // tom de verde-azulado usado nas camadas de Rede (#0F6E56), pra não repetir o mesmo
 // problema de confundir contorno de DMC com trecho de rede no mapa.
 const PALETA_CORES_DMC = ['#534AB7','#D6336C','#BA7517','#A32D2D','#185FA5','#2F9E44','#C0388A','#5F5E5A','#E64980','#7048E8','#F08C00','#1098AD','#37B24D','#F03E3E','#4263EB','#0CA678'];
 
-async function renderDMCsEditaveis(cidadeId) {
+// silencioso: true quando é só uma reconferência em segundo plano (ex.: chamada pelo
+// renderManage() depois de reaproveitar o conteúdo já na tela) — nesse caso não mostra
+// o aviso "Conferindo vínculo..." por cima do que já está renderizado, pra não piscar.
+async function renderDMCsEditaveis(cidadeId, silencioso) {
   const c = S.cidades.find(c => c.id === cidadeId);
   const el = document.getElementById('dmcs-list-' + cidadeId);
   if (!c || !el) return;
 
-  // Mostra a lista já de cara (sem esperar rede), com um aviso de carregamento no
-  // lugar do ícone de vínculo — evita a tela parecer travada enquanto busca as
-  // geometrias das camadas de DMC dessa cidade, o que pode levar um instante.
-  el.innerHTML = '<p style="font-size:10.5px;color:var(--text2);padding:4px 0"><i class="ti ti-loader-2"></i> Conferindo vínculo com camadas de KML...</p>' + renderLinhasDMC(c, cidadeId, null);
+  if (!silencioso) {
+    // Mostra a lista já de cara (sem esperar rede), com um aviso de carregamento no
+    // lugar do ícone de vínculo — evita a tela parecer travada enquanto busca as
+    // geometrias das camadas de DMC dessa cidade, o que pode levar um instante.
+    el.innerHTML = '<p style="font-size:10.5px;color:var(--text2);padding:4px 0"><i class="ti ti-loader-2"></i> Conferindo vínculo com camadas de KML...</p>' + renderLinhasDMC(c, cidadeId, null);
+  }
 
   // Carrega (em segundo plano, sem exibir no mapa) a geometria de toda camada de DMC
   // dessa cidade que ainda não estiver em cache — só assim dá pra saber com confiança
@@ -7689,28 +8035,32 @@ async function renderDMCsEditaveis(cidadeId) {
   const camadasDaCidade = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   await Promise.all(camadasDaCidade.map(garantirGeometriaCarregada));
 
-  // Monta a lista de nomes "vinculados" — qualquer nome de feature (mesmas
-  // propriedades candidatas usadas em sincronizarDMCsCidade) que apareça em alguma
-  // camada de DMC já carregada dessa cidade conta como vínculo confirmado. Array (não
-  // Set) porque a comparação agora é flexível (nomesDMCBatem), não mais só igualdade
-  // exata — mesmo motivo do bug corrigido na mesclagem de duplicados.
-  const nomesVinculados = [];
-  camadasDaCidade.forEach(item => {
-    if (!item._geojson || !item._geojson.features) return;
-    item._geojson.features.forEach(ft => {
-      const p = ft.properties || {};
-      [p.name,p.Name,p.Nome,p.nome,p.DMC,p.dmc,p.NOME,p.Descricao,p.descricao,p.Label,p.label]
-        .forEach(v => { if (v && typeof v === 'string' && v.trim()) nomesVinculados.push(v.trim()); });
-    });
+  // Pra cada DMC cadastrado, acha (se existir) a camada de KML cuja feature bate com
+  // o nome dele — usada tanto pro ícone de vínculo (comparação flexível, nomesDMCBatem,
+  // mesmo motivo do bug corrigido na mesclagem de duplicados) quanto pra mostrar
+  // data/autor da última atualização daquele contorno (melhoria 2 pedida).
+  const camadaPorDMC = {};
+  c.dmcs.forEach(d => {
+    if (d.nome === DMC_SEM_DMC) return;
+    for (const item of camadasDaCidade) {
+      if (!item._geojson || !item._geojson.features) continue;
+      const bate = item._geojson.features.some(ft => {
+        const p = ft.properties || {};
+        const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
+        if (!nome) return false;
+        return (d.nomeFeatureKml && nome.trim() === d.nomeFeatureKml.trim()) || nomesDMCBatem(nome, d.nome);
+      });
+      if (bate) { camadaPorDMC[d.nome] = item; break; }
+    }
   });
 
-  el.innerHTML = renderLinhasDMC(c, cidadeId, nomesVinculados);
+  el.innerHTML = renderLinhasDMC(c, cidadeId, camadaPorDMC);
 }
 
 // linhasVinculadas: array de nomes de feature encontrados nas camadas de KML (para
 // comparação flexível — ver nomesDMCBatem), ou null enquanto ainda está carregando
 // (nesse caso não mostra nem o ícone de OK nem o de alerta).
-function renderLinhasDMC(c, cidadeId, nomesVinculados) {
+function renderLinhasDMC(c, cidadeId, camadaPorDMC) {
   return c.dmcs.map((d, i) => {
     const ehSemDMC = d.nome === DMC_SEM_DMC;
     // "Sem DMC" é uma região fixa do sistema (catch-all) — nome e situação não fazem
@@ -7720,9 +8070,11 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
         <i class="ti ti-map-pin-off" style="font-size:13px"></i> Sem DMC <span style="margin-left:auto;font-size:10px">(fixo — usado quando o ponto não pertence a nenhum DMC)</span>
       </div>`;
     }
-    const temCamada = nomesVinculados ? nomesVinculados.some(n => nomesDMCBatem(n, d.nome) || (d.nomeFeatureKml && n.trim() === d.nomeFeatureKml.trim())) : null;
+    const camada = camadaPorDMC ? camadaPorDMC[d.nome] : undefined; // undefined = ainda carregando
+    const temCamada = camada !== undefined ? !!camada : null;
+    const infoKml = camada ? infoUploadCamada(camada) : '';
     const iconeVinculo = temCamada === null ? ''
-      : temCamada ? '<i class="ti ti-map-check" style="color:var(--green);font-size:14px" title="Tem camada de KML vinculada"></i>'
+      : temCamada ? '<i class="ti ti-map-check" style="color:var(--green);font-size:14px" title="Tem camada de KML vinculada' + (infoKml ? ' — atualizada ' + infoKml : '') + '"></i>'
       : '<i class="ti ti-map-pin-question" style="color:var(--amber);font-size:14px" title="Nenhuma camada de KML vinculada a este DMC ainda — a extensão de rede real não pode ser calculada até isso existir"></i>';
     return `
     <div class="card" style="padding:8px;background:var(--bg2)">
@@ -7740,8 +8092,11 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
         <select onchange="editarCampoDMC('${cidadeId}',${i},'situacao',this.value)"
           style="width:130px;padding:5px 6px;font-size:11px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
           <option value="">Situação: —</option>
-          ${SITUACOES_DMC.map(s => `<option value="${s}" ${d.situacao===s?'selected':''}>${s}</option>`).join('')}
+          ${S.situacoesDMC.map(s => `<option value="${s}" ${d.situacao===s?'selected':''}>${s}</option>`).join('')}
         </select>
+        ${d.situacao && S.coresPorSituacaoDMC[d.situacao] && !d.corPersonalizada
+          ? `<span title="Cor no mapa por causa da situação \"${d.situacao}\" (Configurações → Situação dos DMCs)" style="width:14px;height:14px;border-radius:50%;background:${S.coresPorSituacaoDMC[d.situacao]};border:1px solid var(--border);flex-shrink:0"></span>`
+          : ''}
       </div>
       <div style="display:flex;gap:10px;font-size:10.5px;color:var(--text2);align-items:center;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:4px">Ligações:
@@ -7762,6 +8117,7 @@ function renderLinhasDMC(c, cidadeId, nomesVinculados) {
           </div>
         </label>
       </div>
+      ${infoKml ? `<div style="font-size:9.5px;color:var(--text3);margin-top:3px">KML atualizado ${infoKml}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -7785,8 +8141,15 @@ async function editarCampoDMC(cidadeId, idx, campo, valor) {
     c.dmcs[idx][campo] = valor;
     await salvarCidadeFirestore(c);
     toast('DMC atualizado');
+    // Situação mudou → a cor por situação nos mapas (Mapa/PC e Campo) pode ter mudado
+    // junto; redesenha na hora, sem precisar recarregar a página (não afeta o Editor de
+    // DMC, que não usa resolverCorFeature).
+    if (campo === 'situacao') redesenharCamadasComCorAtualizada();
   }
   document.getElementById('dmcs-resumo-'+cidadeId).textContent = resumoDMCsTexto(c);
+  // A cor-dot ao lado do select de situação (e o restante da linha) pode ter mudado —
+  // re-renderiza só essa lista, reaproveitando o que já foi carregado (silencioso).
+  if (campo === 'situacao' || campo === 'nome') renderDMCsEditaveis(cidadeId, true);
 }
 
 // Cor personalizada do contorno de um DMC — mesmo formato aceito nas cores por
@@ -8771,7 +9134,7 @@ async function removerEquipe(i){
 // só aquele conteúdo. A última seção aberta fica salva no localStorage do navegador
 // (preferência por dispositivo) e volta sozinha da próxima vez.
 // ================================================================
-const CONFIG_SECOES = ['cidades','equipes','tipos','geofones','exibicao','whatsapp','cores-diametro','geral'];
+const CONFIG_SECOES = ['cidades','equipes','tipos','geofones','exibicao','whatsapp','cores-diametro','situacoes-dmc','geral'];
 
 function mostrarSecaoConfig(nome) {
   if (!CONFIG_SECOES.includes(nome)) nome = CONFIG_SECOES[0];

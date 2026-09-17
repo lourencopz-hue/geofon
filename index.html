@@ -2695,13 +2695,20 @@ function renderConfigSituacoesDMC() {
         const campoNome = protegida
           ? `<span style="flex:1;min-width:120px;padding:6px 8px;font-size:12.5px;color:var(--text2)" title="Situação usada pelo sistema pra decidir se um DMC está liberado pra cadastro — não pode ser renomeada/removida">${s} 🔒</span>`
           : `<input type="text" value="${s}" style="flex:1;min-width:120px;padding:6px 8px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" onchange="renomearSituacaoDMC(${i}, this.value)">`;
+        // Mesma paleta clicável usada na cor personalizada de DMC em Gestão (PALETA_CORES_DMC) —
+        // em vez de precisar digitar hex/RGB aqui também.
         return `
         <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
           ${campoNome}
-          <div style="width:22px;height:22px;border-radius:5px;border:1px solid var(--border);background:${cor||'repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50%/8px 8px'};flex-shrink:0"></div>
-          <input type="text" value="${cor}" placeholder="sem cor (usa a do KML)"
-            style="width:170px;padding:6px 8px;font-size:11.5px;font-family:monospace;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"
-            onchange="editarCorSituacaoDMC(${i}, this.value)">
+          <div style="position:relative">
+            <button onclick="document.getElementById('paleta-situacao-${i}').classList.toggle('hidden')"
+              style="width:22px;height:22px;border-radius:5px;border:1px solid var(--border);cursor:pointer;padding:0;background:${cor||'repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50%/8px 8px'}"
+              title="${cor || 'Sem cor — clique para escolher'}"></button>
+            <div id="paleta-situacao-${i}" class="hidden" style="position:absolute;top:26px;left:0;z-index:20;display:flex;gap:5px;flex-wrap:wrap;padding:7px;background:var(--bg);border-radius:var(--radius);border:1px solid var(--border);box-shadow:0 4px 14px rgba(0,0,0,.15);width:150px">
+              ${PALETA_CORES_DMC.map(corPal => `<button onclick="editarCorSituacaoDMC(${i},'${corPal}')" title="${corPal}" style="width:18px;height:18px;border-radius:50%;background:${corPal};border:2px solid ${cor===corPal?'var(--text)':'#fff'};box-shadow:0 0 0 1px var(--border);cursor:pointer;padding:0"></button>`).join('')}
+              <button onclick="editarCorSituacaoDMC(${i},'')" title="Sem cor (usa a personalizada do DMC ou a do KML)" style="width:18px;height:18px;border-radius:50%;background:repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%/6px 6px;border:1px solid var(--border);cursor:pointer;padding:0"></button>
+            </div>
+          </div>
           ${protegida ? '' : `<button onclick="removerSituacaoDMC(${i})" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;cursor:pointer;color:var(--red)"><i class="ti ti-trash" style="font-size:12px"></i></button>`}
         </div>`;
       }).join('')
@@ -8061,7 +8068,13 @@ async function renderDMCsEditaveis(cidadeId, silencioso) {
 // comparação flexível — ver nomesDMCBatem), ou null enquanto ainda está carregando
 // (nesse caso não mostra nem o ícone de OK nem o de alerta).
 function renderLinhasDMC(c, cidadeId, camadaPorDMC) {
-  return c.dmcs.map((d, i) => {
+  // "Sem DMC" sempre por último na grade, independente da posição em que ela esteja
+  // no array salvo — antes aparecia onde a ordem de criação deixasse (geralmente no
+  // meio, confuso); sort é estável, então a ordem dos demais DMCs entre si não muda.
+  const dmcsOrdenados = c.dmcs
+    .map((d, i) => ({ d, i }))
+    .sort((a, b) => (a.d.nome === DMC_SEM_DMC ? 1 : 0) - (b.d.nome === DMC_SEM_DMC ? 1 : 0));
+  return dmcsOrdenados.map(({ d, i }) => {
     const ehSemDMC = d.nome === DMC_SEM_DMC;
     // "Sem DMC" é uma região fixa do sistema (catch-all) — nome e situação não fazem
     // sentido nela, e ela não pode ser removida (toda cidade precisa ter essa opção).

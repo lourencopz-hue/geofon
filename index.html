@@ -670,6 +670,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="toggle-btn active" onclick="setPCView(this,'pontos')">Pontos</button>
         <button class="toggle-btn" onclick="setPCView(this,'calor')">Mapa de calor</button>
         <button class="toggle-btn" onclick="setPCView(this,'ambos')">Ambos</button>
+        <button class="toggle-btn" onclick="setPCView(this,'nenhum')">Nenhum</button>
       </div>
       <select style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" id="pc-fr" onchange="onFiltroRegionalChange('pc-fr','pc-fc'); refreshPCMap()">
         <option value="">Todas as regionais</option>
@@ -1977,9 +1978,12 @@ function aplicarPermissoesUI() {
   if (role === 'tecnico') {
     // Técnico: só modo campo, sem acesso a Gestão/Config/Usuários
     btnSwitch.classList.add('hidden');
-    S.mode = 'field';
+    aplicarModo('field');
   } else {
     btnSwitch.classList.remove('hidden');
+    // Admin/Supervisor: sempre inicia no modo Desktop (o app abre em modo Campo
+    // por padrão no HTML; aqui trocamos assim que o papel do usuário é conhecido)
+    aplicarModo('pc');
   }
   // Apenas admin vê Configurações e Usuários (cadastros e permissões)
   if (tabConfig) tabConfig.classList.toggle('hidden', role !== 'admin');
@@ -5139,13 +5143,15 @@ function refreshPCMap() {
   const fc = document.getElementById('pc-fc').value;
   const fs = document.getElementById('pc-fs').value;
   const filtered = S.leaks.filter(l => (!fc || l.cidade === fc) && (!fs || l.severidade === fs));
-  if (S.pcView !== 'calor') {
+  if (S.pcView === 'pontos' || S.pcView === 'ambos') {
     filtered.forEach(l => { const m = makeMarker(l, 16); m.addTo(mapPC).bindPopup(popupHtml(l), { maxWidth: 340 }); pcMarkers.push(m); });
   }
-  if (S.pcView !== 'pontos') {
+  if (S.pcView === 'calor' || S.pcView === 'ambos') {
     const pts = filtered.map(l => [l.lat, l.lng, l.severidade==='alta'?1:l.severidade==='media'?.6:.3]);
     if (pts.length) heatLayer = L.heatLayer(pts, { radius:30, blur:22, maxZoom:17 }).addTo(mapPC);
   }
+  // 'nenhum': nem pontos nem mapa de calor no mapa — sidebar (contagens/lista recente)
+  // continua atualizando normalmente via updatePCSidebar abaixo.
   updatePCSidebar(filtered);
 }
 
@@ -9583,7 +9589,14 @@ function switchTab(tabId, tabsId) {
 }
 
 function toggleMode() {
-  S.mode=S.mode==='field'?'pc':'field';
+  aplicarModo(S.mode==='field'?'pc':'field');
+}
+
+// Aplica um modo ('field' ou 'pc') sem depender do modo atual — usada tanto pelo botão
+// "Trocar modo" (toggleMode) quanto pela seleção automática do modo inicial conforme o
+// papel do usuário (ver aplicarPermissoesUI).
+function aplicarModo(modo) {
+  S.mode = modo;
   const badge=document.getElementById('mode-badge');
   const ft=document.getElementById('tabs-field');
   const pt=document.getElementById('tabs-pc');

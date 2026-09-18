@@ -1093,6 +1093,21 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               </p>
             </div>
           </div>
+
+          <!-- Card temporário — só aparece para a conta DIPEO (ver verificarBotaoMigracaoSetores).
+               Remover depois que a migração multi-setor for executada em produção. -->
+          <div class="card" id="card-migracao-setores" style="margin-top:12px;border-color:var(--purple);display:none">
+            <div class="field">
+              <label style="color:var(--purple)"><i class="ti ti-git-branch"></i> Migração multi-setor (Fase 1 — temporário)</label>
+              <p style="font-size:11.5px;color:var(--text2);margin-bottom:10px">
+                Prepara a estrutura de dados para os 4 setores (SEPES/SEPEN/SEPEM/SEPEO): marca tudo que já existe como setor SEPES, separa as configurações gerais por setor e cria os 3 setores novos vazios. Rodar só UMA VEZ, com calma, antes de seguir para a Fase 2.
+              </p>
+              <button class="btn primary" id="btn-migrar-setores" onclick="rodarMigracaoMultiSetor()">
+                <i class="ti ti-arrow-forward-up"></i> Rodar migração multi-setor
+              </button>
+              <p id="status-migracao-setores" style="font-size:11.5px;color:var(--text2);margin-top:8px"></p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1682,7 +1697,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
-  serverTimestamp, query, orderBy, arrayUnion
+  serverTimestamp, query, orderBy, arrayUnion, where, getDocs, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {
   getStorage, ref, uploadString, getDownloadURL, deleteObject
@@ -1703,12 +1718,42 @@ const db = getFirestore(fbApp);
 const storage = getStorage(fbApp);
 const provider = new GoogleAuthProvider();
 
+// ================================================================
+// MULTI-SETOR (Fase 1) — coleções isoladas por setor (SEPES/SEPEN/SEPEM/SEPEO)
+// ================================================================
+// Toda vez que gravamos um documento NOVO nessas coleções (setDoc sem o campo
+// `setor` já preenchido), o setor do usuário logado é adicionado automaticamente.
+// Isso evita ter que editar as dezenas de pontos do código espalhados pelo app que
+// criam cidade/equipe/vazamento/campanha/camada/tipo/serviço/geofone/usuário — todos
+// continuam chamando window.FB.setDoc normalmente, sem saber que o campo setor existe.
+// Quando o setor já vem preenchido nos dados (ex.: edição de um registro já existente,
+// que mantém o setor original ao regravar o objeto inteiro), o valor informado NUNCA
+// é sobrescrito.
+const COLECOES_POR_SETOR = new Set(['usuarios','cidades','equipes','leaks','campanhas','camadas','tiposVazamento','servicos','geofones']);
+function setDocComSetor(ref, dados, opts) {
+  // Só injeta em gravações do documento INTEIRO (sem merge:true) — é nelas que o app cria
+  // um registro novo (cidade, equipe, vazamento, campanha, camada, tipo, serviço,
+  // geofone, usuário). Todo setDoc com merge:true no código atualiza um CAMPO de um
+  // documento que já existe (ex.: aprovar o papel de outro usuário, marcar consertado,
+  // marcar removida) — nesses casos o setor do documento já foi definido na criação (ou
+  // pela migração) e não deve ser trocado pelo setor de quem está fazendo a alteração.
+  if (!(opts && opts.merge) && COLECOES_POR_SETOR.has(ref.parent && ref.parent.id) && window.FB._setorAtual && dados && dados.setor === undefined) {
+    dados = { ...dados, setor: window.FB._setorAtual };
+  }
+  return setDoc(ref, dados, opts);
+}
+
 // Expor no escopo global para o script principal (não-módulo) usar
 window.FB = {
   auth, db, provider, storage,
   signInWithPopup, signOut, onAuthStateChanged,
-  doc, getDoc, setDoc, collection, onSnapshot, serverTimestamp, query, orderBy, arrayUnion,
-  ref, uploadString, getDownloadURL, deleteObject
+  doc, getDoc, setDoc: setDocComSetor, collection, onSnapshot, serverTimestamp, query, orderBy, arrayUnion,
+  where, getDocs, writeBatch,
+  ref, uploadString, getDownloadURL, deleteObject,
+  // Setor do usuário logado nesta sessão — definido em onAuthStateChanged, assim que o
+  // documento /usuarios/{uid} é carregado. Usado pelo wrapper acima e pelos filtros de
+  // leitura por setor em iniciarSincronizacaoFirestore/iniciarSincronizacaoCamadas.
+  _setorAtual: null
 };
 
 // Disparar evento quando Firebase estiver pronto
@@ -1785,7 +1830,8 @@ const S = {
   pcView: 'pontos',
   config: { org: 'GeoFon', gps: 20 },
   user: null,        // { uid, nome, email, foto }
-  userDoc: null,      // { role: 'admin'|'supervisor'|'tecnico'|'pendente', cidade, equipe }
+  userDoc: null,      // { role: 'admin'|'supervisor'|'tecnico'|'pendente', cidade, equipe, setor }
+  setorInfo: null,    // { recursosHabilitados: [...] } — doc setores/{setor} (feature flags por setor, ver temRecurso)
   usuarios: [],       // lista de usuários (só admin carrega)
   tiposVazamento: [], // [{id, nome, servicoPadrao}]
   geofones: [], // [{id, nome, equipePadrao}]
@@ -1892,7 +1938,25 @@ let fMarkers = [], pcMarkers = [], heatLayer = null;
 // tecnico    -> só registra vazamentos da própria cidade/equipe
 // pendente   -> aguardando aprovação do admin
 
-let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null, unsubCampanhas = null, unsubGeofones = null;
+let unsubLeaks = null, unsubCidades = null, unsubEquipes = null, unsubUsers = null, unsubTipos = null, unsubServicos = null, unsubMetaConfig = null, unsubCampanhas = null, unsubGeofones = null, unsubSetorInfo = null;
+
+// Setor do usuário logado — sempre usar esta função (nunca ler window.FB._setorAtual
+// direto) para já cair no padrão 'SEPES' antes do login terminar de carregar, ou para
+// contas antigas que ainda não passaram pela migração multi-setor (ver rodarMigracaoMultiSetor).
+function setorAtual() {
+  return window.FB._setorAtual || 'SEPES';
+}
+// Nome do documento meta/config deste setor — cada setor tem sua própria configuração
+// (WhatsApp, exibição, cores etc.), desde a Fase 1. Antes só existia 'meta/config' único.
+function configDocId() {
+  return 'config_' + setorAtual();
+}
+// Recursos habilitados especificamente para o setor do usuário logado (feature flag por
+// setor, decidido na Fase 1 — ver item 7 do resumo). Nenhum recurso usa isso ainda; é a
+// base para lançar uma funcionalidade grande/arriscada só para um setor primeiro.
+function temRecurso(nome) {
+  return !!(S.setorInfo?.recursosHabilitados || []).includes(nome);
+}
 
 function fazerLoginGoogle() {
   const statusEl = document.getElementById('login-status');
@@ -1944,6 +2008,10 @@ window.addEventListener('firebase-ready', () => {
       const novoDoc = {
         nome:user.displayName||'', email:user.email, foto:user.photoURL||'',
         role: ehPrimeiro ? 'admin' : 'pendente',
+        // Enquanto a Fase 3 (seletor de "Setor desejado" no formulário de solicitação
+        // de acesso) não existe, todo cadastro novo entra em SEPES — hoje é o único
+        // setor realmente em uso, então isso mantém o comportamento atual sem mudança.
+        setor: 'SEPES',
         cidade:'', equipe:'', criadoEm: window.FB.serverTimestamp()
       };
       await window.FB.setDoc(userRef, novoDoc);
@@ -1951,6 +2019,10 @@ window.addEventListener('firebase-ready', () => {
       snap = await window.FB.getDoc(userRef);
     }
     S.userDoc = snap.data();
+    // Setor do usuário logado nesta sessão. Contas criadas antes da migração multi-setor
+    // (rodarMigracaoMultiSetor) ainda não têm o campo `setor` — cai em 'SEPES' até a
+    // migração rodar, mantendo o comportamento de hoje sem qualquer mudança visível.
+    window.FB._setorAtual = S.userDoc.setor || 'SEPES';
 
     if (S.userDoc.role === 'pendente') {
       document.getElementById('pending-screen').classList.remove('hidden');
@@ -1992,6 +2064,7 @@ function aplicarPermissoesUI() {
   if (tabManage) tabManage.classList.toggle('hidden', role === 'tecnico');
   if (tabEditorDMC) tabEditorDMC.classList.toggle('hidden', role === 'tecnico');
   if (tabCampanhas) tabCampanhas.classList.toggle('hidden', role === 'tecnico');
+  verificarBotaoMigracaoSetores();
 }
 
 // Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
@@ -2018,17 +2091,116 @@ function atualizarUserMenu() {
 }
 
 // ================================================================
+// MULTI-SETOR (Fase 1) — migração dos dados existentes
+// ================================================================
+// Card temporário em Configurações → Configurações gerais, visível só para a conta
+// pessoal do Lourenço (hoje ainda sem o papel formal DIPEO — isso é Fase 3). Depois que
+// a migração for executada em produção, este card e as duas funções abaixo podem ser
+// removidos com segurança do código (a migração é feita para nunca rodar duas vezes).
+const EMAIL_DIPEO = 'lourencopz@gmail.com';
+
+async function verificarBotaoMigracaoSetores() {
+  const card = document.getElementById('card-migracao-setores');
+  if (!card) return;
+  if (S.user?.email !== EMAIL_DIPEO) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const status = document.getElementById('status-migracao-setores');
+  const btn = document.getElementById('btn-migrar-setores');
+  try {
+    const snap = await window.FB.getDoc(window.FB.doc(window.FB.db, 'meta', 'migracaoSetores'));
+    if (snap.exists() && snap.data().concluida) {
+      if (status) status.textContent = '✓ Migração já foi executada em ' + (snap.data().executadaEm?.toDate ? snap.data().executadaEm.toDate().toLocaleString('pt-BR') : '—') + '.';
+      if (btn) btn.disabled = true;
+    }
+  } catch(e) { console.warn('Erro ao checar status da migração multi-setor:', e); }
+}
+
+// Marca TODOS os documentos existentes nas 9 coleções como setor SEPES, separa
+// meta/config em meta/config_SEPES + 3 configs vazios (SEPEN/SEPEM/SEPEO), e cria os 4
+// documentos setores/{SEPES,SEPEN,SEPEM,SEPEO} (feature flags, começam sem nenhum
+// recurso habilitado). Idempotente: se já rodou uma vez (meta/migracaoSetores.concluida),
+// recusa rodar de novo.
+async function rodarMigracaoMultiSetor() {
+  if (S.user?.email !== EMAIL_DIPEO) return;
+  const btn = document.getElementById('btn-migrar-setores');
+  const status = document.getElementById('status-migracao-setores');
+  const { db, doc, getDoc, setDoc, getDocs, collection, writeBatch, serverTimestamp } = window.FB;
+
+  const marcador = await getDoc(doc(db, 'meta', 'migracaoSetores'));
+  if (marcador.exists() && marcador.data().concluida) {
+    toast('Migração já foi executada antes.');
+    return;
+  }
+  if (!confirm('Isso vai marcar todos os dados existentes como setor SEPES, separar as configurações gerais por setor e criar os setores SEPEN/SEPEM/SEPEO vazios.\n\nDeve ser rodado UMA ÚNICA VEZ. Continuar?')) return;
+
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Migrando... não feche nem recarregue a página.';
+  toast('Migrando dados para o modelo multi-setor...');
+
+  try {
+    const COLECOES = ['usuarios','cidades','equipes','leaks','campanhas','camadas','tiposVazamento','servicos','geofones'];
+    let totalDocs = 0;
+    for (const nomeColecao of COLECOES) {
+      const snap = await getDocs(collection(db, nomeColecao));
+      const pendentes = snap.docs.filter(d => d.data().setor === undefined);
+      for (let i = 0; i < pendentes.length; i += 400) {
+        const lote = pendentes.slice(i, i + 400);
+        const batch = writeBatch(db);
+        lote.forEach(d => batch.update(d.ref, { setor: 'SEPES' }));
+        await batch.commit();
+        totalDocs += lote.length;
+      }
+      if (status) status.textContent = `Migrando... ${nomeColecao} concluído (${totalDocs} documento(s) até agora).`;
+    }
+
+    // meta/config -> meta/config_SEPES (copia o que já existe hoje)
+    const configAtual = await getDoc(doc(db, 'meta', 'config'));
+    if (configAtual.exists()) {
+      await setDoc(doc(db, 'meta', 'config_SEPES'), configAtual.data());
+    }
+    // Configs vazios dos outros 3 setores — cada um configura o próprio WhatsApp/
+    // exibição/cores de forma independente a partir de agora.
+    for (const s of ['SEPEN','SEPEM','SEPEO']) {
+      await setDoc(doc(db, 'meta', 'config_' + s), {});
+    }
+
+    // Documento de cada setor (feature flags) — nenhum recurso habilitado por padrão.
+    for (const s of ['SEPES','SEPEN','SEPEM','SEPEO']) {
+      await setDoc(doc(db, 'setores', s), { recursosHabilitados: [] });
+    }
+
+    await setDoc(doc(db, 'meta', 'migracaoSetores'), { concluida:true, executadaEm: serverTimestamp(), executadaPor: S.user?.email||'' });
+
+    if (status) status.textContent = `✓ Migração concluída! ${totalDocs} documento(s) atualizado(s). Recarregue a página.`;
+    toast(`✓ Migração concluída! ${totalDocs} documento(s) atualizado(s).`);
+    alert('Migração concluída. Recarregue a página para continuar usando o app normalmente.');
+  } catch(err) {
+    console.error('Erro na migração multi-setor:', err);
+    if (status) status.textContent = '⚠️ Erro na migração: ' + (err.code || err.message || err) + ' — veja o console (F12) e avise o Claude antes de tentar de novo.';
+    if (btn) btn.disabled = false;
+    toast('⚠️ Erro na migração — veja o console (F12)');
+  }
+}
+
+// ================================================================
 // SINCRONIZAÇÃO EM TEMPO REAL COM FIRESTORE
 // ================================================================
 function iniciarSincronizacaoFirestore() {
-  const { db, collection, onSnapshot, query, orderBy } = window.FB;
+  const { db, doc, collection, onSnapshot, query, orderBy, where } = window.FB;
+  // Todas as coleções abaixo (exceto meta/setores) passam a filtrar automaticamente
+  // pelos dados do setor do usuário logado (Fase 1 — fundação de dados, sem mudança
+  // visual). A constante evita repetir where('setor','==', setorAtual()) em cada uma.
+  const porSetor = c => query(collection(db, c), where('setor','==', setorAtual()));
 
   // Cidades
   if (unsubCidades) unsubCidades();
-  unsubCidades = onSnapshot(collection(db, 'cidades'), snap => {
+  unsubCidades = onSnapshot(porSetor('cidades'), snap => {
     const todas = snap.docs.map(d => d.data());
     const ativas = todas.filter(c => !c.removida);
-    if (!todas.length && S.userDoc.role === 'admin') {
+    // Os dados iniciais de exemplo (Criciúma, Içara...) são específicos do SEPES — um
+    // setor novo (SEPEN/SEPEM/SEPEO) começa vazio de propósito, esperando o primeiro
+    // cadastro manual do admin daquele setor, e não deve ganhar essas cidades de mentira.
+    if (!todas.length && S.userDoc.role === 'admin' && setorAtual() === 'SEPES') {
       criarDadosIniciais();
     } else {
       S.cidades = ativas.map(normalizarDMCsCidade);
@@ -2040,7 +2212,7 @@ function iniciarSincronizacaoFirestore() {
 
   // Equipes
   if (unsubEquipes) unsubEquipes();
-  unsubEquipes = onSnapshot(collection(db, 'equipes'), snap => {
+  unsubEquipes = onSnapshot(porSetor('equipes'), snap => {
     S.equipes = snap.docs.map(d => d.data()).filter(e => !e.removida);
     populateSelects();
     renderConfigEquipes();
@@ -2049,7 +2221,7 @@ function iniciarSincronizacaoFirestore() {
   // Vazamentos (leaks) — pontos cancelados ficam fora da lista principal,
   // mas continuam no banco (auditoria/histórico), só marcados com cancelado:true
   if (unsubLeaks) unsubLeaks();
-  unsubLeaks = onSnapshot(query(collection(db, 'leaks'), orderBy('criadoEm','asc')), snap => {
+  unsubLeaks = onSnapshot(query(collection(db, 'leaks'), where('setor','==', setorAtual()), orderBy('criadoEm','asc')), snap => {
     S.leaks = snap.docs.map(d => d.data()).filter(l => !l.cancelado);
     addFieldMarkers();
     renderLeakList();
@@ -2064,7 +2236,7 @@ function iniciarSincronizacaoFirestore() {
   // Usuários (só admin precisa, para a tela de gestão de usuários)
   if (S.userDoc.role === 'admin') {
     if (unsubUsers) unsubUsers();
-    unsubUsers = onSnapshot(collection(db, 'usuarios'), snap => {
+    unsubUsers = onSnapshot(porSetor('usuarios'), snap => {
       S.usuarios = snap.docs.map(d => ({ uid:d.id, ...d.data() }));
       renderUsuariosPanel();
     });
@@ -2072,9 +2244,9 @@ function iniciarSincronizacaoFirestore() {
 
   // Tipos de vazamento (com código de serviço sugerido)
   if (unsubTipos) unsubTipos();
-  unsubTipos = onSnapshot(collection(db, 'tiposVazamento'), snap => {
+  unsubTipos = onSnapshot(porSetor('tiposVazamento'), snap => {
     const todos = snap.docs.map(d => d.data()).filter(t => !t.removido);
-    if (!todos.length && S.userDoc.role === 'admin') {
+    if (!todos.length && S.userDoc.role === 'admin' && setorAtual() === 'SEPES') {
       criarTiposEServicosIniciais();
     } else {
       S.tiposVazamento = todos;
@@ -2086,7 +2258,7 @@ function iniciarSincronizacaoFirestore() {
 
   // Códigos de serviço
   if (unsubServicos) unsubServicos();
-  unsubServicos = onSnapshot(collection(db, 'servicos'), snap => {
+  unsubServicos = onSnapshot(porSetor('servicos'), snap => {
     S.servicos = snap.docs.map(d => d.data()).filter(s => !s.removido);
     popularSelectServicos();
     renderConfigServicos();
@@ -2094,7 +2266,7 @@ function iniciarSincronizacaoFirestore() {
 
   // Geofones cadastrados — cada equipe pode ter um vinculado (pré-seleção no registro)
   if (unsubGeofones) unsubGeofones();
-  unsubGeofones = onSnapshot(collection(db, 'geofones'), snap => {
+  unsubGeofones = onSnapshot(porSetor('geofones'), snap => {
     S.geofones = snap.docs.map(d => d.data()).filter(g => !g.removido);
     renderConfigGeofones();
     popularSelectGeofoneEquipe();
@@ -2104,10 +2276,17 @@ function iniciarSincronizacaoFirestore() {
     renderConfigEquipes();
   });
 
+  // Recursos habilitados para este setor (feature flags, ver temRecurso) — mecanismo
+  // criado na Fase 1, ainda sem nenhuma tela usando isso.
+  if (unsubSetorInfo) unsubSetorInfo();
+  unsubSetorInfo = onSnapshot(doc(db, 'setores', setorAtual()), snap => {
+    S.setorInfo = snap.exists() ? snap.data() : { recursosHabilitados: [] };
+  });
+
   // Configurações gerais e preferências de exibição (meta/config) — sincronizadas em
   // tempo real, para que uma mudança feita pelo admin reflita em todos os dispositivos.
   if (unsubMetaConfig) unsubMetaConfig();
-  unsubMetaConfig = onSnapshot(window.FB.doc(db, 'meta', 'config'), snap => {
+  unsubMetaConfig = onSnapshot(window.FB.doc(db, 'meta', configDocId()), snap => {
     if (snap.exists()) {
       const dados = snap.data();
       if (dados.org !== undefined) S.config.org = dados.org;
@@ -2145,7 +2324,7 @@ function iniciarSincronizacaoFirestore() {
   // (ver elegívelParaExibirCampanha), não aqui. Campanhas fora dessa janela continuam
   // no banco como histórico/auditoria, só não ficam disponíveis pra visualizar no mapa.
   if (unsubCampanhas) unsubCampanhas();
-  unsubCampanhas = onSnapshot(collection(db, 'campanhas'), snap => {
+  unsubCampanhas = onSnapshot(porSetor('campanhas'), snap => {
     const janelaMs = Date.now() - 60*24*60*60*1000;
     const todasAtivas = {};
     snap.docs.forEach(docSnap => {
@@ -2548,7 +2727,7 @@ function renderConfigCamposPopup() {
 }
 async function toggleCampoPopup(campo, valor) {
   S.camposPopup[campo] = valor;
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposPopup: S.camposPopup }, { merge:true });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta',configDocId()), { camposPopup: S.camposPopup }, { merge:true });
   // Não precisa redesenhar os mapas aqui manualmente — o listener de meta/config
   // (onSnapshot) recebe essa própria gravação de volta e já cuida de redesenhar os
   // pop-ups dos dois mapas, tanto neste dispositivo quanto em todos os outros conectados.
@@ -2568,7 +2747,7 @@ function renderConfigCamposLista() {
 }
 async function toggleCampoLista(campo, valor) {
   S.camposLista[campo] = valor;
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposLista: S.camposLista }, { merge:true });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta',configDocId()), { camposLista: S.camposLista }, { merge:true });
   toast('Preferência da Lista atualizada');
 }
 
@@ -2593,7 +2772,7 @@ function renderConfigCamposWhatsApp() {
 }
 async function toggleCampoWhatsApp(campo, valor) {
   S.camposWhatsApp[campo] = valor;
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { camposWhatsApp: S.camposWhatsApp }, { merge:true });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta',configDocId()), { camposWhatsApp: S.camposWhatsApp }, { merge:true });
   toast('Preferência de mensagem do WhatsApp atualizada');
 }
 
@@ -2637,7 +2816,7 @@ function renderConfigCoresPorDiametro() {
 }
 
 async function salvarCoresPorDiametro() {
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { coresPorDiametro: S.coresPorDiametro }, { merge:true });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta',configDocId()), { coresPorDiametro: S.coresPorDiametro }, { merge:true });
 }
 
 async function adicionarRegraCorDiametro() {
@@ -2720,7 +2899,7 @@ function renderConfigSituacoesDMC() {
 }
 
 async function salvarSituacoesDMC() {
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), { situacoesDMC: S.situacoesDMC, coresPorSituacaoDMC: S.coresPorSituacaoDMC }, { merge:true });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta',configDocId()), { situacoesDMC: S.situacoesDMC, coresPorSituacaoDMC: S.coresPorSituacaoDMC }, { merge:true });
 }
 
 async function adicionarSituacaoDMC() {
@@ -3018,9 +3197,9 @@ function definirVisibilidadeLocal(camadaId, visivel) {
 // pois não inclui o geojsonStr (que pode ser grande). A geometria real só é buscada
 // quando o usuário pede para ver aquela camada específica (ver carregarGeometriaCamada).
 function iniciarSincronizacaoCamadas() {
-  const { db, collection, onSnapshot } = window.FB;
+  const { db, collection, onSnapshot, query, where } = window.FB;
   if (unsubCamadas) unsubCamadas();
-  unsubCamadas = onSnapshot(collection(db, 'camadas'), snap => {
+  unsubCamadas = onSnapshot(query(collection(db, 'camadas'), where('setor','==', setorAtual())), snap => {
     const metadadosAnteriores = {};
     ['dmc','redes'].forEach(tipo => (S.leafletLayers[tipo]||[]).forEach(item => { metadadosAnteriores[item.id] = item; }));
 
@@ -9218,7 +9397,7 @@ function atualizarBadgesConfigSidebar() {
 async function salvarConfig(){
   S.config.org=document.getElementById('cfg-org').value;
   S.config.gps=parseInt(document.getElementById('cfg-gps').value)||20;
-  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta','config'), S.config, { merge:true });
+  await window.FB.setDoc(window.FB.doc(window.FB.db,'meta',configDocId()), S.config, { merge:true });
   salvarEstado(); // mantém camadas/layers locais
   toast('Configurações salvas!');
 }

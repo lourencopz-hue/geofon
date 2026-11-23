@@ -1772,6 +1772,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
     <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-regional-filter"></div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-city-filter"></div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Buscar município</div>
     <div style="position:relative">
       <i class="ti ti-search" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px"></i>
@@ -8118,7 +8120,11 @@ function renderRedesPanel() {
       ? '<div style="font-size:9.5px;color:var(--red);font-weight:600;margin-top:2px"><i class="ti ti-alert-circle" style="font-size:10px"></i> Falhou ao carregar: ' + item._erroCarregamento +
         ' · <a href="#" onclick="event.preventDefault();tentarNovamenteCamada(\'redes\',' + idx + ')" style="color:var(--red);text-decoration:underline">tentar de novo</a></div>'
       : '';
-    const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
+    // Modo Campo: sem baixar nem remover (decisão do Lourenço, 2026-11-23) — essas ações
+    // ficam só no modo Desktop, pra ninguém apagar uma rede sem querer no celular.
+    const modoDesktop = S.mode === 'pc';
+    const podeRemoverEsta = modoDesktop && (ehSuperior || (!item.validada && item.criadoPor === S.user?.uid));
+    const podeBaixar = modoDesktop && ehSuperior;
     // Nome mostrado: "Município (rede - dd/mm/aa)". O nome do arquivo original só aparece,
     // pequeno, pra admin/supervisor (ajuda a saber de onde veio).
     const arquivoTxt = ehSuperior ? '<div style="font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(item.nome) + '">Arquivo: ' + escHtml(item.nome) + '</div>' : '';
@@ -8131,7 +8137,7 @@ function renderRedesPanel() {
       '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" title="' + (item.visible ? 'Ocultar' : 'Mostrar') + '" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item._erroCarregamento && item.visible ? 'var(--red)' : (item.visible?'var(--teal)':'var(--text2)')) + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
-      (ehSuperior ? (
+      (podeBaixar ? (
       '<button onclick="baixarRedeKML([\'' + item.id + '\'])" title="Baixar KML (cores por diâmetro)" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--text2)">' +
         '<i class="ti ti-download"></i>' +
       '</button>') : '') +
@@ -8164,7 +8170,8 @@ function renderLayerLists() {
           '<span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">' + escHtml(t === 'redes' ? rotuloRede(item) : item.nome) + '</span>' +
           avisoValidacao +
         '</div>' +
-        (podeRemoverEsta ? '<button class="btn sm" style="padding:3px 7px" onclick="removerCamada(\'' + t + '\',' + i + ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' : '') +
+        // Aba Camadas é do modo Campo — sem botão de remover aqui (só no Desktop).
+        ((podeRemoverEsta && S.mode === 'pc') ? '<button class="btn sm" style="padding:3px 7px" onclick="removerCamada(\'' + t + '\',' + i + ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' : '') +
       '</div>';
     }).join('');
   });
@@ -10692,6 +10699,7 @@ function toggleMode() {
 // papel do usuário (ver aplicarPermissoesUI).
 function aplicarModo(modo) {
   S.mode = modo;
+  try { renderRedesPanel(); renderLayerLists(); } catch(e) {}
   const badge=document.getElementById('mode-badge');
   const ft=document.getElementById('tabs-field');
   const pt=document.getElementById('tabs-pc');

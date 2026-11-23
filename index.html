@@ -8056,7 +8056,8 @@ function renderDMCPanel() {
       : '';
     // Admin/Supervisor podem remover qualquer camada. Técnico só pode remover
     // a própria camada enquanto ela ainda não foi validada (ex.: corrigir um erro de upload).
-    const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
+    // Só no modo Desktop — no modo Campo ninguém remove (decisão do Lourenço, 2026-11-23).
+    const podeRemoverEsta = S.mode === 'pc' && (ehSuperior || (!item.validada && item.criadoPor === S.user?.uid));
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#185FA5;flex-shrink:0"></div>' +
       '<div style="flex:1;min-width:0">' +
@@ -10699,7 +10700,7 @@ function toggleMode() {
 // papel do usuário (ver aplicarPermissoesUI).
 function aplicarModo(modo) {
   S.mode = modo;
-  try { renderRedesPanel(); renderLayerLists(); } catch(e) {}
+  try { renderDMCPanel(); renderRedesPanel(); renderLayerLists(); } catch(e) {}
   const badge=document.getElementById('mode-badge');
   const ft=document.getElementById('tabs-field');
   const pt=document.getElementById('tabs-pc');

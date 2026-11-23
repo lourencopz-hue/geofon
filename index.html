@@ -2197,14 +2197,12 @@ function iniciarSincronizacaoFirestore() {
   unsubCidades = onSnapshot(porSetor('cidades'), snap => {
     const todas = snap.docs.map(d => d.data());
     const ativas = todas.filter(c => !c.removida);
-    // Os dados iniciais de exemplo (Criciúma, Içara...) são específicos do SEPES — um
-    // setor novo (SEPEN/SEPEM/SEPEO) começa vazio de propósito, esperando o primeiro
-    // cadastro manual do admin daquele setor, e não deve ganhar essas cidades de mentira.
-    if (!todas.length && S.userDoc.role === 'admin' && setorAtual() === 'SEPES') {
-      criarDadosIniciais();
-    } else {
-      S.cidades = ativas.map(normalizarDMCsCidade);
-    }
+    // CORREÇÃO 2026-11-23 (incidente da migração multi-setor): o app NUNCA mais cria
+    // cidades/equipes "de exemplo" sozinho quando a lista vem vazia. Uma lista vazia pode
+    // ser só um filtro (setor) que ainda não bate com os documentos — foi exatamente isso
+    // que, no deploy da Fase 1, sobrescreveu CIA/ICA/FQA/SID, EQ1-EQ4 e o contador de IDs.
+    // Setor sem cidades fica simplesmente vazio até o admin cadastrar a primeira.
+    S.cidades = ativas.map(normalizarDMCsCidade);
     populateSelects();
     renderConfigCidades();
     renderManage();
@@ -2246,14 +2244,11 @@ function iniciarSincronizacaoFirestore() {
   if (unsubTipos) unsubTipos();
   unsubTipos = onSnapshot(porSetor('tiposVazamento'), snap => {
     const todos = snap.docs.map(d => d.data()).filter(t => !t.removido);
-    if (!todos.length && S.userDoc.role === 'admin' && setorAtual() === 'SEPES') {
-      criarTiposEServicosIniciais();
-    } else {
-      S.tiposVazamento = todos;
-      popularSelectTipos();
-      popularSelectTiposEm('quick-tipo');
-      renderConfigTipos(); // antes só atualizava o formulário de registro, não a tela de Config
-    }
+    // CORREÇÃO 2026-11-23: sem recriação automática de tipos/serviços (ver Cidades acima).
+    S.tiposVazamento = todos;
+    popularSelectTipos();
+    popularSelectTiposEm('quick-tipo');
+    renderConfigTipos(); // antes só atualizava o formulário de registro, não a tela de Config
   });
 
   // Códigos de serviço
@@ -2385,27 +2380,6 @@ function restaurarCampanhaPropria(id, dados) {
   if (campanhaIntervaloRelogio) clearInterval(campanhaIntervaloRelogio);
   campanhaIntervaloRelogio = setInterval(atualizarRelogioCampanha, 1000);
   toast('🚶 Campanha "' + dados.nome + '" retomada');
-}
-
-// Dados iniciais — só roda se o admin logar e o banco estiver vazio
-async function criarTiposEServicosIniciais() {
-  const { db, doc, setDoc } = window.FB;
-  const servicosIniciais = [
-    { id:'srv_5110', codigo:'5110', descricao:'Conserto originado de geofone' },
-    { id:'srv_5811', codigo:'5811', descricao:'Conserto de ramal originado por geofone' }
-  ];
-  const tiposIniciais = [
-    { id:'tipo_ramal',    nome:'Ramal predial',          servicoPadrao:'srv_5811' },
-    { id:'tipo_rede',     nome:'Rede de distribuição',   servicoPadrao:'srv_5110' },
-    { id:'tipo_adutora',  nome:'Adutora',                servicoPadrao:'srv_5110' },
-    { id:'tipo_subadut',  nome:'Sub-adutora',             servicoPadrao:'srv_5110' },
-    { id:'tipo_conexao',  nome:'Ponto de conexão',        servicoPadrao:'srv_5110' },
-    { id:'tipo_hidrante', nome:'Hidrante',                servicoPadrao:'srv_5110' },
-    { id:'tipo_valvula',  nome:'Válvula',                 servicoPadrao:'srv_5110' },
-    { id:'tipo_cavalete', nome:'Cavalete / Medidor',      servicoPadrao:'srv_5811' }
-  ];
-  for (const s of servicosIniciais) await setDoc(doc(db,'servicos',s.id), s);
-  for (const t of tiposIniciais) await setDoc(doc(db,'tiposVazamento',t.id), t);
 }
 
 // Preenche o <select> de Tipo de vazamento com a lista sincronizada do Firestore
@@ -3107,27 +3081,6 @@ async function adicionarTipoManual() {
   const id = 'tipo_' + Date.now();
   await window.FB.setDoc(window.FB.doc(window.FB.db,'tiposVazamento',id), { id, nome:nomeNormalizado, servicoPadrao:'' });
   toast('Tipo de vazamento adicionado');
-}
-
-// Grava qualquer alteração de cidade/equipe diretamente no Firestore
-async function criarDadosIniciais() {
-  const { db, doc, setDoc } = window.FB;
-  const cidadesIniciais = [
-    { id: 'CIA', nome: 'Criciúma',     prefixo: 'CIA', dmcs: ['DMC-01 Centro','DMC-02 Leste','DMC-03 Norte','DMC-04 Sul','DMC-05 Oeste'], wa: ['5548999990001','5548999990002'], coords: [-28.6775,-49.3680] },
-    { id: 'ICA', nome: 'Içara',        prefixo: 'ICA', dmcs: ['DMC-01','DMC-02','DMC-03'], wa: ['5548999990003'], coords: [-28.7130,-49.3050] },
-    { id: 'FQA', nome: 'Forquilhinha', prefixo: 'FQA', dmcs: ['DMC-01 Sede','DMC-02 Vila'], wa: ['5548999990004'], coords: [-28.7430,-49.4660] },
-    { id: 'SID', nome: 'Siderópolis',  prefixo: 'SID', dmcs: ['DMC-01','DMC-02'], wa: ['5548999990005'], coords: [-28.5960,-49.4260] }
-  ];
-  const equipesIniciais = [
-    { id:'EQ1', nome:'Equipe 1 - Manhã',  codigo:'EQ1', cidade:'CIA', wa:'5548999991001' },
-    { id:'EQ2', nome:'Equipe 2 - Tarde',  codigo:'EQ2', cidade:'CIA', wa:'5548999991002' },
-    { id:'EQ3', nome:'Equipe 3 - Içara',  codigo:'EQ3', cidade:'ICA', wa:'5548999991003' },
-    { id:'EQ4', nome:'Equipe 4 - FQA',    codigo:'EQ4', cidade:'FQA', wa:'5548999991004' }
-  ];
-  for (const c of cidadesIniciais) await setDoc(doc(db,'cidades',c.id), c);
-  for (const e of equipesIniciais) await setDoc(doc(db,'equipes',e.id), e);
-  S.nextSeq = { CIA:1, ICA:1, FQA:1, SID:1 };
-  await setDoc(doc(db,'meta','sequencias'), S.nextSeq);
 }
 
 // Grava qualquer alteração de cidade/equipe diretamente no Firestore
@@ -5905,15 +5858,37 @@ async function confirmarNotificacaoWhatsApp() {
 }
 
 // Gera o próximo ID sequencial de forma segura usando um contador no Firestore
+// CORREÇÃO 2026-11-23: o contador meta/sequencias foi zerado no incidente da migração
+// multi-setor, e o vazamento é gravado com setDoc SEM merge usando esse ID — ou seja, um
+// número repetido SOBRESCREVIA um vazamento antigo. Agora: (1) o número nunca fica abaixo
+// do maior VAZnnn já conhecido dessa cidade na lista carregada, e (2) antes de devolver o
+// ID, confere no Firestore se já existe um documento com ele (inclusive cancelados, que
+// não aparecem na lista) e pula para o próximo número livre.
+function maiorSeqConhecida(cidadeId) {
+  let maior = 0;
+  for (const l of (S.leaks || [])) {
+    if (l.cidade !== cidadeId || !l.id) continue;
+    const m = /-VAZ(\d+)$/.exec(l.id);
+    if (m) maior = Math.max(maior, parseInt(m[1], 10));
+  }
+  return maior;
+}
 async function proximoIdSequencial(cidadeId, equipeCodigo) {
   const { db, doc, getDoc, setDoc } = window.FB;
   const ref = doc(db, 'meta', 'sequencias');
   const snap = await getDoc(ref);
   const seq = snap.exists() ? (snap.data()[cidadeId] || 0) : 0;
-  const novoSeq = seq + 1;
+  let novoSeq = Math.max(seq, maiorSeqConhecida(cidadeId)) + 1;
+  let id = `${cidadeId}-${equipeCodigo}-VAZ${String(novoSeq).padStart(3,'0')}`;
+  for (let tentativas = 0; tentativas < 500; tentativas++) {
+    const existente = await getDoc(doc(db, 'leaks', id));
+    if (!existente.exists()) break;
+    novoSeq++;
+    id = `${cidadeId}-${equipeCodigo}-VAZ${String(novoSeq).padStart(3,'0')}`;
+  }
   await setDoc(ref, { [cidadeId]: novoSeq }, { merge:true });
   S.nextSeq[cidadeId] = novoSeq + 1;
-  return `${cidadeId}-${equipeCodigo}-VAZ${String(novoSeq).padStart(3,'0')}`;
+  return id;
 }
 
 // ================================================================

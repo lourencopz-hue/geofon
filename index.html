@@ -575,12 +575,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <div class="section-title" style="margin-top:14px">Fotos do local</div>
           <div class="card">
             <div class="photo-grid" id="photo-grid">
-              <div class="photo-thumb add" onclick="document.getElementById('photo-input').click()">
+              <div class="photo-thumb add" onclick="abrirSeletorFoto('reg','camera')">
                 <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
-                <span>Adicionar foto</span>
+                <span>Câmera</span>
+              </div>
+              <div class="photo-thumb add" onclick="abrirSeletorFoto('reg','galeria')">
+                <i class="ti ti-photo" style="font-size:22px;color:var(--blue)"></i>
+                <span>Galeria</span>
               </div>
             </div>
             <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
+            <input type="file" id="photo-gallery-input" accept="image/*" multiple style="display:none" onchange="handlePhotos(this)">
             <p style="font-size:11px;color:var(--text2);margin-top:8px">Sugestão: foto do ponto, do hidrômetro mais próximo e da localização geral.</p>
           </div>
 
@@ -1287,12 +1292,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <div class="field">
       <label>Foto rápida <span style="color:var(--text3);font-weight:400">(pra lembrar onde era)</span></label>
       <div class="photo-grid" id="quick-photo-grid">
-        <div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()">
+        <div class="photo-thumb add" onclick="abrirSeletorFoto('quick','camera')">
           <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
-          <span>Adicionar foto</span>
+          <span>Câmera</span>
+        </div>
+        <div class="photo-thumb add" onclick="abrirSeletorFoto('quick','galeria')">
+          <i class="ti ti-photo" style="font-size:22px;color:var(--blue)"></i>
+          <span>Galeria</span>
         </div>
       </div>
       <input type="file" id="quick-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleQuickPhoto(this)">
+      <input type="file" id="quick-gallery-input" accept="image/*" style="display:none" onchange="handleQuickPhoto(this)">
     </div>
 
     <!-- Atalho para quem vai marcar só este ponto e não quer passar por "Registrar" depois -->
@@ -1800,7 +1810,8 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, collection, onSnapshot,
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  doc, getDoc, getDocFromServer, setDoc, collection, onSnapshot,
   serverTimestamp, query, orderBy, arrayUnion, where, getDocs, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {
@@ -1818,7 +1829,18 @@ const firebaseConfig = {
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
-const db = getFirestore(fbApp);
+// Cache local persistente (IndexedDB) — 2026-11-23: com rede fraca no campo, o
+// Firestore passa a guardar no próprio celular as gravações que ainda não chegaram ao
+// servidor (e os dados já carregados), em vez de perder tudo se o app fechar. Se o
+// navegador não suportar, cai no modo antigo (só memória) sem quebrar nada.
+let db, cachePersistente = false;
+try {
+  db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+  cachePersistente = true;
+} catch (e) {
+  console.warn('Cache persistente do Firestore indisponível, usando memória:', e);
+  db = getFirestore(fbApp);
+}
 const storage = getStorage(fbApp);
 const provider = new GoogleAuthProvider();
 
@@ -1851,13 +1873,14 @@ function setDocComSetor(ref, dados, opts) {
 window.FB = {
   auth, db, provider, storage,
   signInWithPopup, signOut, onAuthStateChanged,
-  doc, getDoc, setDoc: setDocComSetor, collection, onSnapshot, serverTimestamp, query, orderBy, arrayUnion,
+  doc, getDoc, getDocFromServer, setDoc: setDocComSetor, collection, onSnapshot, serverTimestamp, query, orderBy, arrayUnion,
   where, getDocs, writeBatch,
   ref, uploadString, getDownloadURL, deleteObject,
   // Setor do usuário logado nesta sessão — definido em onAuthStateChanged, assim que o
   // documento /usuarios/{uid} é carregado. Usado pelo wrapper acima e pelos filtros de
   // leitura por setor em iniciarSincronizacaoFirestore/iniciarSincronizacaoCamadas.
-  _setorAtual: null
+  _setorAtual: null,
+  _cachePersistente: cachePersistente
 };
 
 // Disparar evento quando Firebase estiver pronto
@@ -2139,6 +2162,7 @@ window.addEventListener('firebase-ready', () => {
     aplicarPermissoesUI();
     atualizarUserMenu();
     iniciarSincronizacaoFirestore();
+    iniciarFilaOffline(); // envia pontos guardados no celular e recupera rascunho (app fechou na câmera)
   });
 });
 
@@ -4579,19 +4603,20 @@ function alternarPainelExpandido(chave) {
   return S._painelExpandido.has(chave);
 }
 function sugerirCidadePorGPS() {
-  if (!S.pos) return;
+  const P = S._quickPosFixa || S.pos; // ponto recuperado de rascunho usa a posição onde foi marcado
+  if (!P) return;
   const sel = document.getElementById('quick-cidade');
   if (!sel || sel.disabled) return;
 
   // Fallback rápido e síncrono, só se a cidade ainda não foi escolhida manualmente —
   // garante que o campo nunca fique vazio enquanto a checagem por polígono roda.
   if (!S._cidadeEscolhidaManualmente) {
-    const sugerida = cidadeMaisProxima(S.pos.lat, S.pos.lng);
+    const sugerida = cidadeMaisProxima(P.lat, P.lng);
     if (sugerida && sel.value !== sugerida.id) { sel.value = sugerida.id; quickCidadeChange(); }
   }
 
   // Checagem por polígono, em segundo plano (não bloqueia o preenchimento acima).
-  detectarCidadeEDMCPorCoordenada(S.pos.lat, S.pos.lng).then(resultado => {
+  detectarCidadeEDMCPorCoordenada(P.lat, P.lng).then(resultado => {
     if (!resultado) { S._dmcDetectadoPorCoordenada = null; return; }
     S._dmcDetectadoPorCoordenada = resultado.dmcNome || null;
     if (S._cidadeEscolhidaManualmente) return; // técnico já escolheu na mão — não sobrescreve
@@ -5945,6 +5970,7 @@ function irParaCompletarRegistro(leakId) {
 }
 
 function abrirComplementacao(leakId) {
+  rascunhoApagar('reg'); // rascunho de outro ponto não vale mais (o restaurar regrava logo depois)
   const l = S.leaks.find(l => l.id === leakId);
   if (!l) { toast('Ponto não encontrado'); return; }
   if (!podeEditarPonto(l)) { toast('Prazo de 24h para editar este ponto já passou'); return; }
@@ -6032,6 +6058,7 @@ function abrirComplementacao(leakId) {
 
 function voltarParaListaRegistro() {
   S._pontoEmEdicao = null;
+  rascunhoApagar('reg');
   document.getElementById('register-form-wrap').classList.add('hidden');
   document.getElementById('register-select-wrap').classList.remove('hidden');
   renderRegisterPendingList();
@@ -6071,12 +6098,12 @@ async function salvarPonto() {
     return;
   }
 
+  if (S._salvandoReg) return; // toque duplo
   const id = S._pontoEmEdicao.id;
   const tipoObj = S.tiposVazamento.find(t => t.id === tipoId);
   const servicoObj = S.servicos.find(s => s.id === servicoId);
   const tipo = tipoObj ? tipoObj.nome : tipoId;
   const servico = servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '';
-  const temFotosNovas = S.photosBase64 && S.photosBase64.length > 0;
 
   // O geofone é registrado para fins de relatório/histórico — não entra na mensagem
   // de WhatsApp (que já tem informação suficiente para a equipe que vai consertar).
@@ -6085,40 +6112,55 @@ async function salvarPonto() {
     desc: obs, diam: diam || null, rua: rua || null, geofone: geofoneId || null,
     numeroHD, pendenteComplementacao: false
   };
-  await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), atualizacao, { merge:true });
-  toast(`✓ Ponto ${id} atualizado!`);
+  // 2026-11-23 — complemento + fotos novas vão JUNTOS numa gravação só, guardada primeiro
+  // na fila do celular. Antes: (1) com rede fraca, a gravação travava/dava erro sem
+  // aviso; (2) as fotos subiam DEPOIS de o ponto já ter virado "completo", e aí a regra
+  // de segurança do Firestore barrava a gravação das fotos quando quem completava não era
+  // quem marcou o ponto (outra equipe) — as fotos se perdiam em silêncio.
+  const fotosNovas = (S.photosBase64 || []).slice();
+  const item = { tipo:'complemento', leakId:id, atualizacao, fotos: fotosNovas.slice() };
+  const ponto = S._pontoEmEdicao;
 
-  // Fotos para o WhatsApp: SEMPRE junta as fotos que o ponto já tinha (ex.: tirada no
-  // "Novo Ponto" rápido, já salva no Storage) COM as fotos novas adicionadas agora aqui em
-  // "Registrar" — antes, se houvesse foto nova, as fotos antigas eram ignoradas; por isso
-  // o compartilhamento saía faltando a foto do registro rápido.
-  let fotosParaWhatsapp = (S.photosBase64||[]).slice();
-  if (S._pontoEmEdicao.fotosUrls && S._pontoEmEdicao.fotosUrls.length) {
-    toast('Preparando fotos para compartilhar...');
-    const fotosExistentes = await baixarFotosComoBase64(S._pontoEmEdicao.fotosUrls);
-    fotosParaWhatsapp = fotosExistentes.concat(fotosParaWhatsapp);
+  S._salvandoReg = true;
+  let guardadoNoCelular = true;
+  try {
+    await filaAdicionar(item);
+  } catch (e) {
+    guardadoNoCelular = false;
+    try { toast('Salvando...'); await processarItemFila(item); toast(`✓ Ponto ${id} atualizado!`); }
+    catch (err) {
+      S._salvandoReg = false;
+      toast('❌ Não foi possível salvar agora (' + (err.message||err) + '). Tente de novo quando tiver rede.', 5000);
+      return;
+    }
+  }
+  S._salvandoReg = false;
+  if (guardadoNoCelular) {
+    toast(navigator.onLine
+      ? `⏳ Ponto ${id} guardado — enviando...`
+      : `📴 Sem rede — complemento do ${id} guardado no celular. Será enviado sozinho quando a rede voltar.`, 4500);
+    filaProcessar();
   }
 
-  if (temFotosNovas) {
-    // Usa arrayUnion em vez de ler S._pontoEmEdicao.fotosUrls e concatenar localmente.
-    // O snapshot local pode estar desatualizado (ex.: a foto do "Novo Ponto" rápido
-    // ainda não terminou de subir quando este formulário foi aberto), o que fazia essa
-    // gravação apagar a foto do registro rápido em vez de somar as duas. Com arrayUnion,
-    // a gravação é feita no servidor de forma atômica, então não importa a ordem em
-    // que as duas gravações cheguem — nenhuma foto se perde.
-    enviarFotosParaStorage(id).then(async urls => {
-      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: window.FB.arrayUnion(...urls) }, { merge:true });
-    }).catch(err => console.warn('Erro ao salvar fotos do vazamento ' + id + ':', err));
-  }
-
-  S._ultimoPontoSalvo = { id, cidade:S._pontoEmEdicao.cidade, equipeId:S._pontoEmEdicao.equipe, dmc, tipo, servico, severidade:S.sevAtual, pavimento: S.pavimentoAtual || null, obs, diam, rua, lat:S._pontoEmEdicao.lat, lng:S._pontoEmEdicao.lng, fotosBase64:fotosParaWhatsapp };
-
+  // Limpa o formulário já (o que foi salvo está seguro na fila)
   document.getElementById('reg-obs').value='';
   document.getElementById('reg-diam').value='';
   S.photos=[]; S.photosBase64=[];
   renderPhotos();
   voltarParaListaRegistro();
 
+  // Fotos para o WhatsApp: junta as fotos que o ponto já tinha (ex.: do "Novo Ponto"
+  // rápido, já no Storage) com as novas. Sem rede, vão só as novas.
+  let fotosParaWhatsapp = fotosNovas.slice();
+  if (ponto.fotosUrls && ponto.fotosUrls.length && navigator.onLine) {
+    toast('Preparando fotos para compartilhar...');
+    try {
+      const fotosExistentes = await comTimeout(baixarFotosComoBase64(ponto.fotosUrls), 15000, 'tempo esgotado');
+      fotosParaWhatsapp = fotosExistentes.concat(fotosParaWhatsapp);
+    } catch (e) { console.warn('Fotos antigas não baixadas para o WhatsApp:', e); }
+  }
+
+  S._ultimoPontoSalvo = { id, cidade:ponto.cidade, equipeId:ponto.equipe, dmc, tipo, servico, severidade:S.sevAtual, pavimento: S.pavimentoAtual || null, obs, diam, rua, lat:ponto.lat, lng:ponto.lng, fotosBase64:fotosParaWhatsapp };
   abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
 }
 
@@ -6204,6 +6246,358 @@ async function confirmarNotificacaoWhatsApp() {
   S._ultimoPontoSalvo = null;
 }
 
+// ================================================================
+// FILA OFFLINE + RASCUNHO (2026-11-23)
+// ================================================================
+// Dois problemas relatados em campo: (1) "bate a foto e o app fecha sem cadastrar nada" —
+// em celular com pouca memória o Android fecha o navegador enquanto a câmera está
+// aberta; ao voltar, o app recarrega do zero e tudo que estava no formulário some;
+// (2) rede fraca/ausente — o cadastro travava ou falhava sem aviso.
+// Solução:
+//  • RASCUNHO: antes de abrir a câmera (e depois de cada foto processada), o formulário
+//    é guardado no aparelho. Se o app fechar, na próxima abertura o ponto volta sozinho.
+//  • FILA: todo ponto/complemento é guardado no aparelho ANTES de ir para a nuvem e só
+//    sai da fila quando o servidor confirmou. Sem rede, fica esperando e é enviado
+//    sozinho quando a rede voltar (aviso laranja na tela mostra quantos faltam).
+// Os dois ficam no IndexedDB do navegador (banco "geofon-local"), separado do Firestore.
+S._filaPerguntarWA = {}; // localId -> fotos, para abrir a pergunta do WhatsApp depois do envio
+
+function comTimeout(promessa, ms, msg) {
+  let t;
+  return Promise.race([
+    promessa,
+    new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg || 'tempo esgotado')), ms); })
+  ]).finally(() => clearTimeout(t));
+}
+
+function idbAbrir() {
+  if (S._idbPromise) return S._idbPromise;
+  S._idbPromise = new Promise((res, rej) => {
+    if (!window.indexedDB) { rej(new Error('IndexedDB indisponível')); return; }
+    const r = indexedDB.open('geofon-local', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains('fila')) d.createObjectStore('fila', { keyPath: 'localId' });
+      if (!d.objectStoreNames.contains('rascunho')) d.createObjectStore('rascunho', { keyPath: 'chave' });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  S._idbPromise.catch(() => { S._idbPromise = null; });
+  return S._idbPromise;
+}
+function idbOp(store, modo, fn) {
+  return idbAbrir().then(d => new Promise((res, rej) => {
+    const tx = d.transaction(store, modo);
+    const req = fn(tx.objectStore(store));
+    tx.oncomplete = () => res(req ? req.result : undefined);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error);
+  }));
+}
+const idbPut = (st, obj) => idbOp(st, 'readwrite', s => s.put(obj));
+const idbGet = (st, k) => idbOp(st, 'readonly', s => s.get(k));
+const idbDel = (st, k) => idbOp(st, 'readwrite', s => s.delete(k));
+const idbTodos = (st) => idbOp(st, 'readonly', s => s.getAll());
+
+// ---------- FILA ----------
+async function filaAdicionar(item) {
+  item.localId = 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  item.uid = S.user?.uid || '';
+  item.criadoLocalMs = Date.now();
+  item.urlsEnviadas = [];
+  await idbPut('fila', item);
+  atualizarIndicadorFila();
+  return item;
+}
+// Grava o progresso (ID já gerado, fotos já enviadas) — se a rede cair no meio, a
+// próxima tentativa continua de onde parou, sem gerar outro ID nem reenviar foto.
+async function filaSalvarProgresso(item) {
+  if (!item.localId) return; // envio direto (sem fila)
+  try { await idbPut('fila', item); } catch (e) { console.warn('Fila: não salvou progresso', e); }
+}
+
+async function enviarFotosDoItem(item) {
+  const { storage, ref, uploadString, getDownloadURL } = window.FB;
+  item.urlsEnviadas = item.urlsEnviadas || [];
+  while (item.fotos && item.fotos.length) {
+    const sufixo = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const fileRef = ref(storage, `vazamentos/${item.leakId}/foto_${sufixo}_${item.urlsEnviadas.length + 1}.jpg`);
+    await comTimeout(uploadString(fileRef, item.fotos[0], 'data_url'), 90000, 'tempo esgotado ao enviar a foto');
+    const url = await comTimeout(getDownloadURL(fileRef), 20000, 'tempo esgotado ao confirmar a foto');
+    item.urlsEnviadas.push(url);
+    item.fotos.shift();
+    await filaSalvarProgresso(item);
+  }
+}
+
+// Envia UM item da fila. Pode ser repetido com segurança (idempotente): ID e fotos já
+// enviados ficam gravados no item.
+async function processarItemFila(item) {
+  const { db, doc, setDoc } = window.FB;
+  if (item.tipo === 'novo' && !item.leakId) {
+    item.leakId = await comTimeout(proximoIdSequencial(item.cidade, item.equipeCodigo), 25000, 'tempo esgotado ao gerar o ID');
+    await filaSalvarProgresso(item);
+  }
+  await enviarFotosDoItem(item);
+  if (item.tipo === 'novo') {
+    const leak = { ...item.dados, id: item.leakId, fotosUrls: (item.urlsEnviadas || []).slice(), criadoEm: window.FB.serverTimestamp() };
+    await comTimeout(setDoc(doc(db, 'leaks', item.leakId), leak), 25000, 'tempo esgotado ao gravar o ponto');
+  } else if (item.tipo === 'complemento') {
+    const upd = { ...item.atualizacao };
+    if (item.urlsEnviadas && item.urlsEnviadas.length) upd.fotosUrls = window.FB.arrayUnion(...item.urlsEnviadas);
+    await comTimeout(setDoc(doc(db, 'leaks', item.leakId), upd, { merge: true }), 25000, 'tempo esgotado ao gravar o complemento');
+  }
+  return item.leakId;
+}
+
+function aoEnviarItemFila(item, id, extra) {
+  if (item.tipo === 'novo') {
+    const pend = item.dados.pendenteComplementacao;
+    toast(pend ? `✓ Ponto ${id} registrado! Complete os detalhes em "Registrar".` : `✓ Ponto ${id} salvo completo!`, 3500);
+    const fotosWA = extra ? (extra.perguntarWA ? extra.fotosWA : null) : S._filaPerguntarWA[item.localId];
+    if (fotosWA) {
+      delete S._filaPerguntarWA[item.localId];
+      const d = item.dados;
+      S._ultimoPontoSalvo = {
+        id, cidade: d.cidade, equipeId: d.equipe, dmc: d.dmc, tipo: d.tipo || 'Não categorizado', servico: d.servico,
+        severidade: d.severidade, pavimento: d.pavimento, obs: d.desc, diam: d.diam, rua: d.rua || '',
+        lat: d.lat, lng: d.lng, fotosBase64: fotosWA
+      };
+      abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
+    }
+  } else {
+    toast(`✓ Ponto ${id} atualizado!`);
+  }
+}
+
+async function filaMeusItens() {
+  const todos = await idbTodos('fila');
+  return todos.filter(i => S.user && i.uid === S.user.uid).sort((a, b) => a.criadoLocalMs - b.criadoLocalMs);
+}
+
+async function filaProcessar(manual) {
+  if (S._filaEnviando || !S.user || !window.FB._setorAtual) return;
+  let itens;
+  try { itens = (await filaMeusItens()).filter(i => !i.erro); } catch (e) { return; }
+  if (!itens.length) { atualizarIndicadorFila(); if (manual) toast('Nada para enviar'); return; }
+  if (!navigator.onLine && !manual) { atualizarIndicadorFila(); return; }
+  S._filaEnviando = true;
+  atualizarIndicadorFila();
+  try {
+    for (const item of itens) {
+      try {
+        const id = await processarItemFila(item);
+        await idbDel('fila', item.localId);
+        aoEnviarItemFila(item, id);
+      } catch (err) {
+        const code = (err && err.code) || '';
+        if (code === 'permission-denied' || code === 'storage/unauthorized' || code === 'invalid-argument') {
+          // Erro que não se resolve tentando de novo — separa o item e avisa
+          item.erro = (err.message || code);
+          await filaSalvarProgresso(item);
+          toast('⚠️ Um ponto guardado não pôde ser enviado (sem permissão). Toque no aviso vermelho para ver.', 5000);
+          continue;
+        }
+        console.warn('Fila: envio adiado (rede)', err);
+        if (manual) toast('⚠️ Rede instável (' + (err.message || err) + '). Vou tentar de novo sozinho.', 4500);
+        break; // problema de rede: para e tenta mais tarde, na mesma ordem
+      }
+    }
+  } finally {
+    S._filaEnviando = false;
+    atualizarIndicadorFila();
+  }
+}
+
+function atualizarIndicadorFila() {
+  let el = document.getElementById('fila-indicador');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fila-indicador';
+    el.onclick = abrirModalFila;
+    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:84px;z-index:1500;padding:8px 14px;border-radius:20px;font-size:12.5px;font-weight:600;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.25);cursor:pointer;display:none;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis';
+    document.body.appendChild(el);
+  }
+  filaMeusItens().then(meus => {
+    if (!meus.length) { el.style.display = 'none'; return; }
+    const comErro = meus.filter(i => i.erro).length;
+    el.style.display = '';
+    el.style.background = comErro ? '#dc2626' : '#d97706';
+    el.innerHTML = S._filaEnviando
+      ? `<i class="ti ti-loader-2"></i> Enviando ${meus.length} ponto(s)...`
+      : comErro
+        ? `⚠️ ${comErro} ponto(s) com erro — toque para ver`
+        : `📤 ${meus.length} ponto(s) guardado(s) no celular — toque para enviar`;
+  }).catch(() => { el.style.display = 'none'; });
+}
+
+async function abrirModalFila() {
+  let ov = document.getElementById('modal-fila');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.id = 'modal-fila';
+    ov.innerHTML = `<div class="modal" style="max-width:440px">
+      <h3 style="font-size:15px;font-weight:600;margin-bottom:6px">Pontos guardados no celular</h3>
+      <p style="font-size:11.5px;color:var(--text2);margin-bottom:10px;line-height:1.5">Estes cadastros ainda não chegaram ao servidor (sem rede ou rede fraca). Eles são enviados sozinhos quando a rede voltar — não feche/desinstale o app nem limpe os dados do navegador até sumirem daqui.</p>
+      <div id="fila-lista" style="max-height:50vh;overflow:auto;margin-bottom:12px"></div>
+      <button class="btn primary btn-block" onclick="filaProcessar(true).then(renderListaFila)"><i class="ti ti-cloud-upload"></i> Enviar agora</button>
+      <button class="btn btn-block" style="margin-top:8px" onclick="closeModal('modal-fila')">Fechar</button>
+    </div>`;
+    document.body.appendChild(ov);
+  }
+  await renderListaFila();
+  openModal('modal-fila');
+}
+async function renderListaFila() {
+  const el = document.getElementById('fila-lista');
+  if (!el) return;
+  let itens = [];
+  try { itens = await filaMeusItens(); } catch (e) {}
+  if (!itens.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);text-align:center;padding:14px">Nenhum ponto aguardando envio ✓</p>'; return; }
+  el.innerHTML = itens.map(i => {
+    const cidadeNome = (S.cidades.find(c => c.id === (i.dados ? i.dados.cidade : i.cidade)) || {}).nome || (i.dados ? i.dados.cidade : '');
+    const titulo = i.tipo === 'novo'
+      ? `Novo ponto${i.leakId ? ' ' + i.leakId : ''} — ${cidadeNome}`
+      : `Complemento do ${i.leakId}`;
+    const quando = new Date(i.criadoLocalMs).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const fotos = (i.fotos || []).length ? ` · ${(i.fotos || []).length} foto(s) a enviar` : '';
+    const erro = i.erro ? `<div style="color:#dc2626;font-size:11px;margin-top:2px">Erro: ${String(i.erro).replace(/</g,'&lt;')}</div>` : '';
+    return `<div style="border:1px solid var(--border,#ddd);border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:center">
+      <div style="flex:1;font-size:12px"><b>${titulo}</b><div style="color:var(--text2);font-size:11px">Guardado em ${quando}${fotos}</div>${erro}</div>
+      <button class="btn sm" title="Descartar" onclick="descartarItemFila('${i.localId}')"><i class="ti ti-trash"></i></button>
+    </div>`;
+  }).join('');
+}
+async function descartarItemFila(localId) {
+  if (!confirm('Descartar este cadastro guardado no celular?\n\nEle AINDA NÃO FOI ENVIADO e será perdido definitivamente.')) return;
+  try { await idbDel('fila', localId); } catch (e) {}
+  delete S._filaPerguntarWA[localId];
+  renderListaFila();
+  atualizarIndicadorFila();
+}
+
+// ---------- RASCUNHO (proteção contra o app fechar na câmera) ----------
+function botoesFotoHtml(qual, rotuloCamera) {
+  return `<div class="photo-thumb add" onclick="abrirSeletorFoto('${qual}','camera')"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>${rotuloCamera || 'Câmera'}</span></div>` +
+    `<div class="photo-thumb add" onclick="abrirSeletorFoto('${qual}','galeria')"><i class="ti ti-photo" style="font-size:22px;color:var(--blue)"></i><span>Galeria</span></div>`;
+}
+// Salva o rascunho e abre a câmera/galeria. O click() precisa acontecer na hora do toque
+// (regra do navegador), por isso o rascunho é gravado em paralelo, sem esperar — a
+// gravação leva milissegundos, bem antes de a câmera terminar de abrir.
+function abrirSeletorFoto(qual, origem) {
+  if (qual === 'quick') rascunhoSalvarQuick(); else rascunhoSalvarReg();
+  const id = qual === 'quick'
+    ? (origem === 'galeria' ? 'quick-gallery-input' : 'quick-photo-input')
+    : (origem === 'galeria' ? 'photo-gallery-input' : 'photo-input');
+  document.getElementById(id).click();
+}
+const _valorCampo = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+function rascunhoSalvarQuick() {
+  if (!S.user) return Promise.resolve();
+  const P = S._quickPosFixa || S.pos;
+  const r = {
+    chave: 'quick', uid: S.user.uid, ts: Date.now(),
+    pos: P ? { lat: P.lat, lng: P.lng } : null,
+    cidade: _valorCampo('quick-cidade'), equipe: _valorCampo('quick-equipe'), desc: _valorCampo('quick-desc'),
+    sev: S.sevQuick || null, pav: S.pavimentoQuick || null, completo: !!S._quickModoCompleto,
+    dmc: _valorCampo('quick-dmc'), tipo: _valorCampo('quick-tipo'), servico: _valorCampo('quick-servico'),
+    diam: _valorCampo('quick-diam'), rua: _valorCampo('quick-rua'), hd: _valorCampo('quick-hd-numero'),
+    foto: S.quickPhotoBase64 || null
+  };
+  return idbPut('rascunho', r).catch(e => console.warn('Rascunho não salvo:', e));
+}
+function rascunhoSalvarReg() {
+  if (!S.user || !S._pontoEmEdicao) return Promise.resolve();
+  const r = {
+    chave: 'reg', uid: S.user.uid, ts: Date.now(), leakId: S._pontoEmEdicao.id,
+    dmc: _valorCampo('reg-dmc'), tipo: _valorCampo('reg-tipo'), servico: _valorCampo('reg-servico'),
+    obs: _valorCampo('reg-obs'), diam: _valorCampo('reg-diam'), rua: _valorCampo('reg-rua'),
+    geofone: _valorCampo('reg-geofone'), hd: _valorCampo('reg-hd-numero'),
+    sev: S.sevAtual || null, pav: S.pavimentoAtual || null, fotos: (S.photosBase64 || []).slice()
+  };
+  return idbPut('rascunho', r).catch(e => console.warn('Rascunho não salvo:', e));
+}
+function rascunhoApagar(chave) { idbDel('rascunho', chave).catch(() => {}); }
+
+async function _esperarAte(cond, ms) {
+  const t0 = Date.now();
+  while (!cond()) { if (Date.now() - t0 > ms) return false; await new Promise(r => setTimeout(r, 300)); }
+  return true;
+}
+function _setCampo(id, val) { const el = document.getElementById(id); if (el && val !== null && val !== undefined && val !== '') el.value = val; }
+
+async function rascunhoRestaurar() {
+  if (!S.user) return;
+  let q, r;
+  try { q = await idbGet('rascunho', 'quick'); r = await idbGet('rascunho', 'reg'); } catch (e) { return; }
+  const valido = d => d && d.uid === S.user.uid && (Date.now() - d.ts) < 6 * 3600 * 1000;
+  if (q && !valido(q)) { rascunhoApagar('quick'); q = null; }
+  if (r && !valido(r)) { rascunhoApagar('reg'); r = null; }
+  if (q) await restaurarRascunhoQuick(q);
+  else if (r) await restaurarRascunhoReg(r);
+}
+async function restaurarRascunhoQuick(d) {
+  if (!(await _esperarAte(() => S.cidades.length && S.equipes.length, 25000))) return;
+  if (typeof aplicarModo === 'function') aplicarModo('field');
+  S._quickPosFixa = d.pos || null;
+  openRegisterQuick();
+  if (d.cidade) { _setCampo('quick-cidade', d.cidade); S._cidadeEscolhidaManualmente = true; quickCidadeChange(); }
+  if (d.equipe) { _setCampo('quick-equipe', d.equipe); S._equipeEscolhidaManualmente = true; updateIdPreviewQuick(); }
+  _setCampo('quick-desc', d.desc);
+  if (d.sev) { const b = document.querySelector(`#quick-sev-group .toggle-btn.${d.sev}`); if (b) setQuickSev(b, d.sev); }
+  if (d.pav) { const b = document.querySelector(`#quick-pavimento-group .toggle-btn[data-val="${d.pav}"]`); if (b) setPavimento(b, d.pav); }
+  if (d.completo) {
+    _setCampo('quick-rua', d.rua); // antes do toggle, pra busca automática de rua não sobrescrever
+    toggleQuickCompleto();
+    if (d.dmc) { _setCampo('quick-dmc', d.dmc); S._dmcEscolhidoManualmente = true; }
+    _setCampo('quick-tipo', d.tipo); _setCampo('quick-servico', d.servico);
+    atualizarCampoHD('quick');
+    _setCampo('quick-hd-numero', d.hd); _setCampo('quick-diam', d.diam);
+  }
+  if (d.foto) { S.quickPhotoBase64 = d.foto; renderFotoQuick(); }
+  rascunhoSalvarQuick(); // mantém o rascunho (openRegisterQuick não apaga, só o fechar do modal)
+  toast(d.foto
+    ? '♻️ O app tinha fechado — recuperamos o ponto que você estava marcando, com a foto. Confira e toque em "Registrar no mapa".'
+    : '♻️ O app fechou ao abrir a câmera — recuperamos o ponto que você estava marcando. Tire a foto de novo e registre.', 8000);
+}
+async function restaurarRascunhoReg(d) {
+  if (!(await _esperarAte(() => S.leaks.some(l => l.id === d.leakId), 25000))) return;
+  if (typeof aplicarModo === 'function') aplicarModo('field');
+  switchTab('register', 'tabs-field');
+  abrirComplementacao(d.leakId);
+  if (!S._pontoEmEdicao || S._pontoEmEdicao.id !== d.leakId) return;
+  _setCampo('reg-dmc', d.dmc); _setCampo('reg-tipo', d.tipo); _setCampo('reg-servico', d.servico);
+  atualizarCampoHD('reg');
+  _setCampo('reg-hd-numero', d.hd); _setCampo('reg-obs', d.obs); _setCampo('reg-diam', d.diam);
+  _setCampo('reg-rua', d.rua); _setCampo('reg-geofone', d.geofone);
+  if (d.sev) { const b = document.querySelector(`#sev-group .toggle-btn.${d.sev}`); if (b) setSev(b, d.sev); }
+  if (d.pav) { const b = document.querySelector(`#pavimento-group .toggle-btn[data-val="${d.pav}"]`); if (b) setPavimento(b, d.pav); }
+  if (d.fotos && d.fotos.length) {
+    S.photosBase64 = d.fotos.slice();
+    S.photos = (S.photos || []).concat(d.fotos);
+    renderPhotos();
+  }
+  rascunhoSalvarReg();
+  toast(`♻️ O app tinha fechado — recuperamos o que você estava preenchendo no ponto ${d.leakId}${d.fotos && d.fotos.length ? ', com as fotos' : ''}. Confira e salve.`, 8000);
+}
+
+// Chamado depois do login (ver onAuthStateChanged)
+function iniciarFilaOffline() {
+  if (!S._filaIniciada) {
+    S._filaIniciada = true;
+    // Pede ao navegador para não apagar os dados locais por falta de espaço
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    window.addEventListener('online', () => filaProcessar());
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') filaProcessar(); });
+    setInterval(() => filaProcessar(), 30000);
+  }
+  atualizarIndicadorFila();
+  setTimeout(() => filaProcessar(), 3000);
+  rascunhoRestaurar();
+}
+
 // Gera o próximo ID sequencial de forma segura usando um contador no Firestore
 // CORREÇÃO 2026-11-23: o contador meta/sequencias foi zerado no incidente da migração
 // multi-setor, e o vazamento é gravado com setDoc SEM merge usando esse ID — ou seja, um
@@ -6221,7 +6615,12 @@ function maiorSeqConhecida(cidadeId) {
   return maior;
 }
 async function proximoIdSequencial(cidadeId, equipeCodigo) {
-  const { db, doc, getDoc, setDoc } = window.FB;
+  // getDocFromServer (e não getDoc): com o cache local ligado, getDoc sem rede devolveria
+  // o contador ANTIGO guardado no celular e geraria um ID que pode já existir — o mesmo
+  // tipo de sobrescrita do incidente de setembro. Sem rede, aqui dá erro de propósito e o
+  // ponto fica na fila do aparelho até conseguir um número confirmado pelo servidor.
+  const { db, doc, setDoc } = window.FB;
+  const getDoc = window.FB.getDocFromServer;
   const ref = doc(db, 'meta', 'sequencias');
   const snap = await getDoc(ref);
   const seq = snap.exists() ? (snap.data()[cidadeId] || 0) : 0;
@@ -6259,12 +6658,13 @@ function toggleQuickCompleto() {
     popularSelectTiposEm('quick-tipo');
     popularSelectServicosEm('quick-servico');
     // Busca a rua pelo GPS atual, já que esse ponto vai ser salvo completo de uma vez
-    if (S.pos) {
+    const P = S._quickPosFixa || S.pos;
+    if (P) {
       const ruaInput = document.getElementById('quick-rua');
       const ruaStatus = document.getElementById('quick-rua-status');
       ruaStatus.textContent = '(buscando...)';
-      buscarRuaPorCoordenadas(S.pos.lat, S.pos.lng).then(rua => {
-        if (rua) { ruaInput.value = rua; ruaStatus.textContent = '(sugerido pelo GPS — pode corrigir)'; }
+      buscarRuaPorCoordenadas(P.lat, P.lng).then(rua => {
+        if (rua && !ruaInput.value) { ruaInput.value = rua; ruaStatus.textContent = '(sugerido pelo GPS — pode corrigir)'; }
         else { ruaStatus.textContent = ''; ruaInput.placeholder = 'Digite a rua manualmente'; }
       });
     }
@@ -6296,7 +6696,8 @@ function popularSelectServicosEm(elementId) {
 }
 
 function openRegisterQuick() {
-  if (S.pos) document.getElementById('quick-coords').textContent = `${S.pos.lat.toFixed(6)}, ${S.pos.lng.toFixed(6)}`;
+  const P = S._quickPosFixa || S.pos;
+  if (P) document.getElementById('quick-coords').textContent = `${P.lat.toFixed(6)}, ${P.lng.toFixed(6)}`;
   // Popular selects do modal
   const qc = document.getElementById('quick-cidade');
   while (qc.options.length > 1) qc.remove(1);
@@ -6305,7 +6706,7 @@ function openRegisterQuick() {
   document.getElementById('quick-id-preview').textContent='—';
   // Reseta a foto rápida de uma chamada anterior, se houver
   S.quickPhotoBase64 = null;
-  document.getElementById('quick-photo-grid').innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
+  document.getElementById('quick-photo-grid').innerHTML = botoesFotoHtml('quick');
   // Reseta o modo completo a cada abertura — começa sempre fechado/rápido
   S._quickModoCompleto = false;
   document.getElementById('quick-completo-wrap').classList.add('hidden');
@@ -6326,8 +6727,8 @@ function openRegisterQuick() {
   S._dmcDetectadoPorCoordenada = null;
   S._equipeEscolhidaManualmente = false;
   document.getElementById('quick-equipe-hint').textContent = '';
-  if (S.pos) {
-    const sugerida = cidadeMaisProxima(S.pos.lat, S.pos.lng);
+  if (P) {
+    const sugerida = cidadeMaisProxima(P.lat, P.lng);
     if (sugerida) {
       qc.value = sugerida.id;
       quickCidadeChange();
@@ -6353,35 +6754,40 @@ function handleQuickPhoto(input) {
   comprimirImagem(f).then(dataUrl => {
     S.quickPhotoBase64 = dataUrl;
     S._processandoFotoQuick = false;
-    grid.innerHTML = `<div class="photo-thumb"><img src="${dataUrl}" alt="foto"></div>` +
-      `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()">
-        <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
-        <span>Trocar foto</span>
-      </div>`;
+    renderFotoQuick();
+    // Guarda a foto já comprimida no rascunho do aparelho: se o app fechar daqui pra
+    // frente, o ponto volta COM a foto na próxima abertura.
+    rascunhoSalvarQuick();
   }).catch(err => {
     S._processandoFotoQuick = false;
     toast('Erro ao processar foto: ' + (err.message||err));
-    grid.innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
+    grid.innerHTML = botoesFotoHtml('quick');
   });
   input.value = '';
 }
+function renderFotoQuick() {
+  const grid = document.getElementById('quick-photo-grid');
+  grid.innerHTML = S.quickPhotoBase64
+    ? `<div class="photo-thumb"><img src="${S.quickPhotoBase64}" alt="foto"></div>` + botoesFotoHtml('quick', 'Trocar foto')
+    : botoesFotoHtml('quick');
+}
 
 async function confirmarQuick() {
+  if (S._salvandoQuick) return; // toque duplo no botão não cria dois pontos
   const cid = document.getElementById('quick-cidade').value;
   const eqId = document.getElementById('quick-equipe').value;
   const desc = document.getElementById('quick-desc').value;
   if (!cid) { toast('Selecione a cidade'); return; }
   if (!eqId) { toast('Selecione a equipe'); return; }
-  if (!S.pos) { toast('Aguardando GPS...'); return; }
+  // Ponto recuperado de rascunho (app fechou na câmera) mantém a posição onde foi marcado
+  const pos = S._quickPosFixa || S.pos;
+  if (!pos) { toast('Aguardando GPS...'); return; }
 
   // Bloqueia registrar sem nenhuma foto — tanto a foto única do registro rápido quanto
   // as fotos do modo completo contam. Pedido explícito: todo ponto (rápido ou completo)
   // precisa de pelo menos 1 foto antes de gravar.
-  // IMPORTANTE: se a foto acabou de ser tirada e ainda está sendo comprimida (processo
-  // assíncrono, leva um tempinho real no celular), avisa pra aguardar em vez de dizer
-  // "sem foto" — essa confusão era o bug relatado pela equipe de campo ("não salva na
-  // hora que bate a foto"): a pessoa tirava a foto e tentava salvar rápido demais,
-  // antes da compressão terminar, e esbarrava nesse bloqueio por engano.
+  // IMPORTANTE: se a foto acabou de ser tirada e ainda está sendo comprimida, avisa pra
+  // aguardar em vez de dizer "sem foto".
   if (S._processandoFotoQuick) { toast('⏳ Só um instante, a foto ainda está sendo processada...'); return; }
   const temFotoQuick = !!S.quickPhotoBase64;
   const temFotosCompleto = S.photosBase64 && S.photosBase64.length > 0;
@@ -6403,18 +6809,12 @@ async function confirmarQuick() {
   }
 
   const eq = S.equipes.find(e => e.id === eqId);
-  const id = await proximoIdSequencial(cid, eq.codigo);
+  if (!eq) { toast('Equipe não encontrada — selecione de novo'); return; }
   const now=new Date();
   const c=S.cidades.find(c=>c.id===cid);
   // Prioridade: 1) escolha manual (modo completo aberto) > 2) DMC detectado por
   // polígono da própria coordenada (o mais confiável) > 3) DMC indicado na campanha de
-  // geofonamento ativa > Sem DMC. NÃO existe mais um passo de "primeiro DMC da lista"
-  // — esse fallback intermediário ficou esquecido de uma versão anterior e causava
-  // pontos fora de qualquer polígono mapeado caírem sempre no primeiro DMC cadastrado
-  // da cidade (bug relatado em Criciúma, que tem vários DMCs — o efeito colateral era
-  // mais visível lá, mas o problema valia pra qualquer cidade).
-  // O DMC detectado por polígono só é usado se realmente existir na lista de DMCs
-  // dessa cidade (a propriedade do KML pode não bater 100% com o nome cadastrado).
+  // geofonamento ativa > Sem DMC.
   const dmcCorrespondente = S._dmcDetectadoPorCoordenada && c ? c.dmcs.find(d => nomesDMCBatem(d.nome, S._dmcDetectadoPorCoordenada)) : null;
   const dmcPorPoligono = dmcCorrespondente ? dmcCorrespondente.nome : null;
   const dmcPadrao = dmcEscolhido || dmcPorPoligono || S.campanhaAtual?.dmc || DMC_SEM_DMC;
@@ -6425,47 +6825,58 @@ async function confirmarQuick() {
   const tipoNome = S._quickModoCompleto ? (tipoObj ? tipoObj.nome : '') : '';
   const servicoTexto = S._quickModoCompleto ? (servicoObj ? (servicoObj.codigo + ' - ' + servicoObj.descricao) : '') : '';
 
-  const leak={
-    id, cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:tipoNome, servico:servicoTexto, severidade:S.sevQuick, pavimento: S.pavimentoQuick || null,
-    lat:S.pos.lat, lng:S.pos.lng, desc, diam:diamCompleto, rua: ruaCompleto || null, numeroHD,
+  // 2026-11-23 — o ponto agora é GUARDADO NO CELULAR primeiro (fila local, IndexedDB) e
+  // só depois enviado. Antes, o ID era gerado e o ponto gravado direto no servidor: com
+  // rede fraca isso travava ou dava erro sem aviso, e se o app fechasse no meio (o
+  // Android fecha o navegador ao abrir a câmera em celular com pouca memória) o ponto e a
+  // foto se perdiam. O ID definitivo (CIDADE-EQUIPE-VAZnnn) só é gerado na hora do envio,
+  // sempre confirmado pelo servidor — nunca a partir de dados guardados no aparelho.
+  const dados = {
+    cidade:cid, equipe:eqId, dmc:dmcPadrao, tipo:tipoNome, servico:servicoTexto, severidade:S.sevQuick, pavimento: S.pavimentoQuick || null,
+    lat:pos.lat, lng:pos.lng, desc, diam:diamCompleto, rua: ruaCompleto || null, numeroHD,
     data:`${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`,
     photos: temFoto ? 1 : 0,
-    fotosUrls: [],
     // Só fica marcado como pendente se NÃO usou o modo completo — assim a tela
     // "Registrar" só lista pontos que realmente ainda precisam de complementação.
     pendenteComplementacao: !S._quickModoCompleto,
-    criadoEm: window.FB.serverTimestamp(),
     criadoPor: S.user?.uid || '',
-    editavelAte: Date.now() + (24 * 60 * 60 * 1000)
+    editavelAte: Date.now() + (24 * 60 * 60 * 1000),
+    setor: setorAtual()
   };
-  await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', id), leak);
-  closeModal('modal-quick');
-  toast(S._quickModoCompleto ? `✓ Ponto ${id} salvo completo!` : `✓ Ponto ${id} registrado! Complete os detalhes em "Registrar".`);
+  const item = { tipo:'novo', cidade:cid, equipeCodigo:eq.codigo, dados, fotos: temFoto ? [S.quickPhotoBase64] : [] };
+  const fotosWA = temFoto ? [S.quickPhotoBase64] : [];
+  const perguntarWA = !!S._quickModoCompleto;
 
-  if (temFoto) {
-    const fotoSalva = S.quickPhotoBase64;
-    // Usa arrayUnion em vez de sobrescrever fotosUrls: se o usuário for direto para
-    // "Registrar" (complementação) e salvar uma segunda foto antes deste upload
-    // terminar, os dois gravam ao mesmo tempo — com arrayUnion nenhuma das duas
-    // gravações apaga a foto da outra (era exatamente esse o bug relatado).
-    enviarFotosParaStorageDireto(id, [fotoSalva]).then(urls => {
-      window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',id), { fotosUrls: window.FB.arrayUnion(...urls) }, { merge:true });
-    }).catch(err => console.warn('Erro ao salvar foto rápida do vazamento ' + id + ':', err));
+  S._salvandoQuick = true;
+  let guardadoNoCelular = true;
+  try {
+    await filaAdicionar(item);
+  } catch (e) {
+    // Navegador sem IndexedDB (raro): envia direto como antes, mantendo o formulário
+    // aberto se der erro, pra não perder o que foi preenchido.
+    guardadoNoCelular = false;
+    try {
+      toast('Salvando...');
+      const id = await processarItemFila(item);
+      aoEnviarItemFila(item, id, { perguntarWA, fotosWA });
+    } catch (err) {
+      S._salvandoQuick = false;
+      toast('❌ Não foi possível salvar agora (' + (err.message||err) + '). Tente de novo quando tiver rede.', 5000);
+      return;
+    }
   }
+  S._salvandoQuick = false;
+  if (guardadoNoCelular && perguntarWA) S._filaPerguntarWA[item.localId] = fotosWA;
 
-  S._ultimoPontoSalvo = {
-    id, cidade:cid, equipeId:eqId, dmc:dmcPadrao,
-    tipo: tipoNome || 'Não categorizado', servico: servicoTexto,
-    severidade:S.sevQuick, pavimento: S.pavimentoQuick || null, obs:desc, diam:diamCompleto, rua:ruaCompleto,
-    lat:S.pos.lat, lng:S.pos.lng, fotosBase64: temFoto?[S.quickPhotoBase64]:[]
-  };
+  closeModal('modal-quick'); // também apaga o rascunho
   S.quickPhotoBase64 = null;
-  document.getElementById('quick-photo-grid').innerHTML = `<div class="photo-thumb add" onclick="document.getElementById('quick-photo-input').click()"><i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i><span>Adicionar foto</span></div>`;
-  // Só oferece notificar por WhatsApp se o cadastro já saiu completo (modo completo
-  // aberto, com tipo/serviço/diâmetro preenchidos). Registro rápido "cru", que ainda
-  // vai precisar de complementação depois em "Registrar", não oferece — evita notificar
-  // a equipe com um vazamento praticamente sem informação nenhuma.
-  if (S._quickModoCompleto) abrirPerguntaWhatsApp(S._ultimoPontoSalvo);
+  document.getElementById('quick-photo-grid').innerHTML = botoesFotoHtml('quick');
+  if (guardadoNoCelular) {
+    toast(navigator.onLine
+      ? '⏳ Ponto guardado — enviando...'
+      : '📴 Sem rede — ponto guardado no celular. Ele será enviado sozinho quando a rede voltar.', 4500);
+    filaProcessar();
+  }
 }
 
 // ================================================================
@@ -6480,9 +6891,12 @@ const FOTO_MAX_DIMENSAO = 1280;
 const FOTO_QUALIDADE = 0.75;
 
 function comprimirImagem(file) {
+  // 2026-11-23: antes lia a foto ORIGINAL inteira como texto base64 (FileReader), o que
+  // num celular simples ocupa dezenas de MB de memória logo depois da câmera — um dos
+  // motivos de o Android fechar o app. Agora o navegador lê o arquivo direto (object URL).
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = ev => {
+    const urlTemp = URL.createObjectURL(file);
+    {
       const img = new Image();
       img.onload = () => {
         let { width, height } = img;
@@ -6498,13 +6912,13 @@ function comprimirImagem(file) {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
         const dataUrl = canvas.toDataURL('image/jpeg', FOTO_QUALIDADE);
+        canvas.width = 0; canvas.height = 0; // libera a memória do canvas na hora
+        URL.revokeObjectURL(urlTemp);
         resolve(dataUrl);
       };
-      img.onerror = reject;
-      img.src = ev.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+      img.onerror = (e) => { URL.revokeObjectURL(urlTemp); reject(new Error('não foi possível abrir a foto')); };
+      img.src = urlTemp;
+    }
   });
 }
 
@@ -6527,15 +6941,13 @@ async function handlePhotos(input) {
     }
   }
   S._processandoFotosReg = false;
+  rascunhoSalvarReg(); // fotos já comprimidas ficam guardadas no aparelho (ver rascunhoRestaurar)
 }
 function renderPhotos() {
   const g = document.getElementById('photo-grid');
   g.innerHTML = S.photos.map(u => `
     <div class="photo-thumb"><img src="${u}" alt="foto"></div>`).join('') +
-    `<div class="photo-thumb add" onclick="document.getElementById('photo-input').click()">
-      <i class="ti ti-camera" style="font-size:22px;color:var(--blue)"></i>
-      <span>Adicionar foto</span>
-    </div>`;
+    botoesFotoHtml('reg');
 }
 
 // Envia as fotos comprimidas (base64) para o Firebase Storage e retorna as URLs públicas
@@ -10723,7 +11135,7 @@ function aplicarModo(modo) {
 // MODAIS
 // ================================================================
 function openModal(id){document.getElementById(id).classList.add('open');}
-function closeModal(id){document.getElementById(id).classList.remove('open'); const f=S._aoFecharModal&&S._aoFecharModal[id]; if(f){delete S._aoFecharModal[id]; f();}}
+function closeModal(id){document.getElementById(id).classList.remove('open'); if(id==='modal-quick'){ S._quickPosFixa=null; rascunhoApagar('quick'); } const f=S._aoFecharModal&&S._aoFecharModal[id]; if(f){delete S._aoFecharModal[id]; f();}}
 document.addEventListener('click', e=>{
   if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
 });
@@ -10737,12 +11149,12 @@ document.addEventListener('click', e=>{
 // ================================================================
 // TOAST
 // ================================================================
-function toast(msg) {
+function toast(msg, ms) {
   const wrap=document.getElementById('toast-wrap');
   const t=document.createElement('div');
   t.className='toast'; t.textContent=msg;
   wrap.appendChild(t);
-  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},2200);
+  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);}, ms || 2200);
 }
 </script>
 </body>

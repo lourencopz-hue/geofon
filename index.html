@@ -423,7 +423,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="card" style="background:var(--blue-l);margin-bottom:14px">
         <p style="font-size:12px;color:var(--blue-d);line-height:1.6">
           <i class="ti ti-info-circle" style="margin-right:4px"></i>
-          Toda pessoa que entrar pela primeira vez aparece aqui como <strong>Pendente</strong>. Defina o nível de acesso (Administrador, Supervisor ou Técnico de campo) e, se for Técnico, a cidade/equipe dela.
+          Toda pessoa que entrar pela primeira vez aparece aqui como <strong>Pendente</strong>. Defina o nível de acesso (Administrador, Supervisor ou Técnico de campo) e, se for Técnico, a equipe dela. Para <strong>Supervisor</strong>, use o botão <strong>Escopo do Editor DMC</strong> para liberar as regionais/cidades em que ele pode editar DMC — sem escopo marcado, o Supervisor só visualiza.
         </p>
       </div>
       <div class="stats-row" id="usuarios-resumo" style="padding:0;margin-bottom:14px"></div>
@@ -864,13 +864,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <option value="">Todos os DMCs desta cidade</option>
         </select>
         <button class="btn sm" onclick="editorDMC_carregarExistentes()"><i class="ti ti-download"></i> Carregar</button>
-        <button class="btn sm" onclick="editorDMC_importarKML()"><i class="ti ti-file-upload"></i> Importar KML</button>
+        <button class="btn sm" id="editor-dmc-btn-importar" onclick="editorDMC_importarKML()"><i class="ti ti-file-upload"></i> Importar KML</button>
         <input type="file" id="editor-dmc-import-input" accept=".kml,.geojson,.json" style="display:none" onchange="editorDMC_handleImport(this)">
         <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
         <button class="btn sm" id="editor-dmc-desfazer-btn" onclick="editorDMC_desfazer()" disabled><i class="ti ti-arrow-back-up"></i> Desfazer</button>
         <button class="btn sm" onclick="editorDMC_verificarSobreposicao()"><i class="ti ti-stack-2"></i> Verificar sobreposição</button>
         <button class="btn sm" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
-        <button class="btn sm primary" onclick="editorDMC_salvarNoApp()"><i class="ti ti-device-floppy"></i> Salvar</button>
+        <button class="btn sm primary" id="editor-dmc-btn-salvar" onclick="editorDMC_salvarNoApp()"><i class="ti ti-device-floppy"></i> Salvar</button>
       </div>
       <div class="card" id="editor-dmc-info-card" style="margin:10px 14px 0;background:var(--blue-l);padding:8px 12px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -883,6 +883,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <b>Salvar</b> grava direto no app — DMC já carregado só pede uma confirmação simples; polígono novo/importado (sem vínculo ainda) pergunta cidade e DMC (ou nome de um DMC novo) antes de gravar. Cada polígono sempre volta pro seu DMC certo, mesmo com vários na tela ao mesmo tempo. Use as ferramentas de desenho no canto do mapa (polígono, editar vértice, arrastar, excluir). <b>Clique num polígono carregado</b> pra selecioná-lo (fica vermelho) e baixar só ele. Com a edição de vértice ativa, <b>clique com o botão direito num vértice</b> pra apagar só ele (clique normal move o ponto). Deu ruim? O botão "Desfazer" volta o último passo. <b>Verificar sobreposição</b> compara os polígonos deste editor contra TODOS os DMCs já cadastrados (de qualquer cidade — pega também sobreposição com cidade vizinha/conurbada); "Salvar" já roda essa mesma checagem sozinho antes de gravar, só como aviso. Passe o mouse num DMC carregado pra ver nome e sigla.
         </p>
       </div>
+      <div id="editor-dmc-escopo-aviso" style="display:none;margin:8px 14px 0;padding:7px 12px;border-radius:var(--radius);font-size:11.5px;line-height:1.5"></div>
       <div style="display:flex;justify-content:space-between;padding:0 14px;margin-top:4px">
         <div id="editor-dmc-selecao-info" style="font-size:11.5px;color:var(--red);font-weight:600;min-height:16px"></div>
         <div id="editor-dmc-vertices-info" style="font-size:11.5px;color:var(--text2);min-height:16px"></div>
@@ -1364,6 +1365,26 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
+<div class="modal-overlay" id="modal-escopo-editor-dmc">
+  <div class="modal" style="max-width:480px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px"><i class="ti ti-map-2"></i> Escopo do Editor de DMC</h3>
+    <p id="escopo-dmc-usuario" style="font-size:12px;color:var(--text2);margin-bottom:8px"></p>
+    <p style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+      Marque uma <b>regional</b> para liberar todas as cidades dela (inclusive as que forem cadastradas depois). Use as <b>cidades avulsas</b> para liberar cidades específicas fora das regionais marcadas. Sem nada marcado, o Supervisor <b>só visualiza</b> os DMCs no editor.
+    </p>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">Regionais</div>
+    <div id="escopo-dmc-regionais" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:12px"></div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">Cidades avulsas</div>
+    <input type="text" id="escopo-dmc-busca" placeholder="Buscar cidade..." oninput="escopoDMC_renderCidades()" style="width:100%;margin-bottom:6px;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+    <div id="escopo-dmc-cidades" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="escopoDMC_salvar()"><i class="ti ti-device-floppy"></i> Salvar escopo</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-escopo-editor-dmc')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-vincular-editor-dmc">
   <div class="modal" style="max-width:420px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Vincular polígono a um DMC</h3>
@@ -2213,6 +2234,7 @@ function aplicarPermissoesUI() {
   if (tabEditorDMC) tabEditorDMC.classList.toggle('hidden', role === 'tecnico');
   if (tabCampanhas) tabCampanhas.classList.toggle('hidden', role === 'tecnico');
   verificarBotaoMigracaoSetores();
+  editorDMC_aplicarEscopoUI(); // (Fase 4) escopo do Supervisor no Editor de DMC
 }
 
 // Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
@@ -3679,10 +3701,7 @@ function renderUsuariosPanel() {
           <option value="supervisor" ${u.role==='supervisor'?'selected':''}>Supervisor</option>
           <option value="admin" ${u.role==='admin'?'selected':''}>Administrador</option>
         </select>
-        <select onchange="alterarCidadeUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
-          <option value="">Sem cidade fixa</option>
-          ${S.cidades.map(c=>`<option value="${c.id}" ${u.cidade===c.id?'selected':''}>${c.nome}</option>`).join('')}
-        </select>
+        ${u.role==='supervisor' ? `<button class="btn sm" onclick="escopoDMC_abrir('${u.uid}')" title="Regionais/cidades em que este Supervisor pode editar DMC" style="font-size:11px;padding:4px 8px"><i class="ti ti-map-2"></i> Escopo do Editor DMC: ${escopoDMC_resumo(u)}</button>` : ''}
         <select onchange="alterarEquipeUsuario('${u.uid}', this.value)" style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
           <option value="">Sem equipe</option>
           ${S.equipes.map(e=>`<option value="${e.id}" ${u.equipe===e.id?'selected':''}>${e.codigo} - ${e.nome.split(' - ')[0]}</option>`).join('')}
@@ -4754,6 +4773,7 @@ function initPCMap() {
 // ================================================================
 let mapEditorDMC = null;
 let editorDMCLayerGroup = null; // guarda tudo que está desenhado/importado e editável agora
+let editorDMCReferenciaLayerGroup = null; // (Fase 4) DMCs de cidades fora do escopo do Supervisor — cinza tracejado, sem edição
 let editorDMCConflitosLayerGroup = null; // guarda só o destaque (em vermelho) das áreas de sobreposição encontradas — some ao rodar a checagem de novo ou ao limpar/desfazer
 let editorDMCSelecionadas = new Set(); // layers clicadas/selecionadas — controla o "baixar só isso"
 let editorDMCHistorico = []; // pilha de estados (GeoJSON em texto) pra desfazer
@@ -4795,6 +4815,7 @@ function initEditorDMCMap() {
   addBaseLayerControl(mapEditorDMC);
   editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
   editorDMCConflitosLayerGroup = L.featureGroup().addTo(mapEditorDMC);
+  editorDMCReferenciaLayerGroup = L.featureGroup().addTo(mapEditorDMC); // (Fase 4) DMCs fora do escopo — só visualização
 
   // Restaura se as orientações estavam minimizadas (pedido: aumentar a área de desenho)
   // — o mapa já nasce com o tamanho final, sem precisar de um segundo invalidateSize.
@@ -4810,21 +4831,9 @@ function initEditorDMCMap() {
   // arrastar, excluir. Ferramenta de texto (rótulo solto no mapa) desligada de
   // propósito: não tem uso aqui, o nome do DMC já vem do cadastro, não de um texto
   // desenhado à mão — só deixaria a barra mais confusa.
-  mapEditorDMC.pm.addControls({
-    position: 'topleft',
-    drawMarker: false,
-    drawCircleMarker: false,
-    drawPolyline: true,
-    drawRectangle: false,
-    drawPolygon: true,
-    drawCircle: false,
-    drawText: false,
-    editMode: true,
-    dragMode: true,
-    cutPolygon: false,
-    removalMode: true,
-    rotateMode: false,
-  });
+  // (Fase 4) Configuração das ferramentas fica em EDITOR_DMC_PM_CONTROLES — a barra é
+  // escondida por editorDMC_aplicarEscopoUI quando o usuário não tem escopo de edição.
+  mapEditorDMC.pm.addControls(EDITOR_DMC_PM_CONTROLES);
 
   // Todo desenho novo feito na hora entra automaticamente no grupo editável, já com o
   // clique-pra-selecionar habilitado (mesmo tratamento usado pra tudo que é carregado).
@@ -4974,14 +4983,201 @@ function editorDMC_atualizarContadorVertices() {
   el.style.color = acimaDoLimite ? 'var(--red)' : 'var(--text2)';
 }
 
+// ================================================================
+// EDITOR DE DMC — FASE 4: ESCOPO DO SUPERVISOR (2026-11-23)
+// Decisões com o Lourenço:
+//  - Escopo por usuário: regionais inteiras (liberam todas as cidades da regional,
+//    inclusive futuras) + cidades avulsas. Gravado em usuarios/{uid}.escopoEditorDMC
+//    = { regionais: [...], cidades: [...] }. Substitui o antigo campo "cidade fixa"
+//    da tela de usuários, que não era lido em lugar nenhum do app.
+//  - Admin: sem restrição. Supervisor SEM escopo marcado: não edita nada (só visualiza).
+//  - DMC de cidade fora do escopo: aparece no editor apagado (cinza tracejado), sem
+//    edição — serve de referência de divisa.
+//  - Sobreposição com DMC de fora do escopo: só avisa, como já era.
+// Trava só na tela — a barreira de verdade no banco depende das firestore.rules
+// (Fase 2 do multi-setor). O escopo é lido no login: mudança feita pelo Admin vale
+// para o Supervisor depois que ele recarregar o app.
+// ================================================================
+function escopoDMC_doUsuario(u) {
+  const e = (u && u.escopoEditorDMC) || {};
+  return {
+    regionais: Array.isArray(e.regionais) ? e.regionais : [],
+    cidades: Array.isArray(e.cidades) ? e.cidades : [],
+  };
+}
+function escopoDMC_contemCidade(escopo, cidadeId) {
+  if (escopo.cidades.includes(cidadeId)) return true;
+  const c = S.cidades.find(c => c.id === cidadeId);
+  return !!(c && c.regional && escopo.regionais.includes(c.regional));
+}
+function editorDMC_podeEditarCidade(cidadeId) {
+  const role = S.userDoc?.role;
+  if (role === 'admin') return true;
+  if (role !== 'supervisor' || !cidadeId) return false;
+  return escopoDMC_contemCidade(escopoDMC_doUsuario(S.userDoc), cidadeId);
+}
+// true se o usuário pode editar pelo menos uma cidade cadastrada
+function editorDMC_temEscopo() {
+  if (S.userDoc?.role === 'admin') return true;
+  return S.cidades.some(c => editorDMC_podeEditarCidade(c.id));
+}
+function escopoDMC_resumo(u) {
+  const e = escopoDMC_doUsuario(u);
+  const partes = [];
+  if (e.regionais.length) partes.push(e.regionais.join(', '));
+  const avulsas = e.cidades.filter(id => S.cidades.some(c => c.id === id));
+  if (avulsas.length) partes.push(avulsas.length === 1 ? ((S.cidades.find(c => c.id === avulsas[0]) || {}).nome || avulsas[0]) : (avulsas.length + ' cidades'));
+  return partes.length ? partes.join(' + ') : '<span style="color:var(--red)">nenhuma (só visualiza)</span>';
+}
+
+const EDITOR_DMC_PM_CONTROLES = {
+  position: 'topleft',
+  drawMarker: false,
+  drawCircleMarker: false,
+  drawPolyline: true,
+  drawRectangle: false,
+  drawPolygon: true,
+  drawCircle: false,
+  drawText: false,
+  editMode: true,
+  dragMode: true,
+  cutPolygon: false,
+  removalMode: true,
+  rotateMode: false,
+};
+
+// Liga/desliga ferramentas de desenho, Importar e Salvar conforme o escopo, e mostra o
+// aviso acima do mapa dizendo o que o Supervisor pode editar.
+function editorDMC_aplicarEscopoUI() {
+  const aviso = document.getElementById('editor-dmc-escopo-aviso');
+  const role = S.userDoc?.role;
+  const pode = editorDMC_temEscopo();
+  ['editor-dmc-btn-importar', 'editor-dmc-btn-salvar'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.disabled = !pode;
+    b.title = pode ? '' : 'Seu usuário não tem cidades liberadas para edição no Editor de DMC';
+  });
+  if (mapEditorDMC) {
+    const visiveis = mapEditorDMC.pm.controlsVisible();
+    if (pode && !visiveis) mapEditorDMC.pm.addControls(EDITOR_DMC_PM_CONTROLES);
+    if (!pode) {
+      mapEditorDMC.pm.disableDraw();
+      if (mapEditorDMC.pm.globalEditModeEnabled()) mapEditorDMC.pm.disableGlobalEditMode();
+      if (mapEditorDMC.pm.globalDragModeEnabled()) mapEditorDMC.pm.disableGlobalDragMode();
+      if (mapEditorDMC.pm.globalRemovalModeEnabled()) mapEditorDMC.pm.disableGlobalRemovalMode();
+      if (visiveis) mapEditorDMC.pm.removeControls();
+    }
+  }
+  if (!aviso) return;
+  if (role !== 'supervisor') { aviso.style.display = 'none'; return; }
+  aviso.style.display = '';
+  if (!pode) {
+    aviso.style.background = 'var(--amber-l, #FFF4E0)';
+    aviso.style.color = 'var(--amber-d, #8A5A00)';
+    aviso.innerHTML = '<i class="ti ti-lock"></i> Seu usuário ainda <b>não tem cidades liberadas</b> para edição no Editor de DMC — você pode carregar DMCs só para visualizar. Peça ao Administrador para liberar em Usuários e Permissões → Escopo do Editor DMC.';
+  } else {
+    aviso.style.background = 'var(--bg2)';
+    aviso.style.color = 'var(--text2)';
+    aviso.innerHTML = '<i class="ti ti-map-2"></i> Você pode editar DMCs de: <b>' + escopoDMC_resumo(S.userDoc) + '</b>. DMCs de outras cidades aparecem em cinza tracejado, só para visualização.';
+  }
+}
+
+// ---- Modal de escopo (tela Usuários e Permissões, só admin) ----
+let _escopoDMCEdicao = null; // { uid, regionais:Set, cidades:Set }
+
+function escopoDMC_abrir(uid) {
+  const u = (S.usuarios || []).find(u => u.uid === uid);
+  if (!u) return;
+  const e = escopoDMC_doUsuario(u);
+  _escopoDMCEdicao = { uid, regionais: new Set(e.regionais), cidades: new Set(e.cidades) };
+  document.getElementById('escopo-dmc-usuario').innerHTML = '<b>' + (u.nome || u.email) + '</b> — ' + u.email;
+  document.getElementById('escopo-dmc-busca').value = '';
+  const regionais = [...new Set(S.cidades.map(c => c.regional).filter(Boolean))].sort();
+  document.getElementById('escopo-dmc-regionais').innerHTML = regionais.length
+    ? regionais.map(r => {
+        const n = S.cidades.filter(c => c.regional === r).length;
+        return `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" ${_escopoDMCEdicao.regionais.has(r) ? 'checked' : ''} onchange="escopoDMC_marcarRegional('${r}', this.checked)"> ${r} <span style="color:var(--text3)">(${n})</span></label>`;
+      }).join('')
+    : '<span style="font-size:11.5px;color:var(--text3)">Nenhuma cidade tem regional cadastrada (Configurações → Cidades).</span>';
+  escopoDMC_renderCidades();
+  openModal('modal-escopo-editor-dmc');
+}
+
+function escopoDMC_marcarRegional(r, marcado) {
+  if (!_escopoDMCEdicao) return;
+  if (marcado) _escopoDMCEdicao.regionais.add(r); else _escopoDMCEdicao.regionais.delete(r);
+  escopoDMC_renderCidades();
+}
+
+function escopoDMC_marcarCidade(id, marcado) {
+  if (!_escopoDMCEdicao) return;
+  if (marcado) _escopoDMCEdicao.cidades.add(id); else _escopoDMCEdicao.cidades.delete(id);
+}
+
+function escopoDMC_renderCidades() {
+  const el = document.getElementById('escopo-dmc-cidades');
+  if (!el || !_escopoDMCEdicao) return;
+  const busca = (document.getElementById('escopo-dmc-busca').value || '').trim().toLowerCase();
+  const lista = [...S.cidades]
+    .filter(c => !busca || (c.nome || '').toLowerCase().includes(busca) || (c.id || '').toLowerCase().includes(busca))
+    .sort((a, b) => a.nome.localeCompare(b.nome));
+  el.innerHTML = lista.map(c => {
+    const pelaRegional = !!(c.regional && _escopoDMCEdicao.regionais.has(c.regional));
+    const marcada = pelaRegional || _escopoDMCEdicao.cidades.has(c.id);
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0;cursor:${pelaRegional ? 'default' : 'pointer'};${pelaRegional ? 'color:var(--text3)' : ''}">
+      <input type="checkbox" ${marcada ? 'checked' : ''} ${pelaRegional ? 'disabled' : ''} onchange="escopoDMC_marcarCidade('${c.id}', this.checked)">
+      ${c.nome} <span style="color:var(--text3);font-size:11px">${c.regional ? c.regional : 'sem regional'}${pelaRegional ? ' — liberada pela regional' : ''}</span>
+    </label>`;
+  }).join('') || '<span style="font-size:11.5px;color:var(--text3)">Nenhuma cidade encontrada</span>';
+}
+
+async function escopoDMC_salvar() {
+  if (!_escopoDMCEdicao) return;
+  const { uid } = _escopoDMCEdicao;
+  // Cidade avulsa que já está coberta por uma regional marcada não precisa ser gravada
+  // separada — evita que ela "continue liberada" se a regional for desmarcada depois sem
+  // ninguém perceber.
+  const regionais = [..._escopoDMCEdicao.regionais].sort();
+  const cidades = [..._escopoDMCEdicao.cidades].filter(id => {
+    const c = S.cidades.find(c => c.id === id);
+    return c && !(c.regional && regionais.includes(c.regional));
+  }).sort();
+  const escopo = { regionais, cidades, atualizadoEm: new Date().toISOString(), atualizadoPor: S.user?.email || '' };
+  try {
+    const { db, doc, setDoc } = window.FB;
+    await setDoc(doc(db, 'usuarios', uid), { escopoEditorDMC: escopo }, { merge: true });
+    const u = (S.usuarios || []).find(u => u.uid === uid);
+    if (u) u.escopoEditorDMC = escopo;
+    if (uid === S.user?.uid && S.userDoc) { S.userDoc.escopoEditorDMC = escopo; editorDMC_aplicarEscopoUI(); popularSelectEditorDMCCidade(); }
+    _escopoDMCEdicao = null;
+    closeModal('modal-escopo-editor-dmc');
+    renderUsuariosPanel();
+    toast('✓ Escopo salvo — vale para o Supervisor depois que ele recarregar o app');
+  } catch (err) {
+    toast('⚠️ Não consegui salvar o escopo: ' + (err.message || err));
+  }
+}
+
 function popularSelectEditorDMCCidade() {
   const sel = document.getElementById('editor-dmc-cidade');
   if (!sel) return;
   const atual = sel.value;
-  sel.innerHTML = '<option value="">Selecione a cidade...</option>' +
-    [...S.cidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  const ordenadas = [...S.cidades].sort((a,b)=>a.nome.localeCompare(b.nome));
+  const opt = c => `<option value="${c.id}">${c.nome}</option>`;
+  if (S.userDoc?.role === 'admin') {
+    sel.innerHTML = '<option value="">Selecione a cidade...</option>' + ordenadas.map(opt).join('');
+  } else {
+    // Supervisor: cidades do escopo primeiro; as demais ficam disponíveis só para visualizar
+    const editaveis = ordenadas.filter(c => editorDMC_podeEditarCidade(c.id));
+    const outras = ordenadas.filter(c => !editorDMC_podeEditarCidade(c.id));
+    sel.innerHTML = '<option value="">Selecione a cidade...</option>' +
+      (editaveis.length ? '<optgroup label="Pode editar">' + editaveis.map(opt).join('') + '</optgroup>' : '') +
+      (outras.length ? '<optgroup label="Só visualização">' + outras.map(opt).join('') + '</optgroup>' : '');
+  }
   sel.value = atual;
   editorDMC_popularSelectDMC();
+  editorDMC_aplicarEscopoUI();
 }
 
 // Segundo seletor, com os DMCs da cidade escolhida — pra carregar só UM por vez, em
@@ -5107,13 +5303,15 @@ async function editorDMC_carregarExistentes() {
   const cidadeId = document.getElementById('editor-dmc-cidade').value;
   const dmcEspecifico = document.getElementById('editor-dmc-especifico').value;
   if (!cidadeId) { toast('Selecione uma cidade primeiro'); return; }
+  // (Fase 4) Cidade fora do escopo do usuário: carrega só para visualizar (cinza, sem edição)
+  const somenteVisualizacao = !editorDMC_podeEditarCidade(cidadeId);
   const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   if (!camadas.length) { toast('Essa cidade ainda não tem nenhuma camada de DMC cadastrada'); return; }
   const cidadeObj = S.cidades.find(c=>c.id===cidadeId);
 
   // Não recarrega um DMC que já está no editor — evita empilhar duas cópias da mesma
   // forma por engano, e não tem motivo real pra precisar disso.
-  if (dmcEspecifico && editorDMCLayerGroup.getLayers().some(l => l._origemDMC && l._origemDMC.nomeDMC === dmcEspecifico)) {
+  if (dmcEspecifico && [...editorDMCLayerGroup.getLayers(), ...editorDMCReferenciaLayerGroup.getLayers()].some(l => l._origemDMC && l._origemDMC.cidadeId === cidadeId && l._origemDMC.nomeDMC === dmcEspecifico)) {
     toast('"' + dmcEspecifico + '" já está carregado no editor');
     return;
   }
@@ -5153,6 +5351,29 @@ async function editorDMC_carregarExistentes() {
     return;
   }
 
+  if (somenteVisualizacao) {
+    // Referência de divisa: não entra no histórico do "Desfazer", nem na seleção, nem no
+    // Salvar/Baixar — e pmIgnore tira das ferramentas de edição/remoção do Geoman.
+    const jaNaReferencia = new Set(editorDMCReferenciaLayerGroup.getLayers().filter(l => l._origemDMC && l._origemDMC.cidadeId === cidadeId).map(l => l._origemDMC.nomeDMC));
+    let n = 0;
+    const novas = [];
+    candidatos.forEach(({ ft, item, dmcCorrespondente }) => {
+      if (dmcCorrespondente && duplicados.has(dmcCorrespondente.nome)) return;
+      if (dmcCorrespondente && jaNaReferencia.has(dmcCorrespondente.nome)) return;
+      L.geoJSON(ft, { pmIgnore: true, style: { color: '#8A8F98', weight: 2, dashArray: '6 4', fillColor: '#8A8F98', fillOpacity: 0.06 } }).eachLayer(l => {
+        l._origemDMC = dmcCorrespondente ? { camadaId: item.id, nomeDMC: dmcCorrespondente.nome, cidadeId } : null;
+        if (l.bindTooltip) l.bindTooltip((dmcCorrespondente ? dmcTextoHover(dmcCorrespondente.nome, cidadeId) : 'DMC') + '<br><span style="font-size:11px">🔒 só visualização</span>', { sticky: true, direction: 'top', opacity: 0.95 });
+        editorDMCReferenciaLayerGroup.addLayer(l);
+        novas.push(l);
+        n++;
+      });
+    });
+    if (!n) { toast('Nada novo para mostrar — esses DMCs já estão no mapa ou não têm geometria'); return; }
+    mapEditorDMC.fitBounds(L.featureGroup(novas).getBounds(), { maxZoom: 16 });
+    toast('🔒 Carregado só para visualização — esta cidade não está no seu escopo de edição');
+    return;
+  }
+
   editorDMC_salvarHistorico(); // estado de antes de carregar — pra poder desfazer o carregamento
   if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers(); // conteúdo do editor vai mudar — descarta o destaque de sobreposição da checagem anterior
 
@@ -5182,6 +5403,7 @@ async function editorDMC_carregarExistentes() {
 }
 
 function editorDMC_importarKML() {
+  if (!editorDMC_temEscopo()) { toast('🔒 Seu usuário não tem cidades liberadas para edição no Editor de DMC'); return; }
   document.getElementById('editor-dmc-import-input').click();
 }
 
@@ -5211,6 +5433,7 @@ function editorDMC_limpar() {
   editorDMC_salvarHistorico(); // estado de antes de limpar — pra poder trazer de volta
   if (editorDMCLayerGroup) editorDMCLayerGroup.clearLayers();
   if (editorDMCConflitosLayerGroup) editorDMCConflitosLayerGroup.clearLayers();
+  if (editorDMCReferenciaLayerGroup) editorDMCReferenciaLayerGroup.clearLayers();
   editorDMCSelecionadas.clear();
   editorDMC_atualizarContadorSelecao();
   editorDMC_atualizarContadorVertices();
@@ -5446,9 +5669,11 @@ function editorDMC_perguntarVinculo(layer, cidadeSugerida) {
   return new Promise((resolve) => {
     _editorDMCResolverVinculo = resolve;
     const selCidade = document.getElementById('vincular-editor-dmc-cidade');
+    // (Fase 4) Só oferece cidades em que o usuário pode editar
+    const cidadesPermitidas = [...S.cidades].filter(c => editorDMC_podeEditarCidade(c.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
     selCidade.innerHTML = '<option value="">Selecione...</option>' +
-      [...S.cidades].sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
-    selCidade.value = cidadeSugerida || '';
+      cidadesPermitidas.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+    selCidade.value = cidadesPermitidas.some(c => c.id === cidadeSugerida) ? cidadeSugerida : '';
     document.getElementById('vincular-editor-dmc-novo-nome').value = '';
     editorDMC_atualizarSelectVinculo();
     // Deixa a forma em questão destacada no mapa, pra ficar claro qual polígono está
@@ -5519,6 +5744,7 @@ async function editorDMC_resolverVinculo(modo) {
 // veio carregado só passa por uma confirmação simples, sem perguntar de novo o óbvio.
 // ================================================================
 async function editorDMC_salvarNoApp() {
+  if (!editorDMC_temEscopo()) { toast('🔒 Seu usuário não tem cidades liberadas para edição no Editor de DMC — peça ao Administrador'); return; }
   if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) { toast('Nada desenhado pra salvar'); return; }
   const layers = editorDMCLayerGroup.getLayers().filter(l => l.getLatLngs);
   if (!layers.length) { toast('Nenhum polígono/linha válido pra salvar'); return; }
@@ -5531,6 +5757,14 @@ async function editorDMC_salvarNoApp() {
     const vinculo = await editorDMC_perguntarVinculo(layer, cidadeAtual);
     if (!vinculo) { toast('Salvamento cancelado'); return; }
     layer._origemDMC = vinculo;
+  }
+
+  // (Fase 4) Rede de segurança: nada de cidade fora do escopo é gravado
+  const foraDoEscopo = [...new Set(layers.map(l => l._origemDMC.cidadeId).filter(cid => !editorDMC_podeEditarCidade(cid)))];
+  if (foraDoEscopo.length) {
+    const nomes = foraDoEscopo.map(cid => (S.cidades.find(c => c.id === cid) || {}).nome || cid).join(', ');
+    toast('🔒 Salvamento cancelado — fora do seu escopo de edição: ' + nomes);
+    return;
   }
 
   // Checagem de sobreposição (Fase 3) — roda sozinha antes de salvar, só como aviso: não

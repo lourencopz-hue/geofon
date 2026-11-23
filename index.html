@@ -1107,6 +1107,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               </button>
               <p id="status-migracao-setores" style="font-size:11.5px;color:var(--text2);margin-top:8px"></p>
             </div>
+            <!-- Diagnóstico do incidente da migração (2026-11-23) — SÓ LEITURA, não grava nada.
+                 Temporário: remover junto com o card quando o incidente estiver resolvido. -->
+            <div class="field" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+              <label style="color:var(--purple)"><i class="ti ti-stethoscope"></i> Diagnóstico do incidente (só leitura)</label>
+              <p style="font-size:11.5px;color:var(--text2);margin-bottom:10px">
+                Lê o banco e lista o que a falha de 18/09 pode ter afetado: vazamentos substituídos, cidade SID duplicada, DMCs sem dados, telefones fictícios, tipos e serviços. Não altera nenhum dado.
+              </p>
+              <button class="btn" onclick="rodarDiagnosticoIncidente()"><i class="ti ti-search"></i> Rodar diagnóstico</button>
+              <button class="btn" id="btn-copiar-diagnostico" style="display:none" onclick="copiarDiagnosticoIncidente()"><i class="ti ti-copy"></i> Copiar relatório</button>
+              <pre id="saida-diagnostico" style="display:none;white-space:pre-wrap;font-size:11px;max-height:480px;overflow:auto;background:var(--bg2,#f4f4f4);padding:10px;border-radius:6px;margin-top:10px"></pre>
+            </div>
           </div>
         </div>
       </div>
@@ -2120,6 +2131,155 @@ async function verificarBotaoMigracaoSetores() {
 // documentos setores/{SEPES,SEPEN,SEPEM,SEPEO} (feature flags, começam sem nenhum
 // recurso habilitado). Idempotente: se já rodou uma vez (meta/migracaoSetores.concluida),
 // recusa rodar de novo.
+// ================================================================
+// DIAGNÓSTICO DO INCIDENTE DA MIGRAÇÃO (2026-11-23) — SÓ LEITURA
+// ================================================================
+// Lê TODAS as coleções sem filtro de setor (inclui cancelados/removidos) e monta um
+// relatório em texto. Nenhuma gravação. Temporário — remover quando o incidente fechar.
+const WA_FICTICIOS = /554899999\d{4}/;
+const SEED_TIPOS = ['tipo_ramal','tipo_rede','tipo_adutora','tipo_subadut','tipo_conexao','tipo_hidrante','tipo_valvula','tipo_cavalete'];
+const SEED_SERVICOS = ['srv_5110','srv_5811'];
+function _dataTs(t) {
+  if (!t) return null;
+  if (t.toDate) return t.toDate();
+  if (typeof t === 'number') return new Date(t);
+  if (t.seconds) return new Date(t.seconds * 1000);
+  return null;
+}
+function _fmt(d) { return d ? d.toLocaleString('pt-BR') : '—'; }
+async function rodarDiagnosticoIncidente() {
+  if (S.user?.email !== EMAIL_DIPEO) return;
+  const out = document.getElementById('saida-diagnostico');
+  out.style.display = ''; out.textContent = 'Lendo o banco... (pode levar alguns segundos)';
+  const { db, doc, getDoc, getDocs, collection } = window.FB;
+  const L = [];
+  try {
+    const [mig, seqSnap, cidSnap, eqSnap, leakSnap, campSnap, tipoSnap, srvSnap] = await Promise.all([
+      getDoc(doc(db,'meta','migracaoSetores')), getDoc(doc(db,'meta','sequencias')),
+      getDocs(collection(db,'cidades')), getDocs(collection(db,'equipes')),
+      getDocs(collection(db,'leaks')), getDocs(collection(db,'campanhas')),
+      getDocs(collection(db,'tiposVazamento')), getDocs(collection(db,'servicos'))
+    ]);
+    const corte = _dataTs(mig.exists() ? mig.data().executadaEm : null) || new Date('2026-09-19T03:00:00Z');
+    L.push('DIAGNÓSTICO DO INCIDENTE — gerado em ' + _fmt(new Date()));
+    L.push('Data de corte (migração executada): ' + _fmt(corte));
+    L.push('');
+
+    // ---------- 1. Vazamentos ----------
+    const leaks = leakSnap.docs.map(d => ({ _docId: d.id, ...d.data() }));
+    L.push('=== 1. VAZAMENTOS (' + leaks.length + ' documentos no banco, incluindo cancelados) ===');
+    const porCidade = {};
+    for (const l of leaks) {
+      const m = /-VAZ(\d+)$/.exec(l._docId);
+      const n = m ? parseInt(m[1],10) : null;
+      const c = l.cidade || '?';
+      (porCidade[c] = porCidade[c] || []).push({ ...l, _n: n, _cri: _dataTs(l.criadoEm) });
+    }
+    const seq = seqSnap.exists() ? seqSnap.data() : {};
+    let totalProvaveis = 0, totalRepetidos = 0;
+    for (const c of Object.keys(porCidade).sort()) {
+      const lista = porCidade[c];
+      const antes = lista.filter(l => !l._cri || l._cri < corte);
+      const depois = lista.filter(l => l._cri && l._cri >= corte);
+      const maxAntes = Math.max(0, ...antes.map(l => l._n || 0));
+      const maxTotal = Math.max(0, ...lista.map(l => l._n || 0));
+      L.push('');
+      L.push('Cidade ' + c + ': ' + antes.length + ' antes do corte, ' + depois.length + ' depois | maior nº antes: VAZ' + maxAntes + ' | maior nº hoje: VAZ' + maxTotal + ' | contador no banco: ' + (seq[c] ?? '(ausente)'));
+      for (const l of depois.filter(l => l._n && l._n <= maxAntes).sort((a,b)=>a._n-b._n)) {
+        const outro = antes.find(a => a._n === l._n);
+        if (outro) {
+          totalRepetidos++;
+          L.push('   • ' + l._docId + ' (criado ' + _fmt(l._cri) + ') reusou o nº ' + l._n + ', mas o antigo com esse nº é de outra equipe (' + outro._docId + ') e ainda existe — sem perda.');
+        } else {
+          totalProvaveis++;
+          L.push('   ⚠ ' + l._docId + ' (criado ' + _fmt(l._cri) + ', DMC ' + (l.dmc||'—') + ') — PROVAVELMENTE SUBSTITUIU um vazamento antigo com o mesmo número.');
+        }
+      }
+    }
+    L.push('');
+    L.push('Resumo vazamentos: ' + totalProvaveis + ' provável(is) substituição(ões); ' + totalRepetidos + ' número(s) repetido(s) sem perda.');
+    const semSetor = leaks.filter(l => !l.setor).length;
+    if (semSetor) L.push('Atenção: ' + semSetor + ' vazamento(s) sem campo setor (não aparecem no app).');
+    L.push('');
+
+    // ---------- 2. Cidades ----------
+    const cidades = cidSnap.docs.map(d => ({ _docId: d.id, ...d.data() }));
+    L.push('=== 2. CIDADES (' + cidades.length + ' no banco) ===');
+    for (const c of cidades.sort((a,b)=>a._docId.localeCompare(b._docId))) {
+      const was = [].concat(c.wa || []);
+      const fict = was.filter(w => WA_FICTICIOS.test(String(w)));
+      const flags = [];
+      if (c.removida) flags.push('removida');
+      if (!c.setor) flags.push('SEM SETOR');
+      if (fict.length) flags.push('WHATSAPP FICTÍCIO: ' + fict.join(', '));
+      L.push('• ' + c._docId + ' — ' + (c.nome||'?') + (flags.length ? '  [' + flags.join(' | ') + ']' : ''));
+      if (['CIA','ICA','FQA','SID'].includes(c._docId)) {
+        for (const d0 of (c.dmcs || [])) {
+          const d = normalizarDMC(d0);
+          const falta = ['sigla','situacao','ligacoes','extensaoRede','codigoGis'].filter(k => d[k] === null || d[k] === '' || d[k] === undefined);
+          L.push('     DMC "' + d.nome + '"' + (falta.length ? ' — sem: ' + falta.join(', ') : ' — completo'));
+        }
+      }
+    }
+    const sid = cidades.find(c => c._docId === 'SID');
+    const srs = cidades.find(c => c._docId === 'SRS');
+    if (sid && !sid.removida && srs) {
+      L.push('⚠ SID está ativa ao mesmo tempo que SRS (duplicada).');
+      const lSid = leaks.filter(l => l.cidade === 'SID');
+      const cSid = campSnap.docs.map(d=>d.data()).filter(x => x.cidade === 'SID');
+      L.push('   Vazamentos com cidade SID: ' + lSid.length + (lSid.length ? ' → ' + lSid.map(l=>l._docId).join(', ') : ''));
+      L.push('   Campanhas com cidade SID: ' + cSid.length + (cSid.length ? ' → ' + cSid.map(x=>x.id + ' (' + _fmt(_dataTs(x.iniciadoEm)) + ')').join(', ') : ''));
+    }
+    L.push('');
+
+    // ---------- 3. Equipes ----------
+    L.push('=== 3. EQUIPES (' + eqSnap.size + ' no banco) ===');
+    for (const d of eqSnap.docs.sort((a,b)=>a.id.localeCompare(b.id))) {
+      const e = d.data();
+      const flags = [];
+      if (e.removida) flags.push('removida');
+      if (WA_FICTICIOS.test(String(e.wa||''))) flags.push('WHATSAPP FICTÍCIO: ' + e.wa);
+      L.push('• ' + d.id + ' — ' + (e.nome||'?') + ' (cidade ' + (e.cidade||'—') + ')' + (flags.length ? '  [' + flags.join(' | ') + ']' : ''));
+    }
+    L.push('');
+
+    // ---------- 4. Tipos e serviços ----------
+    L.push('=== 4. TIPOS DE VAZAMENTO (' + tipoSnap.size + ') ===');
+    for (const d of tipoSnap.docs) {
+      const t = d.data();
+      L.push('• ' + d.id + ' — ' + (t.nome||'?') + ' | serviço padrão: ' + (t.servicoPadrao||'—') + (t.removido ? ' [removido]' : '') + (SEED_TIPOS.includes(d.id) ? ' [lista de exemplo do código]' : ' [cadastrado por vocês]'));
+    }
+    L.push('');
+    L.push('=== 5. CÓDIGOS DE SERVIÇO (' + srvSnap.size + ') ===');
+    for (const d of srvSnap.docs) {
+      const v = d.data();
+      L.push('• ' + d.id + ' — ' + (v.codigo||'?') + ' ' + (v.descricao||'') + (v.removido ? ' [removido]' : '') + (SEED_SERVICOS.includes(d.id) ? ' [lista de exemplo do código]' : ' [cadastrado por vocês]'));
+    }
+    // Serviços usados nos vazamentos que não existem mais na lista atual (pista de serviço perdido)
+    const textosServ = new Set(srvSnap.docs.map(d => { const v=d.data(); return (v.codigo||'') + ' - ' + (v.descricao||''); }));
+    const usados = {};
+    for (const l of leaks) if (l.servico && !textosServ.has(l.servico)) usados[l.servico] = (usados[l.servico]||0) + 1;
+    const tiposAtuais = new Set(tipoSnap.docs.map(d => d.data().nome));
+    const tiposUsados = {};
+    for (const l of leaks) if (l.tipo && !tiposAtuais.has(l.tipo)) tiposUsados[l.tipo] = (tiposUsados[l.tipo]||0) + 1;
+    if (Object.keys(usados).length || Object.keys(tiposUsados).length) {
+      L.push('');
+      L.push('Usados em vazamentos mas AUSENTES das listas atuais (provavelmente perdidos):');
+      for (const [k,v] of Object.entries(tiposUsados)) L.push('   tipo "' + k + '" — ' + v + ' vazamento(s)');
+      for (const [k,v] of Object.entries(usados)) L.push('   serviço "' + k + '" — ' + v + ' vazamento(s)');
+    }
+    out.textContent = L.join('\n');
+    document.getElementById('btn-copiar-diagnostico').style.display = '';
+  } catch(e) {
+    console.error(e);
+    out.textContent = 'Erro ao rodar o diagnóstico: ' + (e.message || e);
+  }
+}
+function copiarDiagnosticoIncidente() {
+  const txt = document.getElementById('saida-diagnostico').textContent;
+  navigator.clipboard.writeText(txt).then(() => toast('Relatório copiado'), () => toast('Não consegui copiar — selecione o texto manualmente'));
+}
+
 async function rodarMigracaoMultiSetor() {
   if (S.user?.email !== EMAIL_DIPEO) return;
   const btn = document.getElementById('btn-migrar-setores');

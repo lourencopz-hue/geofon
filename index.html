@@ -809,6 +809,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               <option value="com">Com rede cadastrada</option>
               <option value="sem">Sem rede cadastrada</option>
             </select>
+            <button class="btn sm" id="btn-calc-ext-redes" style="display:none" onclick="calcularExtensaoRedesAntigas()" title="Abre cada rede que ainda não tem a extensão gravada, soma os trechos e grava o total">
+              <i class="ti ti-ruler-measure"></i> <span>Calcular extensão das redes</span>
+            </button>
           </div>
           <div id="redes-mun-tabela"></div>
           <input type="file" id="up-rede-mun" accept=".kml,.geojson,.json,.dxf" style="display:none" onchange="handleLayerUpload(this,'redes')">
@@ -1704,6 +1707,23 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <button class="btn primary btn-block" id="dxf-btn-importar" onclick="confirmarImportacaoDXF()">
       <i class="ti ti-check"></i> Importar rede
     </button>
+  </div>
+</div>
+
+<!-- Modal: ver a rede de um município (Gestão → Redes por município → Ver) -->
+<div class="modal-overlay" id="modal-ver-rede">
+  <div class="modal" style="max-width:760px;width:94vw">
+    <div class="modal-header">
+      <h3><i class="ti ti-line-dashed" style="color:var(--teal)"></i> <span id="ver-rede-titulo">Rede</span></h3>
+      <button class="modal-close" onclick="closeModal('modal-ver-rede')"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="ver-rede-info" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
+    <div id="ver-rede-map" style="height:380px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px"></div>
+    <div id="ver-rede-resumo" style="font-size:12px;margin-bottom:12px;max-height:200px;overflow-y:auto"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      <button class="btn" onclick="baixarRedeCidadeKML(S._verRedeCidade)"><i class="ti ti-download"></i> Baixar KML</button>
+      <button class="btn primary" onclick="irParaMapaRedePopup()"><i class="ti ti-map-2"></i> Ir para o mapa</button>
+    </div>
   </div>
 </div>
 
@@ -9118,46 +9138,86 @@ function baixarRedeCidadeKML(cidadeId) {
 // ---------------- Tela Gestão → Redes por município ----------------
 S._redesMunBusca = '';
 S._redesMunFiltro = '';
+S._redesMunOrdem = { col: 'municipio', dir: 1 };
+// Dados de uma linha da tabela (um município) — usados tanto pra desenhar quanto pra ordenar.
+function dadosRedeMunicipio(c) {
+  const camadas = (S.leafletLayers.redes || []).filter(i => i.cidade === c.id && !i.removida);
+  const principal = infoRedeCidade(c.id);
+  let extM = null;
+  if (camadas.length && camadas.every(i => i.extensaoM != null || i._geojson)) {
+    extM = camadas.reduce((s, i) => s + (i.extensaoM != null ? i.extensaoM : extensaoGeojsonM(i._geojson)), 0);
+  }
+  const pend = camadas.some(i => !i.validada);
+  const origem = camadas.length ? [...new Set(camadas.map(i => (i.origem || (/\.dxf$/i.test(i.nome) ? 'dxf' : /\.kml$/i.test(i.nome) ? 'kml' : 'arquivo')).toUpperCase()))].join(', ') : '';
+  return {
+    c, camadas, principal, extM, pend, origem,
+    dataMs: principal ? (msDoCampo(principal.ultimaAtualizacao) || msDoCampo(principal.criadoEm) || 0) : null,
+    situacaoRank: !camadas.length ? 0 : (pend ? 1 : 2)
+  };
+}
+function ordenarRedesMunicipios(col) {
+  const o = S._redesMunOrdem;
+  if (o.col === col) o.dir = -o.dir;
+  else { o.col = col; o.dir = (col === 'extensao' || col === 'data' || col === 'situacao') ? -1 : 1; } // números: maior primeiro
+  renderRedesMunicipios();
+}
 function renderRedesMunicipios() {
   const el = document.getElementById('redes-mun-tabela');
   if (!el) return;
   const role = S.userDoc?.role;
   const ehSuperior = role === 'admin' || role === 'supervisor';
   const busca = textoBusca(S._redesMunBusca);
-  const linhas = [...S.cidades].sort((a,b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(c => {
-    const camadas = (S.leafletLayers.redes || []).filter(i => i.cidade === c.id && !i.removida);
-    return { c, camadas, principal: infoRedeCidade(c.id) };
-  });
+  const linhas = S.cidades.map(dadosRedeMunicipio);
   const comRede = linhas.filter(l => l.camadas.length).length;
+  const semExtensao = (S.leafletLayers.redes || []).filter(i => !i.removida && i.extensaoM == null).length;
+  const totalKm = linhas.reduce((s, l) => s + (l.extM || 0), 0);
   const resumoEl = document.getElementById('redes-mun-resumo');
-  if (resumoEl) resumoEl.innerHTML = '<b>' + comRede + '</b> de <b>' + linhas.length + '</b> municípios com rede cadastrada.';
+  if (resumoEl) resumoEl.innerHTML = '<b>' + comRede + '</b> de <b>' + linhas.length + '</b> municípios com rede cadastrada' +
+    (totalKm ? ' · <b>' + formatarExtensao(totalKm) + '</b> de rede somada' + (semExtensao ? ' (sem contar ' + semExtensao + ' arquivo(s) ainda sem extensão calculada)' : '') : '') + '.';
+  const btnCalc = document.getElementById('btn-calc-ext-redes');
+  if (btnCalc && !S._calculandoExtensoes) btnCalc.style.display = (ehSuperior && semExtensao) ? '' : 'none';
+
   const filtradas = linhas.filter(l => {
     if (S._redesMunFiltro === 'com' && !l.camadas.length) return false;
     if (S._redesMunFiltro === 'sem' && l.camadas.length) return false;
     if (busca && !textoBusca(l.c.nome + ' ' + l.c.prefixo + ' ' + (l.c.regional || '')).includes(busca)) return false;
     return true;
   });
+  const { col, dir } = S._redesMunOrdem;
+  const chave = {
+    municipio: l => textoBusca(l.c.nome), regional: l => textoBusca(l.c.regional || ''),
+    situacao: l => l.situacaoRank, data: l => l.dataMs, extensao: l => l.extM, origem: l => l.origem
+  }[col] || (l => textoBusca(l.c.nome));
+  filtradas.sort((a, b) => {
+    const va = chave(a), vb = chave(b);
+    const vaz = va == null || va === '', vbz = vb == null || vb === '';
+    if (vaz && vbz) return textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome));
+    if (vaz) return 1; if (vbz) return -1; // vazios sempre no fim, em qualquer sentido
+    const r = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR');
+    return r * dir || textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome));
+  });
   if (!filtradas.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhum município encontrado.</p>'; return; }
+  const th = (id, rotulo, alinhaDireita) => {
+    const ativo = col === id;
+    const seta = ativo ? (dir === 1 ? ' ▲' : ' ▼') : '';
+    return '<th onclick="ordenarRedesMunicipios(\'' + id + '\')" title="Ordenar por ' + rotulo.toLowerCase() + '" style="cursor:pointer;user-select:none;white-space:nowrap' + (alinhaDireita ? ';text-align:right' : '') + (ativo ? ';color:var(--blue)' : '') + '">' + rotulo + seta + '</th>';
+  };
   el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>' +
-    '<th>Município</th><th>Regional</th><th>Rede</th><th>Última atualização</th><th style="text-align:right">Extensão</th><th>Origem</th><th></th>' +
-    '</tr></thead><tbody>' + filtradas.map(({ c, camadas, principal }) => {
-      let situacao, dataTxt = '—', extTxt = '—', origemTxt = '—';
+    th('municipio', 'Município') + th('regional', 'Regional') + th('situacao', 'Rede') + th('data', 'Última atualização') + th('extensao', 'Extensão', true) + th('origem', 'Origem') + '<th></th>' +
+    '</tr></thead><tbody>' + filtradas.map(({ c, camadas, principal, extM, pend, origem }) => {
+      let situacao, dataTxt = '—';
       if (!camadas.length) {
         situacao = '<span class="badge" style="background:var(--bg2,#f1f1f1);color:var(--text3)">Sem rede</span>';
       } else {
-        const pend = camadas.some(i => !i.validada);
         situacao = pend
           ? '<span class="badge media">Pendente de validação</span>'
           : '<span class="badge" style="background:var(--teal-l);color:var(--teal)">Cadastrada</span>';
         if (camadas.length > 1) situacao += ' <small style="color:var(--text3)">(' + camadas.length + ' arquivos)</small>';
         dataTxt = escHtml(infoUploadCamada(principal) || '—');
-        const comExt = camadas.filter(i => i.extensaoM != null || i._geojson);
-        if (comExt.length === camadas.length) extTxt = formatarExtensao(camadas.reduce((s, i) => s + (i.extensaoM != null ? i.extensaoM : extensaoGeojsonM(i._geojson)), 0));
-        origemTxt = [...new Set(camadas.map(i => (i.origem || (/\.dxf$/i.test(i.nome) ? 'dxf' : /\.kml$/i.test(i.nome) ? 'kml' : 'arquivo')).toUpperCase()))].join(', ');
       }
       const acoes = [];
       if (camadas.length) {
-        acoes.push('<button class="btn sm" onclick="verRedeNoMapa(\'' + c.id + '\')" title="Mostrar no mapa"><i class="ti ti-map-search"></i>Ver</button>');
+        acoes.push('<button class="btn sm" onclick="abrirPopupRede(\'' + c.id + '\')" title="Ver a rede num mapa rápido"><i class="ti ti-eye"></i>Ver</button>');
         acoes.push('<button class="btn sm" onclick="baixarRedeCidadeKML(\'' + c.id + '\')" title="Baixar KML com as cores por diâmetro"><i class="ti ti-download"></i>KML</button>');
       }
       if (ehSuperior) acoes.push('<button class="btn sm' + (camadas.length ? '' : ' primary') + '" onclick="atualizarRedeMunicipio(\'' + c.id + '\')" title="Subir KML, GeoJSON ou DXF para este município"><i class="ti ti-upload"></i>' + (camadas.length ? 'Atualizar' : 'Cadastrar') + '</button>');
@@ -9166,11 +9226,112 @@ function renderRedesMunicipios() {
         '<td>' + escHtml(c.regional || '—') + '</td>' +
         '<td style="white-space:nowrap">' + situacao + '</td>' +
         '<td style="white-space:nowrap">' + dataTxt + '</td>' +
-        '<td style="text-align:right;white-space:nowrap">' + extTxt + '</td>' +
-        '<td>' + origemTxt + '</td>' +
+        '<td style="text-align:right;white-space:nowrap">' + (camadas.length ? formatarExtensao(extM) : '—') + '</td>' +
+        '<td>' + (origem || '—') + '</td>' +
         '<td><div style="display:flex;gap:4px;justify-content:flex-end">' + acoes.join('') + '</div></td>' +
       '</tr>';
     }).join('') + '</tbody></table></div>';
+}
+
+// Grava a extensão total (m) de uma camada de rede que ainda não tem esse dado — só
+// admin/supervisor (a regra do Firestore não deixa técnico alterar camada validada).
+async function gravarExtensaoCamadaRede(item) {
+  const role = S.userDoc?.role;
+  if (!(role === 'admin' || role === 'supervisor')) return false;
+  if (!item._geojson) await garantirGeometriaCarregada(item);
+  if (!item._geojson) return false;
+  const ext = Math.round(extensaoGeojsonM(item._geojson));
+  const { db, doc, setDoc } = window.FB;
+  await setDoc(doc(db, 'camadas', item.id), { extensaoM: ext }, { merge: true });
+  item.extensaoM = ext;
+  return true;
+}
+async function calcularExtensaoRedesAntigas() {
+  const pendentes = (S.leafletLayers.redes || []).filter(i => !i.removida && i.extensaoM == null);
+  if (!pendentes.length) { toast('Todas as redes já têm a extensão calculada'); return; }
+  if (!confirm('Calcular e gravar a extensão de ' + pendentes.length + ' arquivo(s) de rede? Cada rede é baixada uma vez — pode levar alguns segundos por município.')) return;
+  const btn = document.getElementById('btn-calc-ext-redes');
+  const span = btn && btn.querySelector('span');
+  S._calculandoExtensoes = true;
+  if (btn) btn.disabled = true;
+  let ok = 0, falhas = 0;
+  for (let k = 0; k < pendentes.length; k++) {
+    if (span) span.textContent = 'Calculando ' + (k + 1) + ' de ' + pendentes.length + '...';
+    try { if (await gravarExtensaoCamadaRede(pendentes[k])) ok++; else falhas++; }
+    catch(err) { falhas++; console.warn('Erro ao calcular extensão de ' + pendentes[k].id + ':', err); }
+  }
+  S._calculandoExtensoes = false;
+  if (btn) btn.disabled = false;
+  if (span) span.textContent = 'Calcular extensão das redes';
+  renderRedesMunicipios();
+  toast(falhas ? '⚠️ ' + ok + ' calculada(s), ' + falhas + ' com erro — tente de novo depois' : '✓ Extensão calculada para ' + ok + ' arquivo(s) de rede');
+}
+
+// Pop-up "Ver" — mostra a rede num mapa rápido, sem sair da Gestão. Dali dá pra baixar o
+// KML ou ir pro mapa principal com a rede ligada.
+S._verRedeCidade = '';
+async function abrirPopupRede(cidadeId) {
+  const itens = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!itens.length) return;
+  const c = S.cidades.find(c => c.id === cidadeId);
+  const principal = infoRedeCidade(cidadeId);
+  S._verRedeCidade = cidadeId;
+  document.getElementById('ver-rede-titulo').textContent = rotuloRede(principal).replace(/ · \d+$/, '');
+  const info = infoUploadCamada(principal);
+  document.getElementById('ver-rede-info').textContent = (info ? 'Atualizada em ' + info : 'Rede cadastrada') + (itens.length > 1 ? ' · ' + itens.length + ' arquivos' : '');
+  document.getElementById('ver-rede-resumo').innerHTML = '<span style="color:var(--text3)">Carregando a rede...</span>';
+  S._aoFecharModal['modal-ver-rede'] = () => { if (S._verRedeMapa) { try { S._verRedeMapa.remove(); } catch(e) {} S._verRedeMapa = null; } };
+  openModal('modal-ver-rede');
+  await new Promise(r => setTimeout(r, 60)); // mapa só pode nascer com o modal visível
+  if (S._verRedeCidade !== cidadeId || !document.getElementById('modal-ver-rede').classList.contains('open')) return;
+  if (S._verRedeMapa) { try { S._verRedeMapa.remove(); } catch(e) {} }
+  const mapa = L.map('ver-rede-map', { zoomControl: true });
+  addBaseLayerControl(mapa);
+  S._verRedeMapa = mapa;
+  if (c && c.coords) mapa.setView(c.coords, 13);
+
+  for (const it of itens) await garantirGeometriaCarregada(it);
+  if (S._verRedeMapa !== mapa) return; // fechado/trocado enquanto carregava
+  const features = itens.flatMap(it => (it._geojson && it._geojson.features) || []);
+  if (!features.length) { document.getElementById('ver-rede-resumo').innerHTML = '<span style="color:var(--red)">Não consegui carregar a geometria desta rede.</span>'; return; }
+  const lg = L.geoJSON({ type: 'FeatureCollection', features }, {
+    style: ft => ({ color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color, weight: 2.5, opacity: 0.95 }),
+    pointToLayer: (ft, ll) => L.circleMarker(ll, { radius: 4, color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color }),
+    onEachFeature: (ft, layer) => {
+      const p = ft.properties || {};
+      const compM = p.comprimento_m != null ? Number(p.comprimento_m) : comprimentoFeatureM(ft);
+      layer.bindPopup('<b>' + (p._diametroMm ? 'Rede DN ' + p._diametroMm + ' mm' : escHtml(p.name || 'Trecho')) + '</b>' +
+        (compM ? '<br><small>Trecho: ' + compM.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' m</small>' : ''));
+    }
+  }).addTo(mapa);
+  try { mapa.fitBounds(lg.getBounds(), { padding: [15, 15] }); } catch(e) {}
+
+  // Resumo por diâmetro
+  const porDN = {};
+  features.forEach(ft => {
+    const dn = (ft.properties || {})._diametroMm;
+    const k = dn ? String(dn) : '—';
+    porDN[k] = porDN[k] || { dn: dn || null, n: 0, m: 0, cor: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color };
+    porDN[k].n++; porDN[k].m += comprimentoFeatureM(ft);
+  });
+  const linhas = Object.values(porDN).sort((a, b) => (a.dn ?? 1e9) - (b.dn ?? 1e9));
+  const totalM = linhas.reduce((s, l) => s + l.m, 0);
+  document.getElementById('ver-rede-resumo').innerHTML =
+    '<table class="data-table" style="width:100%"><thead><tr><th>Diâmetro</th><th style="text-align:right">Trechos</th><th style="text-align:right">Extensão</th></tr></thead><tbody>' +
+    linhas.map(l => '<tr><td><span style="display:inline-block;width:14px;height:4px;border-radius:2px;background:' + l.cor + ';vertical-align:middle;margin-right:6px"></span>' +
+      (l.dn ? 'DN ' + l.dn : 'Sem diâmetro identificado') + '</td><td style="text-align:right">' + l.n + '</td><td style="text-align:right">' + formatarExtensao(l.m) + '</td></tr>').join('') +
+    '<tr><th>Total</th><th style="text-align:right">' + features.length + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>';
+
+  // Aproveita que a geometria já foi baixada e grava a extensão de quem ainda não tem.
+  const semExt = itens.filter(i => i.extensaoM == null);
+  if (semExt.length) {
+    Promise.all(semExt.map(i => gravarExtensaoCamadaRede(i).catch(() => false))).then(() => renderRedesMunicipios());
+  }
+}
+function irParaMapaRedePopup() {
+  const cid = S._verRedeCidade;
+  closeModal('modal-ver-rede');
+  if (cid) verRedeNoMapa(cid);
 }
 function atualizarRedeMunicipio(cidadeId) {
   S._uploadRedeCidadeForcada = cidadeId;

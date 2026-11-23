@@ -648,15 +648,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <div class="upload-zone" onclick="document.getElementById('up-redes').click()">
             <i class="ti ti-file-upload"></i>
             <strong>Redes de distribuição</strong>
-            <p>KML ou GeoJSON (arquivos DWG devem ser convertidos antes)</p>
+            <p>KML, GeoJSON ou DXF do CAD</p>
           </div>
-          <input type="file" id="up-redes" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
+          <input type="file" id="up-redes" accept=".kml,.geojson,.json,.dxf" style="display:none" onchange="handleLayerUpload(this,'redes')">
           <div id="redes-layer-list" style="margin-top:10px"></div>
         </div>
-        <div class="section-title" style="margin-top:14px">Como converter DWG para KML</div>
+        <div class="section-title" style="margin-top:14px">Rede em DWG (AutoCAD)</div>
         <div class="card" style="background:var(--blue-l)">
           <p style="font-size:12px;color:var(--blue-d);line-height:1.6">
-            <strong>Opção gratuita:</strong> Acesse <strong>mygeodata.cloud/converter</strong>, faça upload do .DWG e baixe como .GeoJSON. Depois carregue aqui.
+            No AutoCAD, use <strong>Salvar como → DXF</strong> e carregue o .DXF aqui. O app converte as coordenadas (SAD69 ou SIRGAS 2000) e usa o nome de cada layer (ex.: T_50) como diâmetro.
           </p>
         </div>
       </div>
@@ -726,6 +726,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <div class="config-nav-item" data-gestao-section="camadas" onclick="mostrarSecaoGestao('camadas')">
           <i class="ti ti-map-2"></i> <span>Carregar camadas</span>
         </div>
+        <div class="config-nav-item" data-gestao-section="redes" onclick="mostrarSecaoGestao('redes')">
+          <i class="ti ti-line-dashed"></i> <span>Redes por município</span>
+        </div>
         <div class="config-nav-item" data-gestao-section="pontos" onclick="mostrarSecaoGestao('pontos')">
           <i class="ti ti-list-details"></i> <span>Pontos registrados</span>
         </div>
@@ -778,11 +781,35 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             <div class="upload-zone" style="flex:1;min-width:200px" onclick="document.getElementById('up-pc-redes').click()">
               <i class="ti ti-line-dashed"></i>
               <strong>Subir rede</strong>
-              <p>Arquivo com a tubulação (linhas)</p>
+              <p>Tubulação (linhas) — KML, GeoJSON ou DXF</p>
             </div>
           </div>
           <input type="file" id="up-pc-dmc" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'dmc')">
-          <input type="file" id="up-pc-redes" accept=".kml,.geojson,.json" multiple style="display:none" onchange="handleLayerUpload(this,'redes')">
+          <input type="file" id="up-pc-redes" accept=".kml,.geojson,.json,.dxf" multiple style="display:none" onchange="handleLayerUpload(this,'redes')">
+        </div>
+
+        <div id="gestaosec-redes" class="config-section-panel hidden" style="max-width:none">
+          <div class="section-title" style="margin-bottom:6px">Redes por município</div>
+          <div id="redes-mun-resumo" style="font-size:12px;color:var(--text2);margin-bottom:10px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            <div style="position:relative;flex:1;min-width:220px;max-width:340px">
+              <i class="ti ti-search" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px"></i>
+              <input type="search" id="redes-mun-busca" placeholder="Buscar município..." autocomplete="off"
+                oninput="S._redesMunBusca=this.value;renderRedesMunicipios()"
+                style="width:100%;box-sizing:border-box;padding:8px 10px 8px 30px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+            </div>
+            <select id="redes-mun-filtro" onchange="S._redesMunFiltro=this.value;renderRedesMunicipios()"
+              style="padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+              <option value="">Todos os municípios</option>
+              <option value="com">Com rede cadastrada</option>
+              <option value="sem">Sem rede cadastrada</option>
+            </select>
+          </div>
+          <div id="redes-mun-tabela"></div>
+          <input type="file" id="up-rede-mun" accept=".kml,.geojson,.json,.dxf" style="display:none" onchange="handleLayerUpload(this,'redes')">
+          <p style="font-size:10.5px;color:var(--text3);margin-top:8px;line-height:1.5">
+            "Atualizar" sobe um arquivo novo (KML, GeoJSON ou DXF) já vinculado ao município da linha. O KML baixado usa as cores definidas em Configurações → Cores por diâmetro.
+          </p>
         </div>
 
         <div id="gestaosec-pontos" class="config-section-panel hidden" style="max-width:none">
@@ -1638,6 +1665,58 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
 </div>
 
+<!-- Modal: importar rede a partir de um DXF do CAD -->
+<div class="modal-overlay" id="modal-dxf">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h3><i class="ti ti-vector" style="color:var(--teal)"></i> Importar rede do CAD (DXF)</h3>
+      <button class="modal-close" onclick="cancelarImportacaoDXF()"><i class="ti ti-x"></i></button>
+    </div>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Arquivo: <strong id="dxf-arquivo-nome">—</strong></p>
+    <div class="field">
+      <label>Sistema de coordenadas do desenho</label>
+      <select id="dxf-crs" onchange="atualizarPreviaDXF()">
+        <option value="EPSG:29192">SAD69 / UTM 22S (EPSG:29192)</option>
+        <option value="EPSG:31982">SIRGAS 2000 / UTM 22S (EPSG:31982)</option>
+        <option value="EPSG:29191">SAD69 / UTM 21S (EPSG:29191)</option>
+        <option value="EPSG:31981">SIRGAS 2000 / UTM 21S (EPSG:31981)</option>
+      </select>
+      <div id="dxf-crs-arquivo" style="font-size:10.5px;color:var(--text3);margin-top:3px"></div>
+    </div>
+    <div class="field">
+      <label>Município</label>
+      <select id="dxf-cidade"><option value="">Selecione o município...</option></select>
+    </div>
+    <div id="dxf-preview-map" style="height:260px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px"></div>
+    <div style="font-size:10.5px;color:var(--text3);margin-bottom:8px">Confira no modo Satélite se as linhas ficam em cima das ruas. Se estiverem deslocadas uns 65 m, troque SAD69 ↔ SIRGAS.</div>
+    <div id="dxf-aviso" style="font-size:12px;padding:8px 10px;border-radius:var(--radius);margin-bottom:8px"></div>
+    <div id="dxf-resumo" style="font-size:12px;margin-bottom:12px"></div>
+    <button class="btn primary btn-block" id="dxf-btn-importar" onclick="confirmarImportacaoDXF()">
+      <i class="ti ti-check"></i> Importar rede
+    </button>
+  </div>
+</div>
+
+<!-- Modal: município já tem rede — substituir ou adicionar arquivo extra -->
+<div class="modal-overlay" id="modal-rede-substituir">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3><i class="ti ti-refresh" style="color:var(--teal)"></i> <span id="rede-subst-titulo">Este município já tem rede</span></h3>
+      <button class="modal-close" onclick="responderSubstituicaoRede('cancelar')"><i class="ti ti-x"></i></button>
+    </div>
+    <p id="rede-subst-texto" style="font-size:12.5px;color:var(--text2);margin-bottom:14px;line-height:1.5"></p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn primary" id="rede-subst-btn-substituir" style="justify-content:center" onclick="responderSubstituicaoRede('substituir')">
+        <i class="ti ti-refresh"></i> Substituir pela rede nova (recomendado)
+      </button>
+      <button class="btn" style="justify-content:center" onclick="responderSubstituicaoRede('adicionar')">
+        <i class="ti ti-plus"></i> Adicionar como arquivo extra
+      </button>
+      <button class="btn" style="justify-content:center" onclick="responderSubstituicaoRede('cancelar')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div class="toast-wrap" id="toast-wrap"></div>
 
@@ -1685,16 +1764,21 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   </div>
   <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
     <button class="btn sm success" style="width:100%;justify-content:center" onclick="document.getElementById('up-redes-panel').click()">
-      <i class="ti ti-upload"></i> Carregar KML / GeoJSON de redes
+      <i class="ti ti-upload"></i> Carregar rede (KML, GeoJSON ou DXF)
     </button>
-    <input type="file" id="up-redes-panel" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'redes')">
+    <input type="file" id="up-redes-panel" accept=".kml,.geojson,.json,.dxf" style="display:none" onchange="handleLayerUpload(this,'redes')">
   </div>
   <!-- Filtro por regional e cidade (mesmo padrão do painel DMC) -->
   <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
     <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-regional-filter"></div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap" id="redes-city-filter"></div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Buscar município</div>
+    <div style="position:relative">
+      <i class="ti ti-search" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px"></i>
+      <input type="search" id="redes-busca" placeholder="Digite o nome do município..." autocomplete="off"
+        oninput="S.redesBusca=this.value;renderRedesPanel()"
+        style="width:100%;box-sizing:border-box;padding:8px 10px 8px 30px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+    </div>
   </div>
   <div style="flex:1;overflow-y:auto;padding:10px 14px" id="redes-panel-list">
     <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.</p>
@@ -3431,6 +3515,9 @@ function iniciarSincronizacaoCamadas() {
         // passaram por uma edição depois de criadas (ver atualizarGeometriaCamada).
         criadoEm: l.criadoEm || null, ultimaAtualizacao: l.ultimaAtualizacao || null,
         atualizadoPor: l.atualizadoPor || '', atualizadoPorNome: l.atualizadoPorNome || '',
+        // Extensão total (m) e origem (kml/dxf) — gravadas a partir desta versão no upload
+        // de rede; camadas antigas não têm (a tela Redes por município mostra "—").
+        extensaoM: (typeof l.extensaoM === 'number') ? l.extensaoM : null, origem: l.origem || '',
         visible: estaVisivelLocalmente(docSnap.id),
         lgField: existente ? existente.lgField : null,
         lgPC: existente ? existente.lgPC : null,
@@ -3464,6 +3551,7 @@ function iniciarSincronizacaoCamadas() {
     renderDMCPanel();
     renderRedesPanel();
     renderLayerLists();
+    renderRedesMunicipios();
     atualizarBadgePendentes();
     // Mantém a aba Gestão (data/autor de rede e de cada DMC, item novo) em dia mesmo
     // quando a mudança vem de outro lugar (upload em Carregar camadas, edição no
@@ -7113,7 +7201,18 @@ async function checarDuplicidadeDMCAntesUpload(geojson, cidadeId) {
 }
 
 function handleLayerUpload(input, tipo) {
+  // Município já definido por quem chamou (botão "Atualizar" da tela Redes por município)
+  // — vale só pra este upload e é consumido aqui.
+  const cidadeForcada = S._uploadRedeCidadeForcada || '';
+  S._uploadRedeCidadeForcada = '';
   Array.from(input.files).forEach(f => {
+    // DXF do CAD: abre a tela de conversão (sistema de coordenadas + município + prévia
+    // no mapa) — o resto do fluxo (salvar, substituir rede antiga) continua de lá.
+    if (f.name.toLowerCase().endsWith('.dxf')) {
+      if (tipo !== 'redes') { toast('Arquivo DXF só pode ser usado para rede — use a opção "Subir rede"'); return; }
+      abrirImportacaoDXF(f, cidadeForcada);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async ev => {
       try {
@@ -7122,8 +7221,10 @@ function handleLayerUpload(input, tipo) {
           ? kmlToGeoJSON(content)
           : JSON.parse(content);
         if (!geojson || !geojson.features) throw new Error('Sem geometrias encontradas');
-        const cidadeId = detectCidadeFromName(f.name);
-        if (!cidadeId) {
+        const cidadeId = cidadeForcada || detectCidadeFromName(f.name);
+        if (cidadeId && tipo === 'redes') {
+          await salvarRedeComVerificacao(geojson, f.name, cidadeId, { origem: 'kml' });
+        } else if (!cidadeId) {
           // Não foi possível identificar a cidade pelo nome do arquivo — perguntar
           // explicitamente, para QUALQUER tipo de camada (DMC ou Rede). Isso evita que a
           // camada fique sem cidade definida, o que antes fazia ela "aparecer em todos os
@@ -7195,6 +7296,12 @@ async function confirmarCidadeCamada() {
     closeModal('modal-camada-cidade');
     return;
   }
+  if (pend.tipo === 'redes') {
+    S._camadaPendenteUpload = null;
+    closeModal('modal-camada-cidade');
+    await salvarRedeComVerificacao(pend.geojson, pend.nome, cidadeId, { origem: 'kml' });
+    return;
+  }
   const novoId = await salvarCamadaFirestore(pend.geojson, pend.tipo, pend.nome, cidadeId);
   if (novoId) {
     definirVisibilidadeLocal(novoId, true);
@@ -7235,7 +7342,7 @@ function detectCidadeFromName(nome) {
 // todos os dispositivos; a geometria (agora um arquivo no Storage, não mais um campo
 // dentro do documento) só é baixada por quem pedir para ver (ver carregarGeometriaCamada).
 // Retorna o id gerado, para quem chamou marcar visível localmente.
-async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
+async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId, meta) {
   const { db, doc, setDoc, serverTimestamp, storage, ref, uploadString, getDownloadURL } = window.FB;
   const id = 'camada_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
   const geojsonStr = JSON.stringify(geojson);
@@ -7268,7 +7375,8 @@ async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId) {
     tipo, nome, cidade: cidadeId || '', geojsonUrl,
     criadoEm: serverTimestamp(), criadoPor: S.user?.uid || '',
     criadoPorNome: S.user?.nome || S.user?.email || '',
-    validada
+    validada,
+    ...(meta || {})
   });
   if (!validada) {
     toast('📋 Camada incluída! Um admin/supervisor vai validar em breve.');
@@ -7504,7 +7612,17 @@ async function carregarGeometriaCamada(tipo, camadaId) {
               // aparecendo dentro de Criciúma), sem precisar ir procurar na Gestão.
               const cidadeVinculada = S.cidades.find(c => c.id === item.cidade);
               const cidadeTxt = cidadeVinculada ? `<br><small style="color:#888">Cidade: ${cidadeVinculada.nome}</small>` : '';
-              const popupTxt = (lbl || diamTxt || cidadeTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt+cidadeTxt) : null;
+              let popupTxt = (lbl || diamTxt || cidadeTxt) ? ('<b>'+(lbl||item.nome)+'</b>'+diamTxt+cidadeTxt) : null;
+              // Rede com diâmetro identificado: título limpo "Rede DN 75 mm" (sem repetir o
+              // nome do trecho/arquivo, que muitas vezes vinha com número de sequência) +
+              // comprimento do trecho + município e data da rede.
+              if (tipo === 'redes' && p._diametroMm) {
+                const compM = p.comprimento_m != null ? Number(p.comprimento_m) : comprimentoFeatureM(ft);
+                const compTxt = compM ? `<br><small>Trecho: ${compM.toLocaleString('pt-BR',{maximumFractionDigits:1})} m</small>` : '';
+                const dataTxt = dataCurtaCamada(item);
+                popupTxt = `<b>Rede DN ${p._diametroMm} mm</b>` + compTxt +
+                  (cidadeVinculada ? `<br><small style="color:#888">${cidadeVinculada.nome}${dataTxt ? ' · rede de ' + dataTxt : ''}</small>` : '');
+              }
               if (popupTxt) layer.bindPopup(popupTxt);
 
               // Hover com nome + sigla do DMC — sempre ativo no Mapa/PC (desktop); no
@@ -7970,21 +8088,29 @@ function renderRedesPanel() {
   const cidadesDaRegional = S.redesRegionalFiltro
     ? new Set(S.cidades.filter(c => c.regional === S.redesRegionalFiltro).map(c => c.id))
     : null;
+  // Busca por texto: filtra enquanto digita, ignorando acento e maiúscula — compara com o
+  // nome do município, o prefixo (ex.: CIA) e o nome do arquivo.
+  const busca = textoBusca(S.redesBusca);
   const layers = allLayers.filter(l => {
     if (cidadesDaRegional && l.cidade && !cidadesDaRegional.has(l.cidade)) return false;
-    return !S.redesCidadeFiltro || l.cidade === S.redesCidadeFiltro;
-  });
+    if (S.redesCidadeFiltro && l.cidade !== S.redesCidadeFiltro) return false;
+    if (busca) {
+      const c = S.cidades.find(c => c.id === l.cidade);
+      const alvo = textoBusca((c ? c.nome + ' ' + c.prefixo : '') + ' ' + (l.nome || ''));
+      if (!alvo.includes(busca)) return false;
+    }
+    return true;
+  }).sort((a,b) => rotuloRede(a).localeCompare(rotuloRede(b), 'pt-BR'));
   if (!allLayers.length) {
-    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.<br><small>Use o botão acima para carregar um KML ou DXF.</small></p>';
     return;
   }
   if (!layers.length) {
-    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:16px">Nenhuma camada para este filtro.</p>';
+    el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:16px">' + (busca ? 'Nenhum município encontrado para "' + escHtml(S.redesBusca) + '".' : 'Nenhuma camada para este filtro.') + '</p>';
     return;
   }
   el.innerHTML = layers.map(item => {
     const idx = allLayers.indexOf(item);
-    const c = S.cidades.find(c => c.id === item.cidade);
     const avisoValidacao = !item.validada
       ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600;margin-top:2px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Pendente de validação' + (item.criadoPorNome?(' · '+item.criadoPorNome):'') + '</div>'
       : '';
@@ -7993,20 +8119,24 @@ function renderRedesPanel() {
         ' · <a href="#" onclick="event.preventDefault();tentarNovamenteCamada(\'redes\',' + idx + ')" style="color:var(--red);text-decoration:underline">tentar de novo</a></div>'
       : '';
     const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
+    // Nome mostrado: "Município (rede - dd/mm/aa)". O nome do arquivo original só aparece,
+    // pequeno, pra admin/supervisor (ajuda a saber de onde veio).
+    const arquivoTxt = ehSuperior ? '<div style="font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(item.nome) + '">Arquivo: ' + escHtml(item.nome) + '</div>' : '';
     return '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">' +
       '<div style="width:10px;height:10px;border-radius:3px;background:#0F6E56;flex-shrink:0"></div>' +
-      '<div style="flex:1;min-width:0">' +
-        (ehSuperior
-          ? '<input type="text" value="' + item.nome.replace(/"/g,'&quot;') + '" onchange="editarNomeCamada(\'redes\',' + idx + ',this.value)" style="width:100%;padding:3px 5px;font-size:12px;font-weight:500;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text)" onfocus="this.style.borderColor=\'var(--border)\';this.style.background=\'var(--bg)\'" onblur="this.style.borderColor=\'transparent\';this.style.background=\'transparent\'">'
-          : '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + item.nome + '</div>') +
-        (c ? '<div style="font-size:10.5px;color:var(--text2)">' + c.nome + '</div>' : '') +
-        avisoValidacao + avisoErro +
+      '<div style="flex:1;min-width:0;cursor:pointer" onclick="toggleCamadaIndividual(\'redes\',' + idx + ')">' +
+        '<div style="font-size:12.5px;font-weight:600;line-height:1.3">' + escHtml(rotuloRede(item)) + '</div>' +
+        arquivoTxt + avisoValidacao + avisoErro +
       '</div>' +
-      '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item._erroCarregamento && item.visible ? 'var(--red)' : (item.visible?'var(--teal)':'var(--text2)')) + '">' +
+      '<button onclick="toggleCamadaIndividual(\'redes\',' + idx + ')" title="' + (item.visible ? 'Ocultar' : 'Mostrar') + '" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:' + (item._erroCarregamento && item.visible ? 'var(--red)' : (item.visible?'var(--teal)':'var(--text2)')) + '">' +
         '<i class="ti ' + (item.visible?'ti-eye':'ti-eye-off') + '"></i>' +
       '</button>' +
+      (ehSuperior ? (
+      '<button onclick="baixarRedeKML([\'' + item.id + '\'])" title="Baixar KML (cores por diâmetro)" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--text2)">' +
+        '<i class="ti ti-download"></i>' +
+      '</button>') : '') +
       (podeRemoverEsta ? (
-      '<button onclick="removerCamada(\'redes\',' + idx + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
+      '<button onclick="removerCamada(\'redes\',' + idx + ')" title="Remover" style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;cursor:pointer;color:var(--red)">' +
         '<i class="ti ti-trash"></i>' +
       '</button>') : '') +
       (ehSuperior && !item.validada ? (
@@ -8031,7 +8161,7 @@ function renderLayerLists() {
       return '<div class="layer-item">' +
         '<div class="layer-color" style="background:' + (t==='dmc'?'#185FA5':'#0F6E56') + '"></div>' +
         '<div style="flex:1;min-width:0">' +
-          '<span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">' + item.nome + '</span>' +
+          '<span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">' + escHtml(t === 'redes' ? rotuloRede(item) : item.nome) + '</span>' +
           avisoValidacao +
         '</div>' +
         (podeRemoverEsta ? '<button class="btn sm" style="padding:3px 7px" onclick="removerCamada(\'' + t + '\',' + i + ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' : '') +
@@ -8095,6 +8225,556 @@ function atualizarBadgePendentes() {
   // camada pendente sem abrir o menu primeiro.
   const miniBadge = document.getElementById('dmc-pendentes-badge-mini');
   if (miniBadge) miniBadge.classList.toggle('hidden', !(podeValidar && total > 0));
+}
+
+// ================================================================
+// REDES — rótulo amigável, busca, importação de DXF (CAD), substituição da rede de um
+// município, exportação de KML com a paleta de cores e tela "Redes por município".
+// ================================================================
+function escHtml(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+// Texto normalizado pra busca: sem acento, minúsculo, espaços simples.
+function textoBusca(v) {
+  return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+// Data da rede (última atualização, senão cadastro) no formato dd/mm/aa.
+function dataCurtaCamada(item) {
+  const ms = item ? (msDoCampo(item.ultimaAtualizacao) || msDoCampo(item.criadoEm)) : null;
+  return ms ? new Date(ms).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit' }) : '';
+}
+// Nome que aparece pra equipe: "Criciúma (rede - 01/11/26)". Se o município tiver mais de
+// um arquivo de rede ativo, numera ("· 2", "· 3") pra dar pra diferenciar.
+function rotuloRede(item) {
+  if (!item) return '';
+  const c = S.cidades.find(c => c.id === item.cidade);
+  const base = c ? c.nome : (item.nome || 'Rede');
+  const data = dataCurtaCamada(item);
+  let txt = base + ' (rede' + (data ? ' - ' + data : '') + ')';
+  const doMunicipio = (S.leafletLayers.redes || []).filter(i => i.cidade === item.cidade && !i.removida);
+  if (item.cidade && doMunicipio.length > 1) {
+    doMunicipio.sort((a,b) => (msDoCampo(b.ultimaAtualizacao)||msDoCampo(b.criadoEm)||0) - (msDoCampo(a.ultimaAtualizacao)||msDoCampo(a.criadoEm)||0));
+    const pos = doMunicipio.indexOf(item);
+    if (pos > 0) txt += ' · ' + (pos + 1);
+  }
+  return txt;
+}
+function comprimentoFeatureM(ft) {
+  if (!ft || !ft.geometry) return 0;
+  const g = ft.geometry;
+  const linhas = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
+  let m = 0;
+  linhas.forEach(l => { for (let i = 1; i < l.length; i++) m += distanciaMetros(l[i-1][1], l[i-1][0], l[i][1], l[i][0]); });
+  return m;
+}
+function extensaoGeojsonM(geojson) {
+  return ((geojson && geojson.features) || []).reduce((s, ft) => s + comprimentoFeatureM(ft), 0);
+}
+function formatarExtensao(m) {
+  if (m == null) return '—';
+  return m >= 1000 ? (m/1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' km' : Math.round(m).toLocaleString('pt-BR') + ' m';
+}
+
+// Carrega uma biblioteca externa só quando for usada (DXF é raro — não faz sentido todo
+// celular baixar o leitor de DXF ao abrir o app).
+const _scriptsCarregados = {};
+function carregarScriptExterno(url) {
+  if (!_scriptsCarregados[url]) {
+    _scriptsCarregados[url] = new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = url;
+      el.onload = resolve;
+      el.onerror = () => { delete _scriptsCarregados[url]; reject(new Error('Não consegui baixar ' + url.split('/').slice(-1)[0] + ' — confira a internet')); };
+      document.head.appendChild(el);
+    });
+  }
+  return _scriptsCarregados[url];
+}
+async function carregarBibliotecasDXF() {
+  await Promise.all([
+    carregarScriptExterno('https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js'),
+    carregarScriptExterno('https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js')
+  ]);
+  // SAD69 com os parâmetros oficiais do IBGE (SAD69 → SIRGAS/WGS84). Conferido contra o
+  // PROJ (pyproj) com a rede de Armazém: mesmo resultado.
+  proj4.defs('EPSG:29192', '+proj=utm +zone=22 +south +ellps=aust_SA +towgs84=-66.87,4.37,-38.52,0,0,0,0 +units=m +no_defs');
+  proj4.defs('EPSG:29191', '+proj=utm +zone=21 +south +ellps=aust_SA +towgs84=-66.87,4.37,-38.52,0,0,0,0 +units=m +no_defs');
+  proj4.defs('EPSG:31982', '+proj=utm +zone=22 +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
+  proj4.defs('EPSG:31981', '+proj=utm +zone=21 +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
+}
+const LS_DXF_CRS_KEY = 'geofon_dxf_crs';
+const NOMES_CRS_DXF = { 'EPSG:29192':'SAD69 / UTM 22S', 'EPSG:31982':'SIRGAS 2000 / UTM 22S', 'EPSG:29191':'SAD69 / UTM 21S', 'EPSG:31981':'SIRGAS 2000 / UTM 21S' };
+
+// O AutoCAD (Map/Civil) grava o sistema de coordenadas "atribuído" ao desenho num objeto
+// GEODATA. Quando existir, usamos só como SUGESTÃO — o caso de Treze de Maio mostrou que o
+// sistema atribuído pode não ser o das coordenadas de verdade; a prévia no mapa decide.
+function crsDeclaradoNoDXF(texto) {
+  const m = texto.match(/ProjectedCoordinateSystem id="([^"]+)"/) || texto.match(/<Alias id="(\d{4,5})" type="CoordinateSystem"/);
+  if (!m) return null;
+  const id = m[1].toUpperCase().replace(/\s/g, '');
+  const zona = /21S|31981|29191/.test(id) ? '21' : /22S|31982|29192/.test(id) ? '22' : null;
+  if (!zona) return null;
+  if (/SAD|2919/.test(id)) return zona === '22' ? 'EPSG:29192' : 'EPSG:29191';
+  if (/SIRGAS|3198/.test(id)) return zona === '22' ? 'EPSG:31982' : 'EPSG:31981';
+  return null;
+}
+
+// Arcos de polilinha (bulge) viram pequenos segmentos retos.
+function expandirVerticesComBulge(verts, fechada) {
+  const out = [];
+  const n = verts.length;
+  const ultimo = fechada ? n : n - 1;
+  for (let i = 0; i < ultimo; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    out.push({ x: a.x, y: a.y });
+    const bulge = a.bulge || 0;
+    if (Math.abs(bulge) > 1e-9) {
+      // Fórmula padrão do bulge (DXF): ângulo do arco = 4·atan(bulge); positivo = anti-horário.
+      const ang = 4 * Math.atan(bulge);
+      const dx = b.x - a.x, dy = b.y - a.y, corda = Math.hypot(dx, dy);
+      if (corda > 1e-9) {
+        const meia = corda / 2;
+        const h = meia * (1 - bulge * bulge) / (2 * bulge);
+        const cx = (a.x + b.x) / 2 - dy / corda * h, cy = (a.y + b.y) / 2 + dx / corda * h;
+        const r = Math.hypot(a.x - cx, a.y - cy);
+        const a0 = Math.atan2(a.y - cy, a.x - cx);
+        const passos = Math.max(4, Math.ceil(Math.abs(ang) / (Math.PI / 18)));
+        for (let k = 1; k < passos; k++) {
+          const t = a0 + ang * k / passos;
+          out.push({ x: cx + r * Math.cos(t), y: cy + r * Math.sin(t) });
+        }
+      }
+    }
+  }
+  const fim = fechada ? verts[0] : verts[n - 1];
+  out.push({ x: fim.x, y: fim.y });
+  return out;
+}
+function pontosArco(cx, cy, r, a0, a1) { // radianos, sentido anti-horário
+  if (a1 <= a0) a1 += 2 * Math.PI;
+  const passos = Math.max(8, Math.ceil((a1 - a0) / (Math.PI / 18)));
+  const out = [];
+  for (let k = 0; k <= passos; k++) { const t = a0 + (a1 - a0) * k / passos; out.push({ x: cx + r * Math.cos(t), y: cy + r * Math.sin(t) }); }
+  return out;
+}
+function pontosEntidadeDXF(e) {
+  switch (e.type) {
+    case 'LINE': return e.vertices;
+    case 'LWPOLYLINE':
+    case 'POLYLINE': {
+      const v = (e.vertices || []).filter(p => p && isFinite(p.x) && isFinite(p.y));
+      if (v.length < 2) return null;
+      return expandirVerticesComBulge(v, !!e.shape);
+    }
+    case 'ARC': return pontosArco(e.center.x, e.center.y, e.radius, e.startAngle, e.endAngle);
+    case 'CIRCLE': return pontosArco(e.center.x, e.center.y, e.radius, 0, 2 * Math.PI);
+    default: return null;
+  }
+}
+// Cor do layer no CAD (inteiro RGB) → #RRGGBB. Branco/preto são ignorados (no CAD são a
+// cor "padrão" da tela e ficariam invisíveis/sem sentido no mapa).
+function corLayerDXF(parsed, nomeLayer) {
+  try {
+    const l = parsed.tables && parsed.tables.layer && parsed.tables.layer.layers && parsed.tables.layer.layers[nomeLayer];
+    if (!l || typeof l.color !== 'number') return null;
+    const hex = '#' + l.color.toString(16).padStart(6, '0');
+    return (hex === '#ffffff' || hex === '#000000') ? null : hex;
+  } catch(e) { return null; }
+}
+// DXF (já lido) → GeoJSON em lat/lng + resumo por diâmetro. O diâmetro sai do primeiro
+// número no nome do layer (T_50 → 50), mesmo critério já usado pras pastas do KML.
+function converterDXFParaGeoJSON(parsed, crs) {
+  const features = [];
+  const porDN = {};
+  const ignorados = {};
+  let foraDeSC = 0;
+  (parsed.entities || []).forEach(e => {
+    const pts = pontosEntidadeDXF(e);
+    if (!pts || pts.length < 2) { ignorados[e.type] = (ignorados[e.type] || 0) + 1; return; }
+    let compM = 0;
+    for (let i = 1; i < pts.length; i++) compM += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+    const coords = pts.map(p => { const [lng, lat] = proj4(crs, 'EPSG:4326', [p.x, p.y]); return [Number(lng.toFixed(7)), Number(lat.toFixed(7))]; });
+    if (coords.some(([lng, lat]) => !(lat > -29.6 && lat < -25.8 && lng > -54 && lng < -48.3))) foraDeSC++;
+    const layer = e.layer || '0';
+    const m = String(layer).match(/(\d+)/);
+    const dn = m ? parseInt(m[1], 10) : null;
+    const props = { name: dn ? 'DN ' + dn : layer, _folderNome: layer, layerCAD: layer, comprimento_m: Math.round(compM * 10) / 10 };
+    if (dn) props._diametroMm = dn;
+    const corCAD = corLayerDXF(parsed, layer);
+    if (corCAD) props._corKml = corCAD;
+    features.push({ type:'Feature', properties: props, geometry: { type:'LineString', coordinates: coords } });
+    const chave = dn ? String(dn) : layer;
+    porDN[chave] = porDN[chave] || { dn, layer, n: 0, m: 0 };
+    porDN[chave].n++; porDN[chave].m += compM;
+  });
+  return { geojson: { type:'FeatureCollection', features }, resumo: { porDN, ignorados, foraDeSC, total: features.length } };
+}
+
+S._dxf = null;
+S._aoFecharModal = S._aoFecharModal || {};
+async function abrirImportacaoDXF(file, cidadeForcada) {
+  toast('Lendo o DXF "' + file.name + '"...');
+  let texto;
+  try {
+    texto = await file.text();
+    await carregarBibliotecasDXF();
+  } catch(err) { toast('⚠️ ' + (err.message || err)); return; }
+  let parsed;
+  try {
+    parsed = new DxfParser().parseSync(texto);
+  } catch(err) {
+    toast('⚠️ Não consegui ler o DXF (' + (err.message || err) + '). Salve no AutoCAD como "DXF" (ASCII) — DWG e DXF binário não funcionam.');
+    return;
+  }
+  if (!parsed || !(parsed.entities || []).length) { toast('⚠️ O DXF não tem nenhum objeto desenhado'); return; }
+  const crsArquivo = crsDeclaradoNoDXF(texto);
+  texto = null; // libera memória — só precisamos do resultado já lido
+  let crsInicial = crsArquivo;
+  if (!crsInicial) { try { crsInicial = localStorage.getItem(LS_DXF_CRS_KEY); } catch(e) {} }
+  if (!NOMES_CRS_DXF[crsInicial]) crsInicial = 'EPSG:29192';
+  S._dxf = { file, parsed, crsArquivo, cidadeForcada: cidadeForcada || '', geojson: null, resumo: null, mapa: null, lg: null };
+
+  document.getElementById('dxf-arquivo-nome').textContent = file.name;
+  document.getElementById('dxf-crs').value = crsInicial;
+  document.getElementById('dxf-crs-arquivo').textContent = crsArquivo
+    ? 'O arquivo informa: ' + NOMES_CRS_DXF[crsArquivo] + ' (confira na prévia — nem sempre é o sistema real das coordenadas).'
+    : 'O arquivo não informa o sistema de coordenadas. Usando o último escolhido neste aparelho.';
+  const selCid = document.getElementById('dxf-cidade');
+  const cidadeSugerida = cidadeForcada || detectCidadeFromName(file.name);
+  selCid.innerHTML = '<option value="">Selecione o município...</option>' +
+    [...S.cidades].sort((a,b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(c => `<option value="${c.id}">${escHtml(c.nome)}</option>`).join('');
+  selCid.value = cidadeSugerida || '';
+  selCid.disabled = !!cidadeForcada;
+
+  S._aoFecharModal['modal-dxf'] = limparImportacaoDXF;
+  openModal('modal-dxf');
+  // O mapa da prévia só pode ser criado com o modal já visível (senão nasce com tamanho 0).
+  setTimeout(() => {
+    if (!S._dxf) return;
+    const mapa = L.map('dxf-preview-map', { zoomControl: true });
+    addBaseLayerControl(mapa);
+    S._dxf.mapa = mapa;
+    atualizarPreviaDXF();
+  }, 60);
+}
+function limparImportacaoDXF() {
+  if (S._dxf && S._dxf.mapa) { try { S._dxf.mapa.remove(); } catch(e) {} }
+  S._dxf = null;
+  const sel = document.getElementById('dxf-cidade');
+  if (sel) sel.disabled = false;
+}
+function cancelarImportacaoDXF() { closeModal('modal-dxf'); }
+
+function atualizarPreviaDXF() {
+  const d = S._dxf;
+  if (!d) return;
+  const crs = document.getElementById('dxf-crs').value;
+  const { geojson, resumo } = converterDXFParaGeoJSON(d.parsed, crs);
+  d.geojson = geojson; d.resumo = resumo; d.crs = crs;
+
+  if (d.mapa) {
+    if (d.lg) d.mapa.removeLayer(d.lg);
+    d.lg = L.geoJSON(geojson, {
+      style: ft => ({ color: resolverCorFeature(ft, 'redes', null) || '#0F6E56', weight: 2.5, opacity: 0.95 }),
+      onEachFeature: (ft, layer) => {
+        const p = ft.properties;
+        layer.bindPopup('<b>' + escHtml(p.name) + '</b><br><small>Layer: ' + escHtml(p.layerCAD) + ' · ' + Number(p.comprimento_m).toLocaleString('pt-BR') + ' m</small>');
+      }
+    }).addTo(d.mapa);
+    try { d.mapa.fitBounds(d.lg.getBounds(), { padding: [12, 12] }); } catch(e) {}
+  }
+
+  // Sem município escolhido: sugere o mais próximo do desenho.
+  const selCid = document.getElementById('dxf-cidade');
+  if (!selCid.value && !resumo.foraDeSC) {
+    const centro = centroideAproximado(geojson);
+    const sug = centro ? cidadeMaisProxima(centro.lat, centro.lng) : null;
+    if (sug) selCid.value = sug.id;
+  }
+
+  const aviso = document.getElementById('dxf-aviso');
+  const btn = document.getElementById('dxf-btn-importar');
+  const ign = Object.entries(resumo.ignorados).map(([t, n]) => n + ' ' + t).join(', ');
+  if (!resumo.total) {
+    aviso.style.background = 'var(--red-l, #fdecea)'; aviso.style.color = 'var(--red)';
+    aviso.textContent = 'Nenhuma linha de rede encontrada no DXF.' + (ign ? ' Objetos ignorados: ' + ign + '.' : '');
+    btn.disabled = true;
+  } else if (resumo.foraDeSC) {
+    aviso.style.background = 'var(--red-l, #fdecea)'; aviso.style.color = 'var(--red)';
+    aviso.textContent = resumo.foraDeSC + ' de ' + resumo.total + ' trechos caíram fora de Santa Catarina — o sistema de coordenadas escolhido não bate com o desenho (ou o desenho não está georreferenciado).';
+    btn.disabled = true;
+  } else {
+    aviso.style.background = 'var(--teal-l)'; aviso.style.color = 'var(--teal)';
+    aviso.textContent = '✓ ' + resumo.total + ' trechos convertidos de ' + NOMES_CRS_DXF[crs] + '.' + (ign ? ' Ignorados (não são linhas): ' + ign + '.' : '');
+    btn.disabled = false;
+  }
+  const linhas = Object.values(resumo.porDN).sort((a,b) => (a.dn ?? 1e9) - (b.dn ?? 1e9) || String(a.layer).localeCompare(String(b.layer)));
+  const totalM = linhas.reduce((s, l) => s + l.m, 0);
+  document.getElementById('dxf-resumo').innerHTML = !linhas.length ? '' :
+    '<table class="data-table" style="width:100%"><thead><tr><th>Diâmetro / layer</th><th style="text-align:right">Trechos</th><th style="text-align:right">Extensão</th></tr></thead><tbody>' +
+    linhas.map(l => {
+      const cor = (l.dn != null && S.coresPorDiametro[String(l.dn)]) || '#0F6E56';
+      return '<tr><td><span style="display:inline-block;width:14px;height:4px;border-radius:2px;background:' + cor + ';vertical-align:middle;margin-right:6px"></span>' +
+        (l.dn != null ? 'DN ' + l.dn + ' <small style="color:var(--text3)">(' + escHtml(l.layer) + ')</small>' : escHtml(l.layer) + ' <small style="color:var(--amber)">sem diâmetro</small>') +
+        '</td><td style="text-align:right">' + l.n + '</td><td style="text-align:right">' + formatarExtensao(l.m) + '</td></tr>';
+    }).join('') +
+    '<tr><th>Total</th><th style="text-align:right">' + resumo.total + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>';
+}
+
+async function confirmarImportacaoDXF() {
+  const d = S._dxf;
+  if (!d || !d.geojson) return;
+  const cidadeId = document.getElementById('dxf-cidade').value;
+  if (!cidadeId) { toast('Selecione o município'); return; }
+  if (d.resumo.foraDeSC || !d.resumo.total) return;
+  try { localStorage.setItem(LS_DXF_CRS_KEY, d.crs); } catch(e) {}
+  const { geojson, file, crs } = d;
+  closeModal('modal-dxf');
+  await salvarRedeComVerificacao(geojson, file.name, cidadeId, { origem: 'dxf', sistemaCoordenadas: crs });
+}
+
+// Pergunta o que fazer quando o município já tem rede cadastrada. Resolve com
+// 'substituir' | 'adicionar' | 'cancelar'. Só admin/supervisor podem substituir (a regra do
+// Firestore só deixa eles alterarem uma camada já validada).
+function perguntarSubstituicaoRede(cidadeId, existentes) {
+  const c = S.cidades.find(c => c.id === cidadeId);
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
+  const maisRecente = infoRedeCidade(cidadeId);
+  const info = infoUploadCamada(maisRecente);
+  document.getElementById('rede-subst-titulo').textContent = (c ? c.nome : 'Este município') + ' já tem rede';
+  document.getElementById('rede-subst-texto').innerHTML =
+    'A rede atual' + (info ? ' foi cadastrada/atualizada em <b>' + escHtml(info) + '</b>' : ' já está cadastrada') +
+    (existentes.length > 1 ? ' e está dividida em <b>' + existentes.length + ' arquivos</b>' : '') + '.<br><br>' +
+    (ehSuperior
+      ? '<b>Substituir</b> troca a rede antiga pela nova (a data de atualização muda e todos passam a ver a nova). ' +
+        (existentes.length > 1 ? 'Os outros arquivos antigos deste município saem da lista. ' : '') +
+        '<b>Adicionar</b> mantém a antiga e cria um arquivo a mais.'
+      : 'Como técnico, você pode adicionar este arquivo como extra — um admin/supervisor confere e decide se substitui a rede antiga.');
+  document.getElementById('rede-subst-btn-substituir').style.display = ehSuperior ? '' : 'none';
+  return new Promise(resolve => {
+    S._respostaSubstRede = resolve;
+    S._aoFecharModal['modal-rede-substituir'] = () => {
+      if (S._respostaSubstRede) { const r = S._respostaSubstRede; S._respostaSubstRede = null; r('cancelar'); }
+    };
+    openModal('modal-rede-substituir');
+  });
+}
+function responderSubstituicaoRede(resposta) {
+  const r = S._respostaSubstRede;
+  S._respostaSubstRede = null;
+  closeModal('modal-rede-substituir');
+  if (r) r(resposta);
+}
+
+// Fluxo único de gravação de REDE (KML, GeoJSON ou DXF): se o município já tem rede,
+// pergunta se substitui (mantém o mesmo registro e só troca a geometria + data) ou
+// adiciona um arquivo extra.
+async function salvarRedeComVerificacao(geojson, nome, cidadeId, meta) {
+  meta = { ...(meta || {}), extensaoM: Math.round(extensaoGeojsonM(geojson)) };
+  const existentes = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  const escolha = existentes.length ? await perguntarSubstituicaoRede(cidadeId, existentes) : 'adicionar';
+  if (escolha === 'cancelar') { toast('Importação cancelada'); return null; }
+  const c = S.cidades.find(c => c.id === cidadeId);
+  const nomeCidade = c ? c.nome : '';
+  let id;
+  if (escolha === 'substituir') {
+    const principal = infoRedeCidade(cidadeId);
+    principal.visible = true;
+    definirVisibilidadeLocal(principal.id, true);
+    const ok = await atualizarGeometriaCamada(principal.id, geojson);
+    if (!ok) return null;
+    const { db, doc, setDoc } = window.FB;
+    try {
+      await setDoc(doc(db, 'camadas', principal.id), { nome, validada: true, ...meta }, { merge: true });
+      for (const outro of existentes) {
+        if (outro.id !== principal.id) await setDoc(doc(db, 'camadas', outro.id), { removida: true }, { merge: true });
+      }
+    } catch(err) {
+      console.warn('Erro ao atualizar dados da rede substituída:', err);
+      toast('⚠️ A geometria foi trocada, mas houve erro ao atualizar os dados: ' + (err.code || err.message || err));
+    }
+    id = principal.id;
+    toast('✓ Rede de ' + nomeCidade + ' atualizada para todos!');
+  } else {
+    id = await salvarCamadaFirestore(geojson, 'redes', nome, cidadeId, meta);
+    if (!id) return null;
+    definirVisibilidadeLocal(id, true);
+    toast('✓ Rede de ' + nomeCidade + ' carregada e disponível para todos!');
+  }
+  centralizarEmGeoJSON(geojson);
+  dispararRecalculoExtensaoAposUpload('redes', geojson, cidadeId);
+  return id;
+}
+
+// ---------------- Exportação KML com a paleta de cores ----------------
+function escXml(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;' }[ch])); }
+function hexParaCorKml(hex) {
+  const h = String(hex || '#0F6E56').replace('#', '');
+  const full = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h.padStart(6, '0').slice(0, 6);
+  return ('ff' + full.slice(4, 6) + full.slice(2, 4) + full.slice(0, 2)).toLowerCase();
+}
+function larguraLinhaPorDN(dn) {
+  if (!dn) return 2;
+  return dn >= 150 ? 5 : dn >= 100 ? 4 : dn >= 75 ? 3 : 2;
+}
+function geometriaParaKml(g) {
+  const cs = arr => arr.map(c => c[0] + ',' + c[1] + ',0').join(' ');
+  if (!g) return '';
+  if (g.type === 'LineString') return '<LineString><tessellate>1</tessellate><coordinates>' + cs(g.coordinates) + '</coordinates></LineString>';
+  if (g.type === 'MultiLineString') return '<MultiGeometry>' + g.coordinates.map(l => '<LineString><tessellate>1</tessellate><coordinates>' + cs(l) + '</coordinates></LineString>').join('') + '</MultiGeometry>';
+  if (g.type === 'Point') return '<Point><coordinates>' + g.coordinates[0] + ',' + g.coordinates[1] + ',0</coordinates></Point>';
+  if (g.type === 'Polygon') return '<Polygon><outerBoundaryIs><LinearRing><coordinates>' + cs(g.coordinates[0]) + '</coordinates></LinearRing></outerBoundaryIs></Polygon>';
+  return '';
+}
+// Monta o KML agrupado em pastas por diâmetro (DN 50, DN 75...), cada trecho com a cor
+// que o app usa no mapa (Configurações → Cores por diâmetro; senão a cor original do
+// arquivo; senão o verde padrão de rede) e com DN / comprimento nos dados do trecho.
+function gerarKMLRede(features, titulo) {
+  const estilos = {};
+  const pastas = {};
+  features.forEach(ft => {
+    if (!ft.geometry) return;
+    const p = ft.properties || {};
+    const dn = p._diametroMm ? Number(p._diametroMm) : null;
+    const cor = resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color;
+    const larg = larguraLinhaPorDN(dn);
+    const idEstilo = 's' + cor.replace('#', '') + '_' + larg;
+    estilos[idEstilo] = { cor, larg };
+    const chave = dn ? 'DN ' + dn : 'Sem diâmetro';
+    (pastas[chave] = pastas[chave] || { dn: dn ?? 1e9, itens: [] }).itens.push({ ft, dn, idEstilo });
+  });
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>', '<name>' + escXml(titulo) + '</name>'];
+  Object.entries(estilos).forEach(([id, e]) => out.push('<Style id="' + id + '"><LineStyle><color>' + hexParaCorKml(e.cor) + '</color><width>' + e.larg + '</width></LineStyle><PolyStyle><color>' + hexParaCorKml(e.cor).replace(/^ff/, '40') + '</color></PolyStyle></Style>'));
+  Object.entries(pastas).sort((a,b) => a[1].dn - b[1].dn).forEach(([nomePasta, pasta]) => {
+    out.push('<Folder><name>' + escXml(nomePasta) + '</name>');
+    pasta.itens.forEach(({ ft, dn, idEstilo }) => {
+      const p = ft.properties || {};
+      const compM = p.comprimento_m != null ? Number(p.comprimento_m) : comprimentoFeatureM(ft);
+      const dados = [];
+      if (dn) dados.push(['DN', dn]);
+      if (compM) dados.push(['comprimento_m', Math.round(compM * 10) / 10]);
+      const layerOrig = p.layerCAD || p._folderNome;
+      if (layerOrig) dados.push(['layer', layerOrig]);
+      out.push('<Placemark><name>' + escXml(dn ? 'DN ' + dn : (p.name || 'Trecho')) + '</name><styleUrl>#' + idEstilo + '</styleUrl>' +
+        (dados.length ? '<ExtendedData>' + dados.map(([k, v]) => '<Data name="' + k + '"><value>' + escXml(v) + '</value></Data>').join('') + '</ExtendedData>' : '') +
+        geometriaParaKml(ft.geometry) + '</Placemark>');
+    });
+    out.push('</Folder>');
+  });
+  out.push('</Document></kml>');
+  return out.join('\n');
+}
+function nomeArquivoSeguro(t) {
+  return String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+}
+async function baixarRedeKML(camadaIds) {
+  const itens = (S.leafletLayers.redes || []).filter(i => camadaIds.includes(i.id));
+  if (!itens.length) { toast('Rede não encontrada'); return; }
+  toast('Preparando o KML...');
+  for (const it of itens) await garantirGeometriaCarregada(it);
+  const features = itens.flatMap(it => (it._geojson && it._geojson.features) || []);
+  if (!features.length) { toast('⚠️ Não consegui carregar a geometria da rede'); return; }
+  const principal = itens.slice().sort((a,b) => (msDoCampo(b.ultimaAtualizacao)||msDoCampo(b.criadoEm)||0) - (msDoCampo(a.ultimaAtualizacao)||msDoCampo(a.criadoEm)||0))[0];
+  const c = S.cidades.find(c => c.id === principal.cidade);
+  const titulo = c ? rotuloRede(principal).replace(/ · \d+$/, '') : principal.nome;
+  const kml = gerarKMLRede(features, titulo);
+  const data = dataCurtaCamada(principal).replace(/\//g, '-');
+  const nomeArq = 'Rede_' + nomeArquivoSeguro(c ? c.nome : principal.nome) + (data ? '_' + data : '') + '.kml';
+  const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nomeArq;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('✓ ' + nomeArq + ' baixado');
+}
+function baixarRedeCidadeKML(cidadeId) {
+  const ids = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida).map(i => i.id);
+  if (!ids.length) { toast('Este município ainda não tem rede cadastrada'); return; }
+  baixarRedeKML(ids);
+}
+
+// ---------------- Tela Gestão → Redes por município ----------------
+S._redesMunBusca = '';
+S._redesMunFiltro = '';
+function renderRedesMunicipios() {
+  const el = document.getElementById('redes-mun-tabela');
+  if (!el) return;
+  const role = S.userDoc?.role;
+  const ehSuperior = role === 'admin' || role === 'supervisor';
+  const busca = textoBusca(S._redesMunBusca);
+  const linhas = [...S.cidades].sort((a,b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(c => {
+    const camadas = (S.leafletLayers.redes || []).filter(i => i.cidade === c.id && !i.removida);
+    return { c, camadas, principal: infoRedeCidade(c.id) };
+  });
+  const comRede = linhas.filter(l => l.camadas.length).length;
+  const resumoEl = document.getElementById('redes-mun-resumo');
+  if (resumoEl) resumoEl.innerHTML = '<b>' + comRede + '</b> de <b>' + linhas.length + '</b> municípios com rede cadastrada.';
+  const filtradas = linhas.filter(l => {
+    if (S._redesMunFiltro === 'com' && !l.camadas.length) return false;
+    if (S._redesMunFiltro === 'sem' && l.camadas.length) return false;
+    if (busca && !textoBusca(l.c.nome + ' ' + l.c.prefixo + ' ' + (l.c.regional || '')).includes(busca)) return false;
+    return true;
+  });
+  if (!filtradas.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhum município encontrado.</p>'; return; }
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>' +
+    '<th>Município</th><th>Regional</th><th>Rede</th><th>Última atualização</th><th style="text-align:right">Extensão</th><th>Origem</th><th></th>' +
+    '</tr></thead><tbody>' + filtradas.map(({ c, camadas, principal }) => {
+      let situacao, dataTxt = '—', extTxt = '—', origemTxt = '—';
+      if (!camadas.length) {
+        situacao = '<span class="badge" style="background:var(--bg2,#f1f1f1);color:var(--text3)">Sem rede</span>';
+      } else {
+        const pend = camadas.some(i => !i.validada);
+        situacao = pend
+          ? '<span class="badge media">Pendente de validação</span>'
+          : '<span class="badge" style="background:var(--teal-l);color:var(--teal)">Cadastrada</span>';
+        if (camadas.length > 1) situacao += ' <small style="color:var(--text3)">(' + camadas.length + ' arquivos)</small>';
+        dataTxt = escHtml(infoUploadCamada(principal) || '—');
+        const comExt = camadas.filter(i => i.extensaoM != null || i._geojson);
+        if (comExt.length === camadas.length) extTxt = formatarExtensao(camadas.reduce((s, i) => s + (i.extensaoM != null ? i.extensaoM : extensaoGeojsonM(i._geojson)), 0));
+        origemTxt = [...new Set(camadas.map(i => (i.origem || (/\.dxf$/i.test(i.nome) ? 'dxf' : /\.kml$/i.test(i.nome) ? 'kml' : 'arquivo')).toUpperCase()))].join(', ');
+      }
+      const acoes = [];
+      if (camadas.length) {
+        acoes.push('<button class="btn sm" onclick="verRedeNoMapa(\'' + c.id + '\')" title="Mostrar no mapa"><i class="ti ti-map-search"></i>Ver</button>');
+        acoes.push('<button class="btn sm" onclick="baixarRedeCidadeKML(\'' + c.id + '\')" title="Baixar KML com as cores por diâmetro"><i class="ti ti-download"></i>KML</button>');
+      }
+      if (ehSuperior) acoes.push('<button class="btn sm' + (camadas.length ? '' : ' primary') + '" onclick="atualizarRedeMunicipio(\'' + c.id + '\')" title="Subir KML, GeoJSON ou DXF para este município"><i class="ti ti-upload"></i>' + (camadas.length ? 'Atualizar' : 'Cadastrar') + '</button>');
+      return '<tr>' +
+        '<td><span class="badge purple">' + escHtml(c.prefixo) + '</span> ' + escHtml(c.nome) + '</td>' +
+        '<td>' + escHtml(c.regional || '—') + '</td>' +
+        '<td style="white-space:nowrap">' + situacao + '</td>' +
+        '<td style="white-space:nowrap">' + dataTxt + '</td>' +
+        '<td style="text-align:right;white-space:nowrap">' + extTxt + '</td>' +
+        '<td>' + origemTxt + '</td>' +
+        '<td><div style="display:flex;gap:4px;justify-content:flex-end">' + acoes.join('') + '</div></td>' +
+      '</tr>';
+    }).join('') + '</tbody></table></div>';
+}
+function atualizarRedeMunicipio(cidadeId) {
+  S._uploadRedeCidadeForcada = cidadeId;
+  const input = document.getElementById('up-rede-mun');
+  input.value = '';
+  input.click();
+}
+async function verRedeNoMapa(cidadeId) {
+  const itens = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!itens.length) return;
+  switchTab('map-pc', 'tabs-pc');
+  for (const it of itens) {
+    it.visible = true;
+    definirVisibilidadeLocal(it.id, true);
+    await carregarGeometriaCamada('redes', it.id);
+  }
+  renderRedesPanel();
+  invalidateSizeDosMapas();
+  const features = itens.flatMap(it => (it._geojson && it._geojson.features) || []);
+  if (features.length && mapPC) {
+    setTimeout(() => {
+      try { const b = L.geoJSON({ type:'FeatureCollection', features }).getBounds(); if (b.isValid()) mapPC.fitBounds(b, { padding: [20, 20] }); } catch(e) {}
+    }, 120);
+  }
 }
 
 // Parser KML → GeoJSON
@@ -8170,6 +8850,9 @@ function kmlToGeoJSON(kmlText) {
     const nameEl = getFirstByTag(pm,'name');
     const props = { name: nameEl ? nameEl.textContent.trim() : '' };
     getByTag(pm,'SimpleData').forEach(sd => { props[sd.getAttribute('name')] = sd.textContent; });
+    // ExtendedData no formato <Data name="..."><value>...</value></Data> (ex.: KML exportado
+    // pelo próprio app — DN, comprimento_m, layer)
+    getByTag(pm,'Data').forEach(d => { const v = getFirstByTag(d,'value'); if (d.getAttribute('name') && v) props[d.getAttribute('name')] = v.textContent; });
 
     // Muitos KMLs convertidos de DWG (por camada/layer do CAD) não têm nome no Placemark
     // — o diâmetro fica só no nome da PASTA que agrupa os trechos (ex.: pasta "T_50" =
@@ -8263,6 +8946,7 @@ function kmlCoords(el) {
 // GESTÃO
 // ================================================================
 function renderManage() {
+  renderRedesMunicipios();
   // Popula o filtro de município (uma vez populado, o valor escolhido persiste entre
   // re-renders porque comparamos pelo <select> já existente, não recriamos do zero).
   const selFiltro = document.getElementById('manage-filtro-cidade');
@@ -9592,7 +10276,7 @@ function restaurarSecaoConfig() {
 // Mesma ideia da barra lateral de Configurações, aplicada à Gestão — "Cidades e DMCs",
 // "Carregar camadas" e "Pontos registrados" cada uma na sua tela, em vez das duas
 // colunas fixas de antes.
-const GESTAO_SECOES = ['cidades-dmc', 'camadas', 'pontos', 'lista'];
+const GESTAO_SECOES = ['cidades-dmc', 'camadas', 'redes', 'pontos', 'lista'];
 function mostrarSecaoGestao(nome) {
   if (!GESTAO_SECOES.includes(nome)) nome = GESTAO_SECOES[0];
   GESTAO_SECOES.forEach(id => {
@@ -10030,7 +10714,7 @@ function aplicarModo(modo) {
 // MODAIS
 // ================================================================
 function openModal(id){document.getElementById(id).classList.add('open');}
-function closeModal(id){document.getElementById(id).classList.remove('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open'); const f=S._aoFecharModal&&S._aoFecharModal[id]; if(f){delete S._aoFecharModal[id]; f();}}
 document.addEventListener('click', e=>{
   if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
 });

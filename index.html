@@ -5421,6 +5421,11 @@ function editorDMC_mostrarResultadoSobreposicao(resultados, silencioso) {
     return '<div style="margin-bottom:8px"><b>' + r.nomeForma + '</b>' + itens + '</div>';
   }).join('');
 
+  // Na checagem automática antes de salvar (silencioso), não abre o modal nem reenquadra o
+  // mapa: o modal aberto junto com o confirm() de "Confirma salvar?" cancelava o salvamento.
+  // O destaque vermelho no mapa continua valendo.
+  if (silencioso) return;
+
   openModal('modal-sobreposicao-dmc');
 
   // Enquadra o mapa pra mostrar tanto o que está no editor quanto as áreas de conflito

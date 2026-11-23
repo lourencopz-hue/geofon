@@ -1116,6 +1116,13 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               </p>
               <button class="btn" onclick="rodarDiagnosticoIncidente()"><i class="ti ti-search"></i> Rodar diagnóstico</button>
               <button class="btn" id="btn-copiar-diagnostico" style="display:none" onclick="copiarDiagnosticoIncidente()"><i class="ti ti-copy"></i> Copiar relatório</button>
+              <div style="margin-top:12px;border-top:1px dashed var(--border);padding-top:10px">
+                <label style="color:var(--purple)"><i class="ti ti-tool"></i> Aplicar correções do incidente</label>
+                <p style="font-size:11.5px;color:var(--text2);margin:4px 0 8px">
+                  Mostra a lista exata do que vai mudar e só grava depois que você confirmar. Corrige: SID duplicada, textos dos serviços 5110/5811, contadores de numeração e vazamento sem setor.
+                </p>
+                <button class="btn primary" onclick="aplicarCorrecoesIncidente()"><i class="ti ti-check"></i> Aplicar correções</button>
+              </div>
               <pre id="saida-diagnostico" style="display:none;white-space:pre-wrap;font-size:11px;max-height:480px;overflow:auto;background:var(--bg2,#f4f4f4);padding:10px;border-radius:6px;margin-top:10px"></pre>
             </div>
           </div>
@@ -2278,6 +2285,96 @@ async function rodarDiagnosticoIncidente() {
 function copiarDiagnosticoIncidente() {
   const txt = document.getElementById('saida-diagnostico').textContent;
   navigator.clipboard.writeText(txt).then(() => toast('Relatório copiado'), () => toast('Não consegui copiar — selecione o texto manualmente'));
+}
+
+// ================================================================
+// CORREÇÕES DO INCIDENTE (2026-11-23) — grava só com merge:true, após confirmação
+// ================================================================
+const TEXTO_SERVICOS_ORIGINAIS = {
+  srv_5110: 'RA CONS. ORIGINADO GEOFONAMENTO',
+  srv_5811: 'RA CONS. RAMAL ORIGINADO GEOFONAMENTO POR LOGRADOURO'
+};
+async function aplicarCorrecoesIncidente() {
+  if (S.user?.email !== EMAIL_DIPEO) return;
+  const out = document.getElementById('saida-diagnostico');
+  out.style.display = ''; out.textContent = 'Montando a lista de correções...';
+  const { db, doc, getDoc, getDocs, collection, setDoc } = window.FB;
+  try {
+    const [seqSnap, cidSnap, leakSnap, srvSnap] = await Promise.all([
+      getDoc(doc(db,'meta','sequencias')), getDocs(collection(db,'cidades')),
+      getDocs(collection(db,'leaks')), getDocs(collection(db,'servicos'))
+    ]);
+    const plano = [];   // { desc, ref:[col,id], dados }
+    const avisos = [];
+
+    // 1. SID duplicada (só se SRS existir e nenhum vazamento usar SID)
+    const sid = cidSnap.docs.find(d => d.id === 'SID');
+    const srs = cidSnap.docs.find(d => d.id === 'SRS');
+    const leaks = leakSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    if (sid && srs && !sid.data().removida) {
+      const usando = leaks.filter(l => l.cidade === 'SID').length;
+      if (usando) avisos.push('SID NÃO foi ocultada: ' + usando + ' vazamento(s) usam SID.');
+      else plano.push({ desc: 'Ocultar a cidade SID (Siderópolis duplicada — a válida é SRS)', ref: ['cidades','SID'], dados: { removida: true } });
+    }
+
+    // 2. Textos dos serviços
+    for (const [id, descricao] of Object.entries(TEXTO_SERVICOS_ORIGINAIS)) {
+      const d = srvSnap.docs.find(x => x.id === id);
+      if (d && d.data().descricao !== descricao) {
+        plano.push({ desc: 'Serviço ' + id + ': "' + d.data().descricao + '" → "' + descricao + '"', ref: ['servicos', id], dados: { descricao } });
+      }
+    }
+
+    // 3. Contadores de numeração — só sobe, nunca desce
+    const seq = seqSnap.exists() ? seqSnap.data() : {};
+    const maior = {};
+    for (const l of leaks) {
+      const m = /^([A-Z]+)-.*-VAZ(\d+)$/.exec(l._id);
+      if (m) maior[m[1]] = Math.max(maior[m[1]] || 0, parseInt(m[2],10));
+    }
+    const novosSeq = {};
+    for (const [c, n] of Object.entries(maior)) if ((seq[c] || 0) < n) novosSeq[c] = n;
+    if (Object.keys(novosSeq).length) {
+      plano.push({
+        desc: 'Contadores de numeração: ' + Object.entries(novosSeq).map(([c,n]) => c + ' ' + (seq[c] ?? '—') + '→' + n).join(', '),
+        ref: ['meta','sequencias'], dados: novosSeq
+      });
+    }
+
+    // 4. Vazamento sem setor — só corrige se for um vazamento completo (tem cidade e coordenadas)
+    for (const l of leaks.filter(l => !l.setor)) {
+      const completo = l.cidade && typeof l.lat === 'number' && typeof l.lng === 'number';
+      if (completo) plano.push({ desc: 'Vazamento ' + l._id + ' sem setor → SEPES (cidade ' + l.cidade + ', criado ' + _fmt(_dataTs(l.criadoEm)) + ')', ref: ['leaks', l._id], dados: { setor: 'SEPES' } });
+      else avisos.push('Documento ' + l._id + ' sem setor NÃO foi alterado: está incompleto (campos: ' + Object.keys(l).filter(k=>k!=='_id').join(', ') + ') — provavelmente um resto de gravação parcial, não um vazamento real.');
+    }
+
+    const linhas = ['CORREÇÕES — ' + _fmt(new Date()), ''];
+    if (!plano.length) linhas.push('Nada a corrigir — tudo já está certo.');
+    plano.forEach((p, i) => linhas.push((i+1) + '. ' + p.desc));
+    if (avisos.length) { linhas.push(''); linhas.push('Avisos:'); avisos.forEach(a => linhas.push('  • ' + a)); }
+    out.textContent = linhas.join('\n');
+    document.getElementById('btn-copiar-diagnostico').style.display = '';
+    if (!plano.length) return;
+
+    if (!confirm('Aplicar estas ' + plano.length + ' correção(ões)? A lista completa está na tela.\n\n' + plano.map((p,i)=>(i+1)+'. '+p.desc).join('\n'))) {
+      out.textContent += '\n\nCancelado — nada foi gravado.';
+      return;
+    }
+    const resultado = [];
+    for (const p of plano) {
+      try {
+        await setDoc(doc(db, p.ref[0], p.ref[1]), p.dados, { merge: true });
+        resultado.push('✓ ' + p.desc);
+      } catch(e) {
+        resultado.push('✗ FALHOU: ' + p.desc + ' — ' + (e.message || e));
+      }
+    }
+    out.textContent += '\n\nRESULTADO:\n' + resultado.join('\n');
+    toast('Correções aplicadas — veja o resultado na tela');
+  } catch(e) {
+    console.error(e);
+    out.textContent = 'Erro: ' + (e.message || e);
+  }
 }
 
 async function rodarMigracaoMultiSetor() {

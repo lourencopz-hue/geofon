@@ -750,18 +750,49 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 
       <div class="config-content">
         <div id="gestaosec-cidades-dmc" class="config-section-panel" style="max-width:none">
-          <div class="section-title" style="margin-bottom:10px">Cidades e DMCs</div>
-          <div class="field" style="margin-bottom:10px;max-width:320px">
-            <label style="font-size:10.5px">Filtrar por município</label>
-            <select id="manage-filtro-cidade" onchange="S._manageFiltroCidade=this.value;renderManage()"
-              style="width:100%;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+            <div class="section-title" style="margin:0">Cidades e DMCs</div>
+            <div style="margin-left:auto;display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+              <button class="btn sm" id="btn-dmc-vista-tabela" onclick="mudarVistaDMCs('tabela')" style="border:none;border-radius:0"><i class="ti ti-table"></i> Tabela</button>
+              <button class="btn sm" id="btn-dmc-vista-cartoes" onclick="mudarVistaDMCs('cartoes')" style="border:none;border-radius:0;border-left:1px solid var(--border)"><i class="ti ti-layout-list"></i> Por município</button>
+            </div>
+          </div>
+          <div id="dmc-tab-resumo" style="font-size:12px;color:var(--text2);margin-bottom:10px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            <div id="dmc-tab-busca-wrap" style="position:relative;flex:1;min-width:200px;max-width:300px">
+              <i class="ti ti-search" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px"></i>
+              <input type="search" id="dmc-tab-busca" placeholder="Buscar DMC, sigla ou município..." autocomplete="off"
+                oninput="S._dmcTabBusca=this.value;renderDMCsTabela()"
+                style="width:100%;box-sizing:border-box;padding:8px 10px 8px 30px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+            </div>
+            <select id="manage-filtro-cidade" onchange="S._manageFiltroCidade=this.value;renderManage()" title="Filtrar por município"
+              style="padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);max-width:220px">
               <option value="">Todos os municípios</option>
             </select>
+            <select id="dmc-tab-situacao" onchange="S._dmcTabSituacao=this.value;renderDMCsTabela()" title="Filtrar por situação"
+              style="padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+              <option value="">Todas as situações</option>
+            </select>
+            <select id="dmc-tab-filtro" onchange="S._dmcTabFiltro=this.value;renderDMCsTabela()" title="Filtros rápidos"
+              style="padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+              <option value="">Todos os DMCs</option>
+              <option value="dividir">Precisam ser divididos</option>
+              <option value="semsigla">Sem sigla</option>
+              <option value="semcontorno">Sem contorno (KML)</option>
+              <option value="semligacoes">Sem nº de ligações</option>
+            </select>
+            <button class="btn sm" id="btn-dmc-tab-xlsx" onclick="exportarDMCsTabelaXLSX()" title="Baixa a tabela (com os filtros aplicados) em Excel">
+              <i class="ti ti-file-spreadsheet"></i> Baixar planilha
+            </button>
           </div>
-          <div id="manage-cidades"></div>
+          <div id="dmc-tabela"></div>
+          <div id="manage-cidades" class="hidden"></div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <button class="btn primary" onclick="openModalCidade()">
               <i class="ti ti-plus"></i> Adicionar cidade
+            </button>
+            <button class="btn" onclick="adicionarDMCDaTabela()" title="Cria um DMC novo no município escolhido no filtro">
+              <i class="ti ti-plus"></i> Adicionar DMC
             </button>
             <button class="btn" onclick="document.getElementById('up-dmc-xlsx').click()">
               <i class="ti ti-file-spreadsheet"></i> Importar planilha de DMCs (.xlsx)
@@ -771,8 +802,11 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             </button>
           </div>
           <input type="file" id="up-dmc-xlsx" accept=".xlsx,.xls" style="display:none" onchange="handleImportarPlanilhaDMCs(this)">
+          <p style="font-size:10.5px;color:var(--text3);margin-top:8px;line-height:1.5">
+            <b>Dividir</b> = DMC com mais de 30 km de rede ou mais de 5.000 ligações. "Verificar" = só a extensão aproximada (percorrida em campanhas) passa de 30 km — falta o contorno ou a rede para calcular a extensão real.
+          </p>
           <p style="font-size:10px;color:var(--text3);margin-top:4px">
-            Atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado. Município novo é criado automaticamente com coordenada obtida por nome (marcada para conferência).
+            Importar planilha: atualiza ligações/situação dos DMCs já cadastrados (casando pela Sigla DMC) e adiciona os que ainda não existem — nada é apagado. Município novo é criado automaticamente com coordenada obtida por nome (marcada para conferência).
           </p>
         </div>
 
@@ -1765,6 +1799,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="btn" onclick="baixarRedeCidadeKML(S._verRedeCidade)"><i class="ti ti-download"></i> Baixar KML</button>
       <button class="btn primary" onclick="irParaMapaRedePopup()"><i class="ti ti-map-2"></i> Ir para o mapa</button>
     </div>
+  </div>
+</div>
+
+<!-- Modal: editar um DMC a partir da tabela de Gestão → Cidades e DMCs -->
+<div class="modal-overlay" id="modal-editar-dmc">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <h3><i class="ti ti-polygon" style="color:var(--purple,#534AB7)"></i> <span id="edit-dmc-titulo">Editar DMC</span></h3>
+      <button class="modal-close" onclick="closeModal('modal-editar-dmc')"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="edit-dmc-corpo"></div>
   </div>
 </div>
 
@@ -9078,7 +9123,7 @@ function renderDMCPanelCityFilter() {
     ? S.cidades.filter(c => c.regional === S.dmcRegionalFiltro)
     : S.cidades;
   el.innerHTML = '<button class="toggle-btn' + (S.dmcCidadeFiltro===''?' active':'') + '" onclick="setDMCFiltro(\'\')">Todas</button>' +
-    cidadesFiltradas.map(c => '<button class="toggle-btn' + (S.dmcCidadeFiltro===c.id?' active':'') + '" onclick="setDMCFiltro(\'' + c.id + '\')">' + c.prefixo + '</button>').join('');
+    [...cidadesFiltradas].sort((a, b) => compararNomesAlfabetica(a.nome, b.nome)).map(c => '<button class="toggle-btn' + (S.dmcCidadeFiltro===c.id?' active':'') + '" onclick="setDMCFiltro(\'' + c.id + '\')">' + c.prefixo + '</button>').join('');
 }
 function setDMCFiltro(cid) {
   S.dmcCidadeFiltro = cid;
@@ -9086,6 +9131,11 @@ function setDMCFiltro(cid) {
   renderDMCPanel();
 }
 
+// Ordem alfabética dos DMCs nas listas do mapa (Campo e Desktop) — ignora maiúsculas e
+// acentos e trata números de forma natural ("DMC 2" antes de "DMC 10").
+function compararNomesAlfabetica(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+}
 function renderDMCPanel() {
   const el = document.getElementById('dmc-panel-list');
   if (!el) return;
@@ -9102,7 +9152,7 @@ function renderDMCPanel() {
     // no upload), mas se algum dado antigo ainda tiver cidade vazia, ela só aparece
     // quando o filtro está em "Todas" — não mais em qualquer filtro de cidade específica.
     return !S.dmcCidadeFiltro || l.cidade === S.dmcCidadeFiltro;
-  });
+  }).sort((a, b) => compararNomesAlfabetica(a.nome, b.nome));
   if (!allLayers.length) {
     el.innerHTML='<p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.<br><small>Use o botão acima para carregar um KML.</small></p>';
     return;
@@ -9231,7 +9281,9 @@ function renderLayerLists() {
   ['dmc','redes'].forEach(t => {
     const el = document.getElementById(t + '-layer-list');
     if (!el) return;
-    el.innerHTML = (S.leafletLayers[t]||[]).map((item, i) => {
+    const itens = (S.leafletLayers[t]||[]).map((item, i) => ({ item, i }));
+    if (t === 'dmc') itens.sort((a, b) => compararNomesAlfabetica(a.item.nome, b.item.nome));
+    el.innerHTML = itens.map(({ item, i }) => {
       const podeRemoverEsta = ehSuperior || (!item.validada && item.criadoPor === S.user?.uid);
       const avisoValidacao = !item.validada
         ? '<div style="font-size:9.5px;color:var(--amber);font-weight:600">Pendente de validação</div>'
@@ -10165,8 +10217,357 @@ function kmlCoords(el) {
 // ================================================================
 // GESTÃO
 // ================================================================
+// ================================================================
+// GESTÃO → CIDADES E DMCs em TABELA (uma linha por DMC), nos moldes de "Redes por
+// município". A visão antiga em cartões por município continua disponível pelo botão
+// "Por município" (tem as ações que só existem lá, como recalcular extensão).
+// ================================================================
+// Critério para indicar que um DMC precisa ser dividido (combinado em 2026-11-24).
+const LIMITE_DIVISAO_DMC = { extensaoM: 30000, ligacoes: 5000 };
+S._dmcTabOrdem = { col: 'municipio', dir: 1 };
+S._dmcTabBusca = ''; S._dmcTabSituacao = ''; S._dmcTabFiltro = '';
+S._dmcContornosTentados = new Set();
+S._dmcContornosCarregando = false;
+
+function vistaDMCsAtual() {
+  try { return localStorage.getItem('geofon_gestao_dmc_vista') === 'cartoes' ? 'cartoes' : 'tabela'; } catch(e) { return 'tabela'; }
+}
+function mudarVistaDMCs(vista) {
+  try { localStorage.setItem('geofon_gestao_dmc_vista', vista); } catch(e) {}
+  aplicarVistaDMCs();
+  renderManage();
+}
+function aplicarVistaDMCs() {
+  const tabela = vistaDMCsAtual() === 'tabela';
+  const mostrar = (id, sim) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !sim); };
+  mostrar('dmc-tabela', tabela); mostrar('dmc-tab-resumo', tabela); mostrar('dmc-tab-busca-wrap', tabela);
+  mostrar('dmc-tab-situacao', tabela); mostrar('dmc-tab-filtro', tabela); mostrar('btn-dmc-tab-xlsx', tabela);
+  mostrar('manage-cidades', !tabela);
+  const bT = document.getElementById('btn-dmc-vista-tabela'), bC = document.getElementById('btn-dmc-vista-cartoes');
+  if (bT) bT.classList.toggle('primary', tabela);
+  if (bC) bC.classList.toggle('primary', !tabela);
+}
+
+// Situação de divisão de um DMC: 'dividir' (passa de algum limite com dado real),
+// 'verificar' (só a extensão aproximada passa de 30 km) ou '' (ok / sem dado).
+function avaliarDivisaoDMC(d) {
+  const motivos = [];
+  if (d.ligacoes != null && Number(d.ligacoes) > LIMITE_DIVISAO_DMC.ligacoes)
+    motivos.push(Number(d.ligacoes).toLocaleString('pt-BR') + ' ligações (limite ' + LIMITE_DIVISAO_DMC.ligacoes.toLocaleString('pt-BR') + ')');
+  if (d.extensaoRede != null && Number(d.extensaoRede) > LIMITE_DIVISAO_DMC.extensaoM)
+    motivos.push(formatarExtensao(Number(d.extensaoRede)) + ' de rede (limite 30 km)');
+  if (motivos.length) return { nivel: 'dividir', motivos };
+  if (d.extensaoRede == null && d.extensaoPercorrida != null && Number(d.extensaoPercorrida) > LIMITE_DIVISAO_DMC.extensaoM)
+    return { nivel: 'verificar', motivos: ['~' + formatarExtensao(Number(d.extensaoPercorrida)) + ' percorridos em campanhas (extensão real ainda não calculada)'] };
+  return { nivel: '', motivos: [] };
+}
+
+// Contorno (KML) de cada DMC: precisa da geometria das camadas de DMC para ler os nomes
+// das feições. Carrega em segundo plano só quando a tabela está na tela, uma vez por camada.
+function nomeFeatureDMC(p) {
+  p = p || {};
+  return p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
+}
+function garantirContornosDMCTabela(visivel) {
+  const camadas = (S.leafletLayers.dmc || []).filter(i => !i.removida);
+  const pendentes = camadas.filter(i => !i._geojson && !S._dmcContornosTentados.has(i.id));
+  if (!visivel || !pendentes.length || S._dmcContornosCarregando) return;
+  S._dmcContornosCarregando = true;
+  pendentes.forEach(i => S._dmcContornosTentados.add(i.id));
+  Promise.allSettled(pendentes.map(garantirGeometriaCarregada)).then(() => {
+    S._dmcContornosCarregando = false;
+    renderDMCsTabela();
+  });
+}
+// Retorna a camada de contorno do DMC, null se não tem, ou undefined se ainda carregando.
+function contornoDoDMC(cidadeId, d) {
+  const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
+  let carregando = false;
+  for (const item of camadas) {
+    if (!item._geojson) { if (!S._dmcContornosTentados.has(item.id) || S._dmcContornosCarregando) carregando = true; continue; }
+    const bate = (item._geojson.features || []).some(ft => {
+      const nome = nomeFeatureDMC(ft.properties);
+      if (!nome) return false;
+      return (d.nomeFeatureKml && nome.trim() === d.nomeFeatureKml.trim()) || nomesDMCBatem(nome, d.nome);
+    });
+    if (bate) return item;
+  }
+  return carregando ? undefined : null;
+}
+
+function linhasDMCsTabela() {
+  const linhas = [];
+  const vazPorDMC = {};
+  (S.leaks || []).forEach(l => { const k = l.cidade + '::' + l.dmc; vazPorDMC[k] = (vazPorDMC[k] || 0) + 1; });
+  S.cidades.forEach(c => {
+    const reais = (c.dmcs || []).map((d, idx) => ({ d, idx })).filter(x => x.d.nome !== DMC_SEM_DMC);
+    if (!reais.length) { linhas.push({ c, d: null, idx: -1 }); return; }
+    reais.forEach(({ d, idx }) => {
+      const contorno = contornoDoDMC(c.id, d);
+      const div = avaliarDivisaoDMC(d);
+      const ext = d.extensaoRede != null ? Number(d.extensaoRede) : (d.extensaoPercorrida != null ? Number(d.extensaoPercorrida) : null);
+      linhas.push({
+        c, d, idx, contorno, div, ext, extAprox: d.extensaoRede == null && d.extensaoPercorrida != null,
+        vaz: vazPorDMC[c.id + '::' + d.nome] || 0,
+        divRank: div.nivel === 'dividir' ? 2 : div.nivel === 'verificar' ? 1 : 0
+      });
+    });
+  });
+  return linhas;
+}
+
+function ordenarDMCsTabela(col) {
+  const o = S._dmcTabOrdem;
+  if (o.col === col) o.dir = -o.dir;
+  else { o.col = col; o.dir = ['ligacoes', 'extensao', 'vazamentos', 'divisao'].includes(col) ? -1 : 1; }
+  renderDMCsTabela();
+}
+
+function renderDMCsTabela() {
+  const el = document.getElementById('dmc-tabela');
+  if (!el) return;
+  aplicarVistaDMCs();
+  // Opções de situação (lista editável em Configurações)
+  const selSit = document.getElementById('dmc-tab-situacao');
+  if (selSit) {
+    const desejado = '<option value="">Todas as situações</option>' + (S.situacoesDMC || []).map(s => '<option value="' + escHtml(s) + '">' + escHtml(s) + '</option>').join('') + '<option value="__sem">Sem situação</option>';
+    if (selSit.dataset.html !== desejado) { selSit.innerHTML = desejado; selSit.dataset.html = desejado; }
+    selSit.value = S._dmcTabSituacao || '';
+  }
+  if (vistaDMCsAtual() !== 'tabela') return;
+  garantirContornosDMCTabela(!!el.offsetParent);
+
+  const todas = linhasDMCsTabela();
+  const comDMC = todas.filter(l => l.d);
+  const resumoEl = document.getElementById('dmc-tab-resumo');
+  if (resumoEl) {
+    const nDividir = comDMC.filter(l => l.div.nivel === 'dividir').length;
+    const nVerificar = comDMC.filter(l => l.div.nivel === 'verificar').length;
+    const nSemSigla = comDMC.filter(l => !l.d.sigla).length;
+    const nSemContorno = comDMC.filter(l => l.contorno === null).length;
+    const munComDMC = new Set(comDMC.map(l => l.c.id)).size;
+    resumoEl.innerHTML = '<b>' + comDMC.length + '</b> DMCs em <b>' + munComDMC + '</b> municípios' +
+      ' · <b style="color:' + (nDividir ? 'var(--red)' : 'inherit') + '">' + nDividir + '</b> precisam ser divididos' +
+      (nVerificar ? ' · <b>' + nVerificar + '</b> a verificar' : '') +
+      ' · ' + nSemSigla + ' sem sigla · ' + nSemContorno + ' sem contorno' +
+      (S._dmcContornosCarregando ? ' <span style="color:var(--text3)">(conferindo contornos...)</span>' : '') + '.';
+  }
+
+  const busca = textoBusca(S._dmcTabBusca);
+  const filtradas = todas.filter(l => {
+    if (S._manageFiltroCidade && l.c.id !== S._manageFiltroCidade) return false;
+    if (busca && !textoBusca(l.c.nome + ' ' + l.c.prefixo + ' ' + (l.c.regional || '') + ' ' + (l.d ? l.d.nome + ' ' + (l.d.sigla || '') : '')).includes(busca)) return false;
+    const precisaDMC = S._dmcTabSituacao || S._dmcTabFiltro;
+    if (precisaDMC && !l.d) return false;
+    if (S._dmcTabSituacao === '__sem' && l.d.situacao) return false;
+    if (S._dmcTabSituacao && S._dmcTabSituacao !== '__sem' && l.d.situacao !== S._dmcTabSituacao) return false;
+    if (S._dmcTabFiltro === 'dividir' && !l.div.nivel) return false;
+    if (S._dmcTabFiltro === 'semsigla' && l.d.sigla) return false;
+    if (S._dmcTabFiltro === 'semcontorno' && l.contorno !== null) return false;
+    if (S._dmcTabFiltro === 'semligacoes' && l.d.ligacoes != null) return false;
+    return true;
+  });
+  const { col, dir } = S._dmcTabOrdem;
+  const chave = {
+    municipio: l => textoBusca(l.c.nome), regional: l => textoBusca(l.c.regional || ''),
+    nome: l => l.d ? textoBusca(l.d.nome) : null, sigla: l => l.d && l.d.sigla ? textoBusca(l.d.sigla) : null,
+    situacao: l => l.d && l.d.situacao ? textoBusca(l.d.situacao) : null,
+    ligacoes: l => l.d && l.d.ligacoes != null ? Number(l.d.ligacoes) : null,
+    extensao: l => l.d ? l.ext : null, contorno: l => l.d ? (l.contorno ? 1 : l.contorno === null ? 0 : null) : null,
+    vazamentos: l => l.d ? l.vaz : null, divisao: l => l.d ? l.divRank : null
+  }[col] || (l => textoBusca(l.c.nome));
+  const desempate = (a, b) => textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome)) || textoBusca(a.d ? a.d.nome : '').localeCompare(textoBusca(b.d ? b.d.nome : ''));
+  filtradas.sort((a, b) => {
+    const va = chave(a), vb = chave(b);
+    const vaz = va == null || va === '', vbz = vb == null || vb === '';
+    if (vaz && vbz) return desempate(a, b);
+    if (vaz) return 1; if (vbz) return -1;
+    const r = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR');
+    return r * dir || desempate(a, b);
+  });
+  if (!filtradas.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhum DMC encontrado com esses filtros.</p>'; return; }
+
+  const th = (id, rotulo, direita) => {
+    const ativo = col === id, seta = ativo ? (dir === 1 ? ' ▲' : ' ▼') : '';
+    return '<th onclick="ordenarDMCsTabela(\'' + id + '\')" title="Ordenar por ' + rotulo.toLowerCase() + '" style="cursor:pointer;user-select:none;white-space:nowrap' + (direita ? ';text-align:right' : '') + (ativo ? ';color:var(--blue)' : '') + '">' + rotulo + seta + '</th>';
+  };
+  const vermelho = 'color:var(--red);font-weight:600';
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>' +
+    th('municipio', 'Município') + th('regional', 'Regional') + th('nome', 'DMC (nome)') + th('sigla', 'Sigla') + th('situacao', 'Situação') +
+    th('ligacoes', 'Ligações', true) + th('extensao', 'Extensão de rede', true) + th('contorno', 'Contorno') + th('vazamentos', 'Vaz.', true) + th('divisao', 'Divisão') + '<th></th>' +
+    '</tr></thead><tbody>' + filtradas.map(l => {
+      const mun = '<td style="white-space:nowrap"><span class="badge purple">' + escHtml(l.c.prefixo) + '</span> ' + escHtml(l.c.nome) + '</td><td>' + escHtml(l.c.regional || '—') + '</td>';
+      if (!l.d) {
+        return '<tr style="color:var(--text3)">' + mun + '<td colspan="8"><i>Nenhum DMC cadastrado</i></td>' +
+          '<td><div style="display:flex;justify-content:flex-end"><button class="btn sm" onclick="adicionarDMCManual(\'' + l.c.id + '\')"><i class="ti ti-plus"></i>DMC</button></div></td></tr>';
+      }
+      const d = l.d;
+      const corSit = d.situacao && (d.corPersonalizada || S.coresPorSituacaoDMC[d.situacao]);
+      const sit = d.situacao
+        ? (corSit ? '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + corSit + ';margin-right:5px;vertical-align:middle"></span>' : '') + escHtml(d.situacao)
+        : '<span style="color:var(--text3)">—</span>';
+      const ligAlta = d.ligacoes != null && Number(d.ligacoes) > LIMITE_DIVISAO_DMC.ligacoes;
+      const extAlta = d.extensaoRede != null && Number(d.extensaoRede) > LIMITE_DIVISAO_DMC.extensaoM;
+      const extTxt = l.ext == null ? '—'
+        : (l.extAprox ? '<span title="Aproximada — extensão percorrida em campanhas; a real precisa do contorno e da rede">~' + formatarExtensao(l.ext) + '</span>' : formatarExtensao(l.ext));
+      const infoKml = l.contorno ? infoUploadCamada(l.contorno) : '';
+      const contorno = l.contorno === undefined ? '<span style="color:var(--text3)">…</span>'
+        : l.contorno ? '<span title="Contorno vinculado' + (infoKml ? ' — atualizado ' + escHtml(infoKml) : '') + '" style="white-space:nowrap"><i class="ti ti-map-check" style="color:var(--green)"></i> ' + escHtml(dataCurtaCamada(l.contorno) || 'Sim') + '</span>'
+        : '<span title="Nenhum KML com o nome deste DMC" style="color:var(--amber);white-space:nowrap"><i class="ti ti-map-pin-question"></i> Não</span>';
+      const divisao = l.div.nivel === 'dividir'
+        ? '<span class="badge alta" title="' + escHtml(l.div.motivos.join(' · ')) + '"><i class="ti ti-cut"></i> Dividir</span>'
+        : l.div.nivel === 'verificar'
+          ? '<span class="badge media" title="' + escHtml(l.div.motivos.join(' · ')) + '">Verificar</span>'
+          : '<span style="color:var(--text3)">—</span>';
+      return '<tr' + (l.div.nivel === 'dividir' ? ' style="background:rgba(226,75,74,.06)"' : '') + '>' + mun +
+        '<td style="font-weight:600">' + escHtml(d.nome) + '</td>' +
+        '<td style="font-family:monospace;font-size:11px">' + (d.sigla ? escHtml(d.sigla) : '<span style="color:var(--amber);font-family:inherit">sem sigla</span>') + '</td>' +
+        '<td style="white-space:nowrap">' + sit + '</td>' +
+        '<td style="text-align:right;white-space:nowrap' + (ligAlta ? ';' + vermelho : '') + '">' + (d.ligacoes != null ? Number(d.ligacoes).toLocaleString('pt-BR') : '—') + '</td>' +
+        '<td style="text-align:right;white-space:nowrap' + (extAlta ? ';' + vermelho : '') + '">' + extTxt + '</td>' +
+        '<td>' + contorno + '</td>' +
+        '<td style="text-align:right">' + (l.vaz || '—') + '</td>' +
+        '<td style="white-space:nowrap">' + divisao + '</td>' +
+        '<td><div style="display:flex;justify-content:flex-end"><button class="btn sm" onclick="abrirEditarDMC(\'' + l.c.id + '\',' + l.idx + ')" title="Editar nome, sigla, situação, ligações e cor"><i class="ti ti-pencil"></i>Editar</button></div></td>' +
+      '</tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+// Pop-up de edição de um DMC (mesmas funções de gravação da visão por município).
+S._editDMC = null;
+function abrirEditarDMC(cidadeId, idx) {
+  const c = S.cidades.find(x => x.id === cidadeId);
+  const d = c && c.dmcs[idx];
+  if (!d) return;
+  S._editDMC = { cidadeId, idx, nome: d.nome };
+  document.getElementById('edit-dmc-titulo').textContent = d.nome + ' — ' + c.nome;
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)';
+  const div = avaliarDivisaoDMC(d);
+  const contorno = contornoDoDMC(cidadeId, d);
+  const extTxt = d.extensaoRede != null ? formatarExtensao(Number(d.extensaoRede))
+    : d.extensaoPercorrida != null ? '~' + formatarExtensao(Number(d.extensaoPercorrida)) + ' (aproximada, percorrida em campanhas)' : '—';
+  document.getElementById('edit-dmc-corpo').innerHTML =
+    '<div class="field"><label>Nome <small style="color:var(--text3)">(o que a equipe vê no campo e o que fica gravado nos vazamentos)</small></label>' +
+      '<input id="edit-dmc-nome" type="text" value="' + escHtml(d.nome) + '" style="' + inp + '"></div>' +
+    '<div class="field"><label>Sigla <small style="color:var(--text3)">(identificador oficial, usado em Gestão/Relatórios e na planilha)</small></label>' +
+      '<input id="edit-dmc-sigla" type="text" value="' + escHtml(d.sigla || '') + '" placeholder="ex: BDN-DMC-Alinea" style="' + inp + ';font-family:monospace"></div>' +
+    '<div style="display:flex;gap:10px">' +
+      '<div class="field" style="flex:1"><label>Situação</label><select id="edit-dmc-situacao" style="' + inp + '"><option value="">—</option>' +
+        (S.situacoesDMC || []).map(s => '<option value="' + escHtml(s) + '"' + (d.situacao === s ? ' selected' : '') + '>' + escHtml(s) + '</option>').join('') + '</select></div>' +
+      '<div class="field" style="width:130px"><label>Ligações</label><input id="edit-dmc-ligacoes" type="number" min="0" value="' + (d.ligacoes ?? '') + '" style="' + inp + '"></div>' +
+    '</div>' +
+    '<div class="field"><label>Cor do contorno no mapa</label><div style="display:flex;gap:5px;flex-wrap:wrap">' +
+      PALETA_CORES_DMC.map(cor => '<button type="button" onclick="S._editDMC.cor=\'' + cor + '\';this.parentNode.querySelectorAll(\'button\').forEach(b=>b.style.outline=\'\');this.style.outline=\'2px solid var(--text)\'" style="width:20px;height:20px;border-radius:50%;background:' + cor + ';border:2px solid #fff;box-shadow:0 0 0 1px var(--border);cursor:pointer;padding:0' + (d.corPersonalizada === cor ? ';outline:2px solid var(--text)' : '') + '"></button>').join('') +
+      '<button type="button" title="Cor original do KML" onclick="S._editDMC.cor=\'\';this.parentNode.querySelectorAll(\'button\').forEach(b=>b.style.outline=\'\');this.style.outline=\'2px solid var(--text)\'" style="width:20px;height:20px;border-radius:50%;background:repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%/6px 6px;border:1px solid var(--border);cursor:pointer;padding:0' + (!d.corPersonalizada ? ';outline:2px solid var(--text)' : '') + '"></button>' +
+    '</div></div>' +
+    '<div style="font-size:11.5px;color:var(--text2);background:var(--bg2);border-radius:var(--radius);padding:8px 10px;margin-bottom:12px;line-height:1.6">' +
+      'Extensão de rede: <b>' + extTxt + '</b><br>' +
+      'Contorno (KML): <b>' + (contorno ? 'vinculado' + (infoUploadCamada(contorno) ? ' — ' + escHtml(infoUploadCamada(contorno)) : '') : contorno === null ? 'não encontrado' : 'conferindo...') + '</b><br>' +
+      'Vazamentos registrados: <b>' + S.leaks.filter(l => l.cidade === cidadeId && l.dmc === d.nome).length + '</b>' +
+      (div.nivel ? '<br><span style="color:' + (div.nivel === 'dividir' ? 'var(--red)' : 'var(--amber)') + ';font-weight:600">' + (div.nivel === 'dividir' ? '✂ Precisa ser dividido: ' : 'Verificar divisão: ') + escHtml(div.motivos.join(' · ')) + '</span>' : '') +
+    '</div>' +
+    '<div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">' +
+      '<button class="btn" style="color:var(--red)" onclick="removerDMCDaTabela()"><i class="ti ti-trash"></i> Remover</button>' +
+      '<div style="display:flex;gap:8px"><button class="btn" onclick="closeModal(\'modal-editar-dmc\')">Cancelar</button>' +
+      '<button class="btn primary" id="edit-dmc-salvar" onclick="salvarEditarDMC()"><i class="ti ti-device-floppy"></i> Salvar</button></div>' +
+    '</div>';
+  openModal('modal-editar-dmc');
+}
+// Índice atual do DMC aberto no pop-up (a lista pode ter mudado enquanto ele estava aberto).
+function _idxDMCEditando() {
+  const e = S._editDMC; if (!e) return -1;
+  const c = S.cidades.find(x => x.id === e.cidadeId);
+  if (!c) return -1;
+  if (c.dmcs[e.idx] && c.dmcs[e.idx].nome === e.nome) return e.idx;
+  return c.dmcs.findIndex(d => d.nome === e.nome);
+}
+async function salvarEditarDMC() {
+  const e = S._editDMC; if (!e) return;
+  const c = S.cidades.find(x => x.id === e.cidadeId);
+  const idx = _idxDMCEditando();
+  if (!c || idx < 0) { toast('Não encontrei esse DMC — a lista foi alterada. Abra de novo.'); closeModal('modal-editar-dmc'); return; }
+  const d = c.dmcs[idx];
+  const nome = document.getElementById('edit-dmc-nome').value.trim();
+  if (!nome) { toast('O nome do DMC não pode ficar vazio'); return; }
+  if (nome !== d.nome && c.dmcs.some((x, i) => i !== idx && normTxt(x.nome) === normTxt(nome))) { toast('Já existe outro DMC com esse nome em ' + c.nome); return; }
+  const sigla = document.getElementById('edit-dmc-sigla').value.trim();
+  const situacao = document.getElementById('edit-dmc-situacao').value || null;
+  const ligTxt = document.getElementById('edit-dmc-ligacoes').value;
+  const ligacoes = ligTxt === '' ? null : Number(ligTxt);
+  const btn = document.getElementById('edit-dmc-salvar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+  try {
+    const nomeAntigo = d.nome;
+    const mudouSituacao = (d.situacao || null) !== situacao;
+    const mudouCor = e.cor !== undefined && (e.cor || null) !== (d.corPersonalizada || null);
+    d.nome = nome; d.sigla = sigla; d.situacao = situacao; d.ligacoes = ligacoes;
+    if (mudouCor) d.corPersonalizada = e.cor ? normalizarCorEntrada(e.cor) : null;
+    await salvarCidadeFirestore(c);
+    let nLeaks = 0;
+    if (nome !== nomeAntigo) {
+      // Mesmo cuidado de editarCampoDMC: vazamentos guardam o NOME do DMC.
+      const leaksParaAtualizar = S.leaks.filter(l => l.cidade === c.id && l.dmc === nomeAntigo);
+      for (const l of leaksParaAtualizar) await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', l.id), { dmc: nome }, { merge: true });
+      nLeaks = leaksParaAtualizar.length;
+    }
+    if (mudouSituacao || mudouCor) redesenharCamadasComCorAtualizada();
+    closeModal('modal-editar-dmc');
+    renderManage();
+    toast('✓ DMC atualizado' + (nLeaks ? ' (' + nLeaks + ' vazamento(s) com o nome novo)' : ''));
+  } catch (err) {
+    console.error(err);
+    toast('Erro ao salvar o DMC: ' + (err.message || err));
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-device-floppy"></i> Salvar'; }
+  }
+}
+async function removerDMCDaTabela() {
+  const e = S._editDMC; if (!e) return;
+  const idx = _idxDMCEditando();
+  if (idx < 0) return;
+  closeModal('modal-editar-dmc');
+  await removerDMC(e.cidadeId, idx);
+  renderManage();
+}
+function adicionarDMCDaTabela() {
+  if (!S._manageFiltroCidade) { toast('Escolha primeiro o município no filtro "Todos os municípios"'); document.getElementById('manage-filtro-cidade')?.focus(); return; }
+  adicionarDMCManual(S._manageFiltroCidade).then(() => renderManage());
+}
+
+function exportarDMCsTabelaXLSX() {
+  if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha não carregou — verifique a internet'); return; }
+  // Mesmas linhas/filtros da tela: re-renderiza para garantir e lê na mesma ordem.
+  const todas = linhasDMCsTabela().filter(l => l.d);
+  const busca = textoBusca(S._dmcTabBusca);
+  const linhas = todas.filter(l => {
+    if (S._manageFiltroCidade && l.c.id !== S._manageFiltroCidade) return false;
+    if (busca && !textoBusca(l.c.nome + ' ' + l.c.prefixo + ' ' + (l.c.regional || '') + ' ' + l.d.nome + ' ' + (l.d.sigla || '')).includes(busca)) return false;
+    if (S._dmcTabSituacao === '__sem' && l.d.situacao) return false;
+    if (S._dmcTabSituacao && S._dmcTabSituacao !== '__sem' && l.d.situacao !== S._dmcTabSituacao) return false;
+    if (S._dmcTabFiltro === 'dividir' && !l.div.nivel) return false;
+    if (S._dmcTabFiltro === 'semsigla' && l.d.sigla) return false;
+    if (S._dmcTabFiltro === 'semcontorno' && l.contorno !== null) return false;
+    if (S._dmcTabFiltro === 'semligacoes' && l.d.ligacoes != null) return false;
+    return true;
+  }).sort((a, b) => textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome)) || textoBusca(a.d.nome).localeCompare(textoBusca(b.d.nome)));
+  if (!linhas.length) { toast('Nada para exportar com esses filtros'); return; }
+  const dados = [['Município', 'Sigla município', 'Regional', 'DMC (nome)', 'Sigla DMC', 'Situação', 'Ligações', 'Extensão de rede (km)', 'Extensão aproximada?', 'Contorno KML', 'Vazamentos', 'Divisão', 'Motivo']];
+  linhas.forEach(l => dados.push([
+    l.c.nome, l.c.prefixo, l.c.regional || '', l.d.nome, l.d.sigla || '', l.d.situacao || '',
+    l.d.ligacoes != null ? Number(l.d.ligacoes) : '', l.ext != null ? Math.round(l.ext / 10) / 100 : '', l.ext != null ? (l.extAprox ? 'Sim' : 'Não') : '',
+    l.contorno ? 'Sim' : l.contorno === null ? 'Não' : '', l.vaz,
+    l.div.nivel === 'dividir' ? 'Dividir' : l.div.nivel === 'verificar' ? 'Verificar' : '', l.div.motivos.join('; ')
+  ]));
+  const ws = XLSX.utils.aoa_to_sheet(dados);
+  ws['!cols'] = [18, 8, 12, 26, 22, 14, 9, 11, 10, 9, 9, 9, 50].map(w => ({ wch: w }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'DMCs');
+  const hoje = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, 'GeoFon_DMCs_' + hoje + '.xlsx');
+}
+
 function renderManage() {
   renderRedesMunicipios();
+  renderDMCsTabela();
   // Popula o filtro de município (uma vez populado, o valor escolhido persiste entre
   // re-renders porque comparamos pelo <select> já existente, não recriamos do zero).
   const selFiltro = document.getElementById('manage-filtro-cidade');
@@ -11506,6 +11907,7 @@ function mostrarSecaoGestao(nome) {
     if (navItem) navItem.classList.toggle('active', id === nome);
   });
   try { localStorage.setItem('gestaoSecaoAtual', nome); } catch(e) {}
+  if (nome === 'cidades-dmc') renderDMCsTabela(); // começa a conferir os contornos só quando a tabela aparece
 }
 function restaurarSecaoGestao() {
   let salvo;

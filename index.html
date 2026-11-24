@@ -3651,6 +3651,9 @@ function iniciarSincronizacaoCamadas() {
         // Extensão total (m) e origem (kml/dxf) — gravadas a partir desta versão no upload
         // de rede; camadas antigas não têm (a tela Redes por município mostra "—").
         extensaoM: (typeof l.extensaoM === 'number') ? l.extensaoM : null, origem: l.origem || '',
+        // Retângulo envolvente [oeste, sul, leste, norte] — gravado a partir de 2026-11-24;
+        // deixa a checagem de sobreposição baixar só os arquivos de DMCs vizinhos.
+        bbox: bboxValido(l.bbox) ? l.bbox : null,
         visible: estaVisivelLocalmente(docSnap.id),
         lgField: existente ? existente.lgField : null,
         lgPC: existente ? existente.lgPC : null,
@@ -5428,6 +5431,8 @@ async function editorDMC_popularSelectDMC() {
   // preencher o seletor com o resultado de uma escolha antiga.
   if (document.getElementById('editor-dmc-cidade').value !== c.id) return;
 
+  // Ordem alfabética (números em ordem natural: "DMC 2" antes de "DMC 10")
+  dmcs.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { numeric: true, sensitivity: 'base' }));
   selDMC.innerHTML = '<option value="">Todos os DMCs vinculados desta cidade</option>' +
     dmcs.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
   selDMC.disabled = false;
@@ -5804,6 +5809,20 @@ function editorDMC_formatarArea(m2) {
 // ser que silencioso=true, usado pela chamada automática dentro de "Salvar", que nesse
 // caso só quer o resultado pra decidir se avisa, sem interromper com um toast de "nada
 // encontrado" toda vez que salvar sem problema nenhum).
+// Grava o bbox nas camadas antigas que ainda não têm (só admin/supervisor; em segundo
+// plano, sem travar nada — se falhar, tenta de novo numa próxima checagem).
+function editorDMC_gravarBboxFaltantes(itens) {
+  const role = S.userDoc?.role;
+  if (role !== 'admin' && role !== 'supervisor') return;
+  itens.filter(i => !i.bbox && i._geojson).forEach(item => {
+    const b = bboxDeGeojson(item._geojson);
+    if (!b) return;
+    item.bbox = b;
+    window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { bbox: b }, { merge: true })
+      .catch(err => { item.bbox = null; console.warn('Não gravou bbox da camada ' + item.id, err); });
+  });
+}
+
 async function editorDMC_verificarSobreposicao(silencioso, aoProgredir) {
   if (typeof turf === 'undefined') {
     if (!silencioso) toast('⚠️ Biblioteca de geometria (Turf) ainda não carregou — tente de novo em alguns segundos');
@@ -5828,8 +5847,15 @@ async function editorDMC_verificarSobreposicao(silencioso, aoProgredir) {
   // Garante a geometria de TODAS as camadas de DMC do sistema — não só as da cidade
   // escolhida na barra — antes de comparar. Camadas já vistas antes nesta sessão não
   // geram nova busca (garantirGeometriaCarregada só busca o que ainda não tem _geojson).
-  const todasCamadas = (S.leafletLayers.dmc || []).filter(i => !i.removida);
+  // Só baixa os arquivos de DMC cujo retângulo envolvente (bbox, gravado no cadastro)
+  // encosta no que está no editor — com margem de ~200 m. Arquivo sem bbox ainda (camada
+  // antiga) é baixado sempre, e ganha o bbox gravado para as próximas vezes.
+  const bboxEditor = bboxDeGeojson({ type: 'FeatureCollection', features: formas.map(f => f.geojson) });
+  const MARGEM_BBOX_GRAUS = 0.002;
+  const todasCamadas = (S.leafletLayers.dmc || []).filter(i => !i.removida &&
+    (!bboxEditor || !i.bbox || bboxesSeTocam(i.bbox, bboxEditor, MARGEM_BBOX_GRAUS)));
   await garantirGeometriaVarias(todasCamadas, aoProgredir);
+  editorDMC_gravarBboxFaltantes(todasCamadas);
 
   // Lista achatada de "candidatos": um por feature-polígono de DMC já cadastrada, com o
   // nome do DMC e da cidade já resolvidos, pronta pra comparar contra cada forma do editor.
@@ -8438,6 +8464,34 @@ function detectCidadeFromName(nome) {
   return '';
 }
 
+// ---------------- Retângulo envolvente (bbox) de cada camada (2026-11-24) ----------------
+// Gravado no documento da camada (campo bbox = [oeste, sul, leste, norte]) ao salvar ou
+// atualizar a geometria. Camadas antigas ganham o bbox na primeira vez que alguém com
+// permissão (admin/supervisor) roda a checagem de sobreposição e o arquivo é baixado.
+function bboxValido(b) {
+  return Array.isArray(b) && b.length === 4 && b.every(v => typeof v === 'number' && isFinite(v)) && b[0] <= b[2] && b[1] <= b[3];
+}
+function bboxDeGeojson(geojson) {
+  let o = Infinity, sl = Infinity, l = -Infinity, n = -Infinity;
+  const visitar = c => {
+    if (!Array.isArray(c)) return;
+    if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+      if (c[0] < o) o = c[0]; if (c[0] > l) l = c[0];
+      if (c[1] < sl) sl = c[1]; if (c[1] > n) n = c[1];
+      return;
+    }
+    c.forEach(visitar);
+  };
+  const feats = geojson && geojson.type === 'FeatureCollection' ? geojson.features : [geojson];
+  (feats || []).forEach(ft => { const g = ft && (ft.geometry || ft); if (g && g.coordinates) visitar(g.coordinates); });
+  const b = [o, sl, l, n].map(v => Math.round(v * 1e6) / 1e6);
+  return bboxValido(b) ? b : null;
+}
+function bboxesSeTocam(a, b, margemGraus) {
+  const m = margemGraus || 0;
+  return !(a[2] + m < b[0] || b[2] + m < a[0] || a[3] + m < b[1] || b[3] + m < a[1]);
+}
+
 // Grava a camada inteira (com o GeoJSON) como um documento no Firestore.
 // onSnapshot (iniciarSincronizacaoCamadas) detecta o NOVO METADADO automaticamente em
 // todos os dispositivos; a geometria (agora um arquivo no Storage, não mais um campo
@@ -8474,6 +8528,7 @@ async function salvarCamadaFirestore(geojson, tipo, nome, cidadeId, meta) {
   const validada = (role === 'admin' || role === 'supervisor');
   await setDoc(doc(db, 'camadas', id), {
     tipo, nome, cidade: cidadeId || '', geojsonUrl,
+    ...(bboxDeGeojson(geojson) ? { bbox: bboxDeGeojson(geojson) } : {}),
     criadoEm: serverTimestamp(), criadoPor: S.user?.uid || '',
     criadoPorNome: S.user?.nome || S.user?.email || '',
     validada,
@@ -8497,6 +8552,7 @@ async function atualizarGeometriaCamada(camadaId, novoGeojson) {
     const geojsonUrl = await getDownloadURL(fileRef);
     await setDoc(doc(db, 'camadas', camadaId), {
       geojsonUrl, ultimaAtualizacao: serverTimestamp(),
+      ...(bboxDeGeojson(novoGeojson) ? { bbox: bboxDeGeojson(novoGeojson) } : {}),
       atualizadoPor: S.user?.uid || '', atualizadoPorNome: S.user?.nome || S.user?.email || ''
     }, { merge: true });
   } catch(err) {
@@ -8509,6 +8565,7 @@ async function atualizarGeometriaCamada(camadaId, novoGeojson) {
     const item = (S.leafletLayers[tipo]||[]).find(i => i.id === camadaId);
     if (!item) return;
     item._geojson = novoGeojson;
+    item.bbox = bboxDeGeojson(novoGeojson);
     if (item.lgField && mapField) { mapField.removeLayer(item.lgField); item.lgField = null; }
     if (item.lgPC && mapPC) { mapPC.removeLayer(item.lgPC); item.lgPC = null; }
     if (item.visible) carregarGeometriaCamada(tipo, camadaId);
@@ -8824,7 +8881,9 @@ async function detectarCidadeEDMCPorCoordenada(lat, lng) {
   _detectandoPorCoordenada = true;
   try {
     const pt = turf.point([lng, lat]);
-    const candidatos = (S.leafletLayers.dmc || []).filter(i => !i.removida);
+    // Pula (sem baixar) os arquivos cujo retângulo envolvente já gravado não contém o ponto
+    const candidatos = (S.leafletLayers.dmc || []).filter(i => !i.removida &&
+      (!i.bbox || bboxesSeTocam(i.bbox, [lng, lat, lng, lat], 0)));
     for (const item of candidatos) {
       await garantirGeometriaCarregada(item);
       if (!item._geojson || !item._geojson.features) continue;

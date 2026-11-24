@@ -347,6 +347,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div class="tab" onclick="switchTab('editor-dmc','tabs-pc')" data-tab="editor-dmc">
     <i class="ti ti-vector-triangle"></i>Editor DMC
   </div>
+  <div class="tab hidden" onclick="switchTab('macromedicao','tabs-pc')" data-tab="macromedicao" title="Macromedição — em teste (visível só para o DIPEO até liberar)">
+    <i class="ti ti-gauge"></i>Macromedição
+  </div>
   <div class="tab" onclick="switchTab('usuarios','tabs-pc')" data-tab="usuarios">
     <i class="ti ti-users"></i>Usuários
   </div>
@@ -417,6 +420,56 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- PC: USUÁRIOS -->
+<!-- PC: MACROMEDIÇÃO (Fase 1 — cadastro de macros e sistemas; visível só para o DIPEO até liberar) -->
+<div class="panel" id="macromedicao" style="display:none">
+  <div class="config-layout">
+    <div class="config-sidebar">
+      <div class="config-nav-item" data-macro-section="macros" onclick="mostrarSecaoMacro('macros')">
+        <i class="ti ti-gauge"></i> <span>Macromedidores</span>
+      </div>
+      <div class="config-nav-item" data-macro-section="sistemas" onclick="mostrarSecaoMacro('sistemas')">
+        <i class="ti ti-topology-star-3"></i> <span>Sistemas e municípios</span>
+      </div>
+    </div>
+    <div class="config-content">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <span class="badge media" title="Só a conta do DIPEO vê esta aba até a liberação"><i class="ti ti-flask"></i> Em teste</span>
+        <div id="macro-status" style="font-size:12px;color:var(--text2);flex:1;min-width:200px"></div>
+        <button class="btn sm" id="btn-macro-importar" onclick="macro_abrirImportacao()"><i class="ti ti-file-spreadsheet"></i> Importar Gestão de Ativos (.xlsx)</button>
+        <button class="btn sm" onclick="macro_exportarXLSX()" title="Baixa o cadastro de macros em Excel"><i class="ti ti-download"></i> Baixar planilha</button>
+        <button class="btn sm" onclick="macro_carregar(true)" title="Recarregar do banco"><i class="ti ti-refresh"></i></button>
+        <input type="file" id="up-macro-ativos" accept=".xlsx,.xls" style="display:none" onchange="macro_handleArquivoAtivos(this)">
+      </div>
+
+      <div id="macrosec-macros" class="macro-sec config-section-panel" style="max-width:none">
+        <div class="section-title" style="margin:0 0 6px">Macromedidores</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <input type="search" placeholder="Buscar macro, ID, TAG, fabricante..." autocomplete="off" oninput="macro_estado().busca=this.value;macro_renderMacros()"
+            style="flex:1;min-width:200px;max-width:300px;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+          <select id="macro-f-sistema" onchange="macro_estado().fSistema=this.value;macro_renderMacros()" style="font-size:12px;padding:5px"></select>
+          <select id="macro-f-finalidade" onchange="macro_estado().fFinalidade=this.value;macro_renderMacros()" style="font-size:12px;padding:5px"></select>
+          <select id="macro-f-situacao" onchange="macro_estado().fSituacao=this.value;macro_renderMacros()" style="font-size:12px;padding:5px"></select>
+          <select id="macro-f-especial" onchange="macro_estado().fEspecial=this.value;macro_renderMacros()" style="font-size:12px;padding:5px">
+            <option value="">Filtro rápido...</option>
+            <option value="semcidade">Sem município</option>
+            <option value="comdmc">Com DMC no Gestão de Ativos</option>
+            <option value="dmcsemvinculo">DMC sem par no GeoFon</option>
+            <option value="bidirecional">Fluxo nos 2 sentidos</option>
+            <option value="ausente">Fora da última planilha</option>
+          </select>
+        </div>
+        <div id="macro-resumo" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
+        <div id="macro-tabela"></div>
+      </div>
+
+      <div id="macrosec-sistemas" class="macro-sec config-section-panel" style="max-width:none;display:none">
+        <div class="section-title" style="margin:0 0 6px">Sistemas e municípios atendidos</div>
+        <div id="macro-sistemas-resumo" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
+        <div id="macro-sistemas-tabela"></div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="panel" id="usuarios" style="display:none">
   <div class="panel-scroll">
     <div class="section">
@@ -1429,6 +1482,57 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
+<div class="modal-overlay" id="modal-macro-importar">
+  <div class="modal" style="max-width:520px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:6px"><i class="ti ti-file-spreadsheet"></i> Importar Gestão de Ativos - DIPEO</h3>
+    <p style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+      Entram só os pontos <b>MVA - Água</b>. Marque as agências do seu setor. Pontos que já existem são <b>atualizados</b> (o município, a marcação de 2 sentidos e as observações feitas no GeoFon são mantidos). Pontos que sumiram da planilha <b>não são apagados</b>, só ficam marcados.
+    </p>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">Agências</div>
+    <div id="macro-imp-agencias" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:10px;max-height:150px;overflow:auto"></div>
+    <div id="macro-imp-resumo" style="font-size:12px;line-height:1.6;background:var(--bg2);border-radius:var(--radius);padding:8px 10px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" id="btn-macro-imp-confirmar" style="flex:1;justify-content:center" onclick="macro_confirmarImportacao()"><i class="ti ti-database-import"></i> Importar</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-macro-importar')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-macro-editar">
+  <div class="modal" style="max-width:500px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:6px"><i class="ti ti-gauge"></i> <span id="macro-ed-titulo"></span></h3>
+    <div id="macro-ed-info" style="font-size:12px;line-height:1.6;background:var(--bg2);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px"></div>
+    <div class="field">
+      <label>Município (GeoFon)</label>
+      <select id="macro-ed-cidade"></select>
+    </div>
+    <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin:4px 0 10px;cursor:pointer">
+      <input type="checkbox" id="macro-ed-bidirecional"> <span>Fluxo nos dois sentidos — usar o <b>volume líquido</b> (o totalizador pode diminuir)</span>
+    </label>
+    <div class="field">
+      <label>Observação (GeoFon)</label>
+      <textarea id="macro-ed-obs" rows="2" style="width:100%;box-sizing:border-box"></textarea>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="macro_salvarEditar()"><i class="ti ti-device-floppy"></i> Salvar</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-macro-editar')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-macro-sistema">
+  <div class="modal" style="max-width:440px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px"><i class="ti ti-topology-star-3"></i> Municípios atendidos</h3>
+    <p id="macro-sis-titulo" style="font-size:12px;color:var(--text2);margin-bottom:8px"></p>
+    <input type="text" id="macro-sis-busca" placeholder="Buscar cidade..." oninput="macro_renderCidadesSistema()" style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+    <div id="macro-sis-cidades" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="macro_salvarSistema()"><i class="ti ti-device-floppy"></i> Salvar</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-macro-sistema')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-escopo-editor-dmc">
   <div class="modal" style="max-width:480px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:4px"><i class="ti ti-map-2"></i> Escopo do Editor de DMC</h3>
@@ -2322,6 +2426,7 @@ function aplicarPermissoesUI() {
   if (tabCampanhas) tabCampanhas.classList.toggle('hidden', role === 'tecnico');
   verificarBotaoMigracaoSetores();
   editorDMC_aplicarEscopoUI(); // (Fase 4) escopo do Supervisor no Editor de DMC
+  macro_aplicarVisibilidade(); // aba Macromedição (só DIPEO ou setor com o recurso 'macromedicao')
 }
 
 // Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
@@ -2772,6 +2877,7 @@ function iniciarSincronizacaoFirestore() {
   if (unsubSetorInfo) unsubSetorInfo();
   unsubSetorInfo = onSnapshot(doc(db, 'setores', setorAtual()), snap => {
     S.setorInfo = snap.exists() ? snap.data() : { recursosHabilitados: [] };
+    try { macro_aplicarVisibilidade(); } catch (e) {}
   });
 
   // Configurações gerais e preferências de exibição (meta/config) — sincronizadas em
@@ -12826,6 +12932,609 @@ function exportarCSV() {
 }
 
 // ================================================================
+// MACROMEDIÇÃO — Fase 1: cadastro de macros (Gestão de Ativos - DIPEO) e sistemas
+// ================================================================
+// Planejamento completo em claude/volumes-macromedicao-planejamento.md (documento do projeto).
+// Enquanto o Lourenço não liberar, a aba só aparece para a conta dele (EMAIL_DIPEO). Para
+// liberar para um setor: incluir 'macromedicao' em setores/{SETOR}.recursosHabilitados.
+// Coleções novas (precisam de regra própria no firestore.rules):
+//   macros/{SETOR}_{PontoID}       -> um documento por Ponto do Gestão de Ativos (macro)
+//   sistemasAbast/{SETOR}_{sNN}    -> sistemas de abastecimento + municípios atendidos
+// O macro é o PONTO (local de medição), não o equipamento: a troca do medidor não muda o
+// ponto, então o histórico de volumes (fases seguintes) continua ligado ao mesmo macro.
+// Campos "do GeoFon" (cidadeId, bidirecional, obs, apelidos do supervisório) nunca são
+// sobrescritos por uma nova importação da planilha.
+const RECURSO_MACRO = 'macromedicao';
+const MACRO_APLICACAO_IMPORTADA = 'mva - agua';            // textoBusca('MVA - Água')
+const MACRO_AGENCIAS_PADRAO = { SEPES: ['AGSU', 'AMSE'] };   // pré-marcadas na importação
+const MACRO_CAMPOS_GEOFON = ['cidadeId', 'bidirecional', 'obs', 'apelidos'];
+
+function macroVisivel() {
+  return S.user?.email === EMAIL_DIPEO || temRecurso(RECURSO_MACRO);
+}
+function macro_podeImportar() {
+  return S.userDoc?.role === 'admin' || S.user?.email === EMAIL_DIPEO;
+}
+// Mesma regra do Editor de DMC: admin edita tudo; supervisor só nas cidades do escopo.
+function macro_podeEditarMacro(m) {
+  if (macro_podeImportar()) return true;
+  return !!(m && m.cidadeId && editorDMC_podeEditarCidade(m.cidadeId));
+}
+function macro_aplicarVisibilidade() {
+  const tab = document.querySelector('[data-tab="macromedicao"]');
+  if (tab) tab.classList.toggle('hidden', !macroVisivel() || S.userDoc?.role === 'tecnico');
+}
+
+function macro_estado() {
+  if (!S._macro) S._macro = { carregado: false, carregando: false, erro: '', macros: [], sistemas: [], secao: 'macros',
+    busca: '', fSistema: '', fFinalidade: '', fSituacao: '', fEspecial: '', ordem: { col: 'sistema', dir: 1 } };
+  return S._macro;
+}
+
+// ---------- Leitura do Firestore (só quando a aba é aberta — não pesa para quem não usa)
+async function macro_carregar(forcar) {
+  const M = macro_estado();
+  if (M.carregando || (M.carregado && !forcar)) { macro_render(); return; }
+  M.carregando = true; M.erro = ''; macro_render();
+  try {
+    const { db, collection, query, where, getDocs } = window.FB;
+    const [snapM, snapS] = await Promise.all([
+      getDocs(query(collection(db, 'macros'), where('setor', '==', setorAtual()))),
+      getDocs(query(collection(db, 'sistemasAbast'), where('setor', '==', setorAtual())))
+    ]);
+    M.macros = snapM.docs.map(d => ({ _id: d.id, ...d.data() }));
+    M.sistemas = snapS.docs.map(d => ({ _id: d.id, ...d.data() }));
+    M.carregado = true;
+  } catch (e) {
+    console.error('macro_carregar', e);
+    M.erro = (e && e.code === 'permission-denied')
+      ? 'O banco recusou a leitura (permissão). Falta publicar as regras das coleções "macros" e "sistemasAbast" no Firebase Console.'
+      : 'Erro ao carregar: ' + (e.code || e.message);
+  } finally {
+    M.carregando = false;
+    macro_render();
+  }
+}
+
+// ---------- Leitura da planilha do Gestão de Ativos
+// Converte as linhas de uma aba em objetos com as chaves normalizadas (textoBusca),
+// para não depender de acento/espaço/maiúscula nos títulos das colunas.
+function macro_linhasAba(wb, nomeAba) {
+  const nome = wb.SheetNames.find(n => textoBusca(n) === textoBusca(nomeAba));
+  if (!nome) return null;
+  const brutas = XLSX.utils.sheet_to_json(wb.Sheets[nome], { defval: null, raw: true });
+  return brutas.map(r => {
+    const o = {};
+    Object.keys(r).forEach(k => { o[textoBusca(k)] = r[k]; });
+    return o;
+  });
+}
+function macro_txt(v) {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toLocaleDateString('pt-BR');
+  return String(v).replace(/\s+/g, ' ').trim();
+}
+function macro_num(v) {
+  if (v == null || v === '') return null;
+  const n = Number(String(v).replace(',', '.'));
+  return isFinite(n) ? n : null;
+}
+function macro_coord(v) {
+  const m = String(v || '').match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);
+  if (!m) return null;
+  const lat = Number(m[1].replace(',', '.')), lng = Number(m[2].replace(',', '.'));
+  if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+// Lê as abas Sistemas, Ponto e Equipamento. Retorna { sistemas, pontos, avisos }.
+function macro_lerPlanilhaAtivos(wb) {
+  const abaS = macro_linhasAba(wb, 'Sistemas');
+  const abaP = macro_linhasAba(wb, 'Ponto');
+  const abaE = macro_linhasAba(wb, 'Equipamento') || [];
+  if (!abaS || !abaP) throw new Error('A planilha não tem as abas "Sistemas" e "Ponto" do Gestão de Ativos - DIPEO.');
+  const avisos = [];
+  const sistemas = {};
+  abaS.forEach(r => {
+    const id = macro_txt(r['id']);
+    if (!id) return;
+    sistemas[id] = { sid: id, nome: macro_txt(r['nome do sistema']), superintendencia: macro_txt(r['superintendencia']).toUpperCase(),
+      agencia: macro_txt(r['agencia regional']).toUpperCase() };
+  });
+  // Equipamentos por ponto — só os que estão (ou vão estar) no local; estoque/descartado ficam de fora
+  const equipPorPonto = {};
+  abaE.forEach(r => {
+    const ponto = macro_txt(r['ponto']);
+    const sit = macro_txt(r['situacao']);
+    if (!ponto || !sit) return;
+    const s = textoBusca(sit);
+    if (!(s.includes('local') || s.includes('pre-operacao') || s.includes('aguardando'))) return;
+    (equipPorPonto[ponto] = equipPorPonto[ponto] || []).push({
+      id: macro_txt(r['equipamento id']), situacao: sit, tipo: macro_txt(r['tipo']),
+      dn: macro_txt(r['dn macromedidor']), fabricante: macro_txt(r['fabricante']),
+      modelo: macro_txt(r['modelo do conversor']) || macro_txt(r['modelo do sensor']),
+      ns: macro_txt(r['ns conversor']) || macro_txt(r['ns sensor']),
+      telemetria: macro_txt(r['telemetria']), tipoTelemetria: macro_txt(r['tipo de telemetria']),
+      vazaoMax: macro_num(r['vazao maxima (m³/h)'] ?? r['vazao maxima (m3/h)'])
+    });
+  });
+  const pontos = [];
+  let ignorados = 0;
+  abaP.forEach(r => {
+    const pid = macro_txt(r['ponto id']);
+    if (!pid) return;
+    if (textoBusca(r['aplicacao']) !== MACRO_APLICACAO_IMPORTADA) { ignorados++; return; }
+    if (!/^[A-Za-z0-9_-]+$/.test(pid)) { avisos.push('Ponto ID inválido ignorado: ' + pid); return; }
+    const sid = macro_txt(r['agencia / sistema']);
+    const sis = sistemas[sid] || null;
+    pontos.push({
+      pontoId: pid, sistemaId: sid, sistemaNome: sis ? sis.nome : macro_txt(r['nome do sistema']),
+      agencia: sis ? sis.agencia : '', superintendencia: sis ? sis.superintendencia : '',
+      nome: macro_txt(r['nome']), tag: macro_txt(r['tag']), finalidade: macro_txt(r['finalidade']),
+      situacao: macro_txt(r['situacao']), dnRede: macro_txt(r['dn rede']), coord: macro_coord(r['localizacao']),
+      logradouro: macro_txt(r['logradouro']), dmcAtivos: macro_txt(r['nome do dmc']),
+      codigoDmcGis: macro_txt(r['codigo do dmc - poligono gis']), obsAtivos: macro_txt(r['observacoes']),
+      equipamentos: equipPorPonto[pid] || []
+    });
+  });
+  return { sistemas, pontos, ignorados, avisos };
+}
+
+// ---------- Sugestões (município do sistema, município do macro, DMC do GeoFon)
+function macro_cidadePorNome(nome) {
+  const n = textoBusca(nome);
+  if (!n) return null;
+  return S.cidades.find(c => textoBusca(c.nome) === n) || null;
+}
+function macro_cidadePorPrefixoDMC(nomeDmc) {
+  const m = String(nomeDmc || '').match(/^\s*([A-Za-z]{2,4})\s*-\s*DMC/i);
+  if (!m) return null;
+  const p = m[1].toUpperCase();
+  return S.cidades.find(c => String(c.prefixo || '').toUpperCase() === p) || null;
+}
+function macro_sugerirCidade(p, sistema) {
+  const porDMC = macro_cidadePorPrefixoDMC(p.dmcAtivos);
+  if (porDMC) return porDMC.id;
+  const cids = (sistema && sistema.cidades) || [];
+  if (cids.length === 1) return cids[0];
+  const porNome = macro_cidadePorNome(p.sistemaNome);
+  return porNome ? porNome.id : '';
+}
+// DMC do GeoFon que corresponde ao DMC informado no Gestão de Ativos (Cód. GIS, depois nome/sigla)
+function macro_dmcGeoFon(m) {
+  if (!m.codigoDmcGis && !m.dmcAtivos) return null;
+  const gis = String(m.codigoDmcGis || '').trim();
+  const nome = textoBusca(m.dmcAtivos);
+  for (const c of S.cidades) {
+    for (const d of (c.dmcs || [])) {
+      if (gis && d.codigoGis && String(d.codigoGis).trim() === gis) return { c, d, por: 'Cód. GIS' };
+    }
+  }
+  if (!nome) return null;
+  // Compara pelo "núcleo" do nome: sem acento, sem o prefixo "CIA-DMC-", sem pontuação
+  // ("CIA-DMC Sao Marcos" = "CIA-DMC-São Marcos"). Prefere o município do macro.
+  const nucleo = macro_nucleoNomeDMC(m.dmcAtivos);
+  const ordem = [...S.cidades].sort((a, b) => (b.id === m.cidadeId) - (a.id === m.cidadeId));
+  for (const c of ordem) {
+    for (const d of (c.dmcs || [])) {
+      if (textoBusca(d.nome) === nome || (d.sigla && textoBusca(d.sigla) === nome)) return { c, d, por: 'nome' };
+    }
+  }
+  if (!nucleo) return null;
+  for (const c of ordem) {
+    for (const d of (c.dmcs || [])) {
+      if (macro_nucleoNomeDMC(d.nome) === nucleo || (d.sigla && macro_nucleoNomeDMC(d.sigla) === nucleo)) return { c, d, por: 'nome parecido' };
+    }
+  }
+  return null;
+}
+function macro_nucleoNomeDMC(n) {
+  return textoBusca(String(n || '').replace(/\([^)]*\)/g, ' '))
+    .replace(/^[a-z]{2,4}\s*-\s*dmc\b/, '').replace(/^dmc\b/, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+// ---------- Importação
+function macro_abrirImportacao() {
+  if (!macro_podeImportar()) { toast('Só o administrador importa a planilha.'); return; }
+  document.getElementById('up-macro-ativos').click();
+}
+function macro_handleArquivoAtivos(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  toast('Lendo planilha...');
+  const fr = new FileReader();
+  fr.onload = ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true });
+      const lido = macro_lerPlanilhaAtivos(wb);
+      lido.arquivo = f.name;
+      S._macroImport = lido;
+      macro_renderPreviaImportacao(true);
+      openModal('modal-macro-importar');
+    } catch (e) {
+      console.error(e);
+      alert('Não foi possível ler a planilha: ' + e.message);
+    }
+  };
+  fr.readAsArrayBuffer(f);
+}
+function macro_agenciasEscolhidas() {
+  return Array.from(document.querySelectorAll('#macro-imp-agencias input:checked')).map(i => i.value);
+}
+function macro_renderPreviaImportacao(inicial) {
+  const L = S._macroImport, M = macro_estado();
+  if (!L) return;
+  const porAg = {};
+  L.pontos.forEach(p => { const a = p.agencia || '(sem agência)'; porAg[a] = (porAg[a] || 0) + 1; });
+  const ags = Object.keys(porAg).sort();
+  let marcadas;
+  if (inicial) {
+    let salvo = null;
+    try { salvo = JSON.parse(localStorage.getItem('geofon_macro_agencias_' + setorAtual()) || 'null'); } catch (e) {}
+    marcadas = new Set(salvo || MACRO_AGENCIAS_PADRAO[setorAtual()] || []);
+    document.getElementById('macro-imp-agencias').innerHTML = ags.map(a =>
+      '<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" value="' + escHtml(a) + '"' + (marcadas.has(a) ? ' checked' : '') +
+      ' onchange="macro_renderPreviaImportacao(false)"> <b>' + escHtml(a) + '</b> <span style="color:var(--text3)">(' + porAg[a] + ')</span></label>').join('');
+  }
+  marcadas = new Set(macro_agenciasEscolhidas());
+  const sel = L.pontos.filter(p => marcadas.has(p.agencia || '(sem agência)'));
+  const existentes = new Set(M.macros.map(m => m.pontoId));
+  const novos = sel.filter(p => !existentes.has(p.pontoId)).length;
+  const ids = new Set(sel.map(p => p.pontoId));
+  const ausentes = M.macros.filter(m => marcadas.has(m.agencia || '(sem agência)') && !ids.has(m.pontoId) && !m.ausenteNaPlanilha).length;
+  const nSis = new Set(sel.map(p => p.sistemaId)).size;
+  document.getElementById('macro-imp-resumo').innerHTML =
+    'Arquivo <b>' + escHtml(L.arquivo) + '</b> — ' + L.pontos.length + ' pontos "MVA - Água" (' + L.ignorados + ' de outras aplicações ignorados).<br>' +
+    'Selecionados: <b>' + sel.length + '</b> macros em <b>' + nSis + '</b> sistemas · <b style="color:var(--green)">' + novos + '</b> novos · ' + (sel.length - novos) + ' atualizados' +
+    (ausentes ? ' · <b style="color:var(--amber)">' + ausentes + '</b> do GeoFon não estão mais na planilha (serão só marcados, não apagados)' : '') + '.' +
+    (L.avisos.length ? '<br><span style="color:var(--amber)">' + L.avisos.map(escHtml).join('<br>') + '</span>' : '') +
+    (!M.carregado ? '<br><span style="color:var(--amber)">Atenção: o cadastro atual não foi carregado — abra a aba Macromedição antes, para não duplicar sugestões.</span>' : '');
+  document.getElementById('btn-macro-imp-confirmar').disabled = !sel.length || !M.carregado;
+}
+async function macro_confirmarImportacao() {
+  const L = S._macroImport, M = macro_estado();
+  if (!L || !M.carregado) return;
+  const marcadas = macro_agenciasEscolhidas();
+  try { localStorage.setItem('geofon_macro_agencias_' + setorAtual(), JSON.stringify(marcadas)); } catch (e) {}
+  const set = new Set(marcadas);
+  const sel = L.pontos.filter(p => set.has(p.agencia || '(sem agência)'));
+  if (!sel.length) return;
+  const btn = document.getElementById('btn-macro-imp-confirmar');
+  btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader"></i> Gravando...';
+  const { db, doc, writeBatch } = window.FB;
+  const setor = setorAtual();
+  const agora = Date.now();
+  const quem = { uid: S.user?.uid || '', email: S.user?.email || '', nome: S.user?.nome || '' };
+  const ops = [];
+  // 1) Sistemas usados pelos macros selecionados
+  const sisExist = {}; M.sistemas.forEach(s => { sisExist[s.sid] = s; });
+  const sisUsados = new Set(sel.map(p => p.sistemaId).filter(Boolean));
+  const sisFinal = {};
+  sisUsados.forEach(sid => {
+    const base = L.sistemas[sid] || { sid, nome: (sel.find(p => p.sistemaId === sid) || {}).sistemaNome || sid, superintendencia: '', agencia: '' };
+    const atual = sisExist[sid];
+    const dados = { sid, nome: base.nome, superintendencia: base.superintendencia, agencia: base.agencia, importadoEm: agora };
+    if (!atual) {
+      const c = macro_cidadePorNome(base.nome);
+      dados.setor = setor; dados.cidades = c ? [c.id] : []; dados.criadoEm = agora;
+    }
+    sisFinal[sid] = { ...(atual || {}), ...dados };
+    ops.push({ ref: doc(db, 'sistemasAbast', setor + '_' + sid), dados, merge: !!atual });
+  });
+  // 2) Macros
+  const macExist = {}; M.macros.forEach(m => { macExist[m.pontoId] = m; });
+  sel.forEach(p => {
+    const atual = macExist[p.pontoId];
+    const dados = { ...p, importadoEm: agora, importadoPor: quem, ausenteNaPlanilha: false, arquivoAtivos: L.arquivo };
+    if (!atual) {
+      dados.setor = setor; dados.criadoEm = agora; dados.bidirecional = false; dados.obs = ''; dados.apelidos = [];
+      dados.cidadeId = macro_sugerirCidade(p, sisFinal[p.sistemaId]);
+    }
+    ops.push({ ref: doc(db, 'macros', setor + '_' + p.pontoId), dados, merge: !!atual });
+  });
+  // 3) Macros das agências selecionadas que sumiram da planilha: só marca
+  const ids = new Set(sel.map(p => p.pontoId));
+  M.macros.filter(m => set.has(m.agencia || '(sem agência)') && !ids.has(m.pontoId) && !m.ausenteNaPlanilha)
+    .forEach(m => ops.push({ ref: doc(db, 'macros', m._id), dados: { ausenteNaPlanilha: true, importadoEm: agora }, merge: true }));
+  try {
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = writeBatch(db);
+      ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.dados, o.merge ? { merge: true } : undefined));
+      await b.commit();
+    }
+    closeModal('modal-macro-importar');
+    S._macroImport = null;
+    toast(sel.length + ' macros importados.');
+    await macro_carregar(true);
+  } catch (e) {
+    console.error('macro_confirmarImportacao', e);
+    alert(e && e.code === 'permission-denied'
+      ? 'O banco recusou a gravação (permissão). Falta publicar as regras das coleções "macros" e "sistemasAbast" no Firebase Console.'
+      : 'Erro ao gravar: ' + (e.code || e.message));
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="ti ti-database-import"></i> Importar';
+  }
+}
+
+// ---------- Tela
+function mostrarSecaoMacro(sec) {
+  const M = macro_estado();
+  M.secao = sec;
+  document.querySelectorAll('[data-macro-section]').forEach(el => el.classList.toggle('active', el.dataset.macroSection === sec));
+  document.querySelectorAll('.macro-sec').forEach(el => { el.style.display = el.id === 'macrosec-' + sec ? '' : 'none'; });
+  macro_render();
+}
+function macro_abrirAba() {
+  macro_aplicarVisibilidade();
+  if (!macroVisivel()) return;
+  const btn = document.getElementById('btn-macro-importar');
+  if (btn) btn.style.display = macro_podeImportar() ? '' : 'none';
+  mostrarSecaoMacro(macro_estado().secao);
+  macro_carregar(false);
+}
+function macro_nomeCidade(id) {
+  const c = S.cidades.find(x => x.id === id);
+  return c ? c.nome : '';
+}
+function macro_render() {
+  const M = macro_estado();
+  const st = document.getElementById('macro-status');
+  if (!st) return;
+  if (M.carregando) st.innerHTML = '<span style="color:var(--text2)"><i class="ti ti-loader"></i> Carregando...</span>';
+  else if (M.erro) st.innerHTML = '<span style="color:var(--red)"><i class="ti ti-alert-triangle"></i> ' + escHtml(M.erro) + '</span>';
+  else {
+    const ult = M.macros.reduce((a, m) => Math.max(a, m.importadoEm || 0), 0);
+    st.innerHTML = '<b>' + M.macros.filter(m => !m.ausenteNaPlanilha).length + '</b> macros e <b>' + M.sistemas.length + '</b> sistemas no setor ' + escHtml(setorAtual()) +
+      (ult ? ' · última importação ' + new Date(ult).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ' · nenhuma importação ainda');
+  }
+  if (M.secao === 'sistemas') macro_renderSistemas(); else macro_renderMacros();
+}
+
+function macro_opcoesSelect(id, valores, atual, rotuloTodos) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const html = '<option value="">' + rotuloTodos + '</option>' + valores.map(v => '<option value="' + escHtml(v[0]) + '">' + escHtml(v[1]) + '</option>').join('');
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  el.value = atual || '';
+}
+function macro_ordenar(col) {
+  const M = macro_estado();
+  M.ordem = { col, dir: M.ordem.col === col ? -M.ordem.dir : 1 };
+  macro_renderMacros();
+}
+function macro_renderMacros() {
+  const M = macro_estado();
+  const el = document.getElementById('macro-tabela');
+  if (!el) return;
+  const sistemasOrd = [...M.sistemas].sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  macro_opcoesSelect('macro-f-sistema', sistemasOrd.map(s => [s.sid, s.nome + (s.agencia ? ' (' + s.agencia + ')' : '')]), M.fSistema, 'Todos os sistemas');
+  const fins = [...new Set(M.macros.flatMap(m => String(m.finalidade || '').split(',').map(x => x.trim()).filter(Boolean)))].sort();
+  macro_opcoesSelect('macro-f-finalidade', fins.map(f => [f, f]), M.fFinalidade, 'Todas as finalidades');
+  const sits = [...new Set(M.macros.map(m => m.situacao).filter(Boolean))].sort();
+  macro_opcoesSelect('macro-f-situacao', sits.map(s => [s, s]), M.fSituacao, 'Todas as situações');
+  const esp = document.getElementById('macro-f-especial'); if (esp) esp.value = M.fEspecial || '';
+  if (!M.carregado) { el.innerHTML = ''; return; }
+  if (!M.macros.length) {
+    el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhum macro cadastrado neste setor. Use <b>Importar Gestão de Ativos (.xlsx)</b>.</p>';
+    return;
+  }
+  const busca = textoBusca(M.busca);
+  const linhas = M.macros.map(m => ({ m, dmc: macro_dmcGeoFon(m), cidade: macro_nomeCidade(m.cidadeId) }));
+  const filtradas = linhas.filter(({ m, dmc, cidade }) => {
+    if (M.fSistema && m.sistemaId !== M.fSistema) return false;
+    if (M.fFinalidade && !String(m.finalidade || '').split(',').map(x => x.trim()).includes(M.fFinalidade)) return false;
+    if (M.fSituacao && m.situacao !== M.fSituacao) return false;
+    if (M.fEspecial === 'semcidade' && m.cidadeId) return false;
+    if (M.fEspecial === 'comdmc' && !m.dmcAtivos && !m.codigoDmcGis) return false;
+    if (M.fEspecial === 'dmcsemvinculo' && !((m.dmcAtivos || m.codigoDmcGis) && !dmc)) return false;
+    if (M.fEspecial === 'bidirecional' && !m.bidirecional) return false;
+    if (M.fEspecial === 'ausente' && !m.ausenteNaPlanilha) return false;
+    if (busca && !textoBusca([m.pontoId, m.nome, m.tag, m.sistemaNome, m.finalidade, m.dmcAtivos, m.logradouro, cidade, ...(m.equipamentos || []).map(e => e.fabricante + ' ' + e.tipo + ' ' + e.ns)].join(' ')).includes(busca)) return false;
+    return true;
+  });
+  const { col, dir } = M.ordem;
+  const chave = {
+    sistema: l => textoBusca(l.m.sistemaNome), nome: l => textoBusca(l.m.nome), finalidade: l => textoBusca(l.m.finalidade),
+    situacao: l => textoBusca(l.m.situacao), dn: l => macro_num(l.m.dnRede), cidade: l => l.cidade ? textoBusca(l.cidade) : null,
+    dmc: l => l.m.dmcAtivos ? textoBusca(l.m.dmcAtivos) : null, id: l => l.m.pontoId
+  }[col] || (l => textoBusca(l.m.sistemaNome));
+  filtradas.sort((a, b) => {
+    const va = chave(a), vb = chave(b);
+    const vaz = va == null || va === '', vbz = vb == null || vb === '';
+    if (vaz && vbz) return textoBusca(a.m.nome).localeCompare(textoBusca(b.m.nome));
+    if (vaz) return 1; if (vbz) return -1;
+    const r = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR');
+    return r * dir || textoBusca(a.m.nome).localeCompare(textoBusca(b.m.nome));
+  });
+  const resumo = document.getElementById('macro-resumo');
+  if (resumo) {
+    const semCidade = M.macros.filter(m => !m.cidadeId && !m.ausenteNaPlanilha).length;
+    const dmcSem = linhas.filter(l => (l.m.dmcAtivos || l.m.codigoDmcGis) && !l.dmc).length;
+    const aus = M.macros.filter(m => m.ausenteNaPlanilha).length;
+    resumo.innerHTML = 'Mostrando <b>' + filtradas.length + '</b> de ' + M.macros.length +
+      (semCidade ? ' · <b style="color:var(--amber)">' + semCidade + '</b> sem município' : '') +
+      (dmcSem ? ' · ' + dmcSem + ' com DMC do Gestão de Ativos sem par no GeoFon' : '') +
+      (aus ? ' · <b style="color:var(--red)">' + aus + '</b> não estão mais na planilha' : '');
+  }
+  if (!filtradas.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhum macro com esses filtros.</p>'; return; }
+  const th = (id, rot, extra) => {
+    const at = col === id;
+    return '<th onclick="macro_ordenar(\'' + id + '\')" style="cursor:pointer;user-select:none' + (at ? ';color:var(--blue)' : '') + (extra || '') + '">' + rot + (at ? (dir === 1 ? ' ▲' : ' ▼') : '') + '</th>';
+  };
+  const MAX = 600;
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>' +
+    th('sistema', 'Sistema') + th('nome', 'Macro (ponto)') + th('finalidade', 'Finalidade') + th('situacao', 'Situação') + th('dn', 'DN', ';text-align:right') +
+    '<th>Equipamento</th>' + th('cidade', 'Município (GeoFon)') + th('dmc', 'DMC') + '<th title="Fluxo nos dois sentidos — volume líquido">2 sent.</th><th></th>' +
+    '</tr></thead><tbody>' + filtradas.slice(0, MAX).map(({ m, dmc, cidade }) => {
+      const eq = (m.equipamentos || []);
+      const eqTxt = eq.length
+        ? eq.map(e => '<span title="' + escHtml([e.situacao, e.modelo, e.ns ? 'NS ' + e.ns : '', e.telemetria === 'Sim' ? 'Telemetria: ' + (e.tipoTelemetria || 'sim') : 'Sem telemetria'].filter(Boolean).join(' · ')) + '">' +
+            escHtml(e.tipo || '?') + (e.dn ? ' DN' + escHtml(e.dn) : '') + (e.fabricante ? ' · ' + escHtml(e.fabricante) : '') + '</span>').join('<br>') +
+          (eq.length > 1 ? ' <span class="badge media" title="Mais de um equipamento no local">' + eq.length + '</span>' : '')
+        : '<span style="color:var(--text3)">—</span>';
+      const dmcTxt = (m.dmcAtivos || m.codigoDmcGis)
+        ? escHtml(m.dmcAtivos || ('GIS ' + m.codigoDmcGis)) + (dmc
+            ? ' <i class="ti ti-link" style="color:var(--green)" title="Corresponde ao DMC ' + escHtml(dmc.d.nome) + ' (' + escHtml(dmc.c.nome) + ') pelo ' + dmc.por + '"></i>'
+            : ' <i class="ti ti-unlink" style="color:var(--amber)" title="Não achei este DMC na Gestão de DMCs (nem pelo Cód. GIS nem pelo nome)"></i>')
+        : '<span style="color:var(--text3)">—</span>';
+      const sitCor = textoBusca(m.situacao) === 'operando' ? '' : ';color:var(--amber)';
+      const mapa = m.coord ? ' <a href="https://www.google.com/maps?q=' + m.coord.lat + ',' + m.coord.lng + '" target="_blank" rel="noopener" title="Abrir no mapa" style="color:var(--text3)"><i class="ti ti-map-pin"></i></a>' : '';
+      return '<tr' + (m.ausenteNaPlanilha ? ' style="opacity:.55" title="Este ponto não veio na última planilha importada"' : '') + '>' +
+        '<td style="white-space:nowrap">' + escHtml(m.sistemaNome || m.sistemaId) + (m.agencia ? ' <span style="color:var(--text3);font-size:10.5px">' + escHtml(m.agencia) + '</span>' : '') + '</td>' +
+        '<td><b>' + escHtml(m.nome) + '</b>' + mapa + '<div style="font-family:monospace;font-size:10.5px;color:var(--text3)">' + escHtml(m.pontoId) + (m.tag ? ' · ' + escHtml(m.tag) : '') + '</div></td>' +
+        '<td>' + escHtml(m.finalidade || '—') + '</td>' +
+        '<td style="white-space:nowrap' + sitCor + '">' + escHtml(m.situacao || '—') + '</td>' +
+        '<td style="text-align:right">' + escHtml(m.dnRede || '—') + '</td>' +
+        '<td style="font-size:11px">' + eqTxt + '</td>' +
+        '<td style="white-space:nowrap">' + (cidade ? escHtml(cidade) : '<span style="color:var(--amber)">sem município</span>') + '</td>' +
+        '<td style="font-size:11px">' + dmcTxt + '</td>' +
+        '<td style="text-align:center">' + (m.bidirecional ? '<i class="ti ti-arrows-left-right" style="color:var(--blue)" title="Fluxo nos dois sentidos (volume líquido)"></i>' : '') + '</td>' +
+        '<td>' + (macro_podeEditarMacro(m) ? '<button class="btn sm" onclick="macro_abrirEditar(\'' + escHtml(m._id) + '\')"><i class="ti ti-pencil"></i></button>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' +
+    (filtradas.length > MAX ? '<p style="font-size:11.5px;color:var(--text2)">Mostrando os primeiros ' + MAX + ' — use os filtros para achar os demais.</p>' : '');
+}
+
+// ---------- Editar macro (campos do GeoFon)
+function macro_abrirEditar(id) {
+  const M = macro_estado();
+  const m = M.macros.find(x => x._id === id);
+  if (!m) return;
+  S._macroEditando = id;
+  document.getElementById('macro-ed-titulo').textContent = m.nome;
+  const eq = (m.equipamentos || []).map(e => escHtml([e.tipo, e.dn ? 'DN ' + e.dn : '', e.fabricante, e.modelo, e.ns ? 'NS ' + e.ns : '', e.situacao, e.telemetria === 'Sim' ? 'telemetria ' + (e.tipoTelemetria || '') : ''].filter(Boolean).join(' · '))).join('<br>') || '—';
+  document.getElementById('macro-ed-info').innerHTML =
+    '<b>Ponto ID:</b> <span style="font-family:monospace">' + escHtml(m.pontoId) + '</span>' + (m.tag ? ' · <b>TAG:</b> ' + escHtml(m.tag) : '') + '<br>' +
+    '<b>Sistema:</b> ' + escHtml(m.sistemaNome) + ' (' + escHtml(m.sistemaId) + (m.agencia ? ' · ' + escHtml(m.agencia) : '') + ')<br>' +
+    '<b>Finalidade:</b> ' + escHtml(m.finalidade || '—') + ' · <b>Situação:</b> ' + escHtml(m.situacao || '—') + ' · <b>DN rede:</b> ' + escHtml(m.dnRede || '—') + '<br>' +
+    '<b>Local:</b> ' + escHtml(m.logradouro || '—') + (m.coord ? ' (' + m.coord.lat.toFixed(6) + ', ' + m.coord.lng.toFixed(6) + ')' : '') + '<br>' +
+    '<b>DMC (Gestão de Ativos):</b> ' + escHtml(m.dmcAtivos || '—') + (m.codigoDmcGis ? ' · GIS ' + escHtml(m.codigoDmcGis) : '') + '<br>' +
+    '<b>Equipamento no local:</b><br>' + eq +
+    '<div style="color:var(--text3);font-size:11px;margin-top:4px">Esses dados vêm da planilha e são atualizados a cada importação.</div>';
+  const cids = [...S.cidades].sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  const sel = document.getElementById('macro-ed-cidade');
+  const sis = M.sistemas.find(s => s.sid === m.sistemaId);
+  const doSis = new Set((sis && sis.cidades) || []);
+  sel.innerHTML = '<option value="">— sem município —</option>' +
+    (doSis.size ? '<optgroup label="Atendidos pelo sistema ' + escHtml(m.sistemaNome) + '">' + cids.filter(c => doSis.has(c.id)).map(c => '<option value="' + escHtml(c.id) + '">' + escHtml(c.nome) + '</option>').join('') + '</optgroup>' : '') +
+    '<optgroup label="Todos">' + cids.filter(c => !doSis.has(c.id)).map(c => '<option value="' + escHtml(c.id) + '">' + escHtml(c.nome) + '</option>').join('') + '</optgroup>';
+  sel.value = m.cidadeId || '';
+  document.getElementById('macro-ed-bidirecional').checked = !!m.bidirecional;
+  document.getElementById('macro-ed-obs').value = m.obs || '';
+  openModal('modal-macro-editar');
+}
+async function macro_salvarEditar() {
+  const M = macro_estado();
+  const m = M.macros.find(x => x._id === S._macroEditando);
+  if (!m) return;
+  const dados = {
+    cidadeId: document.getElementById('macro-ed-cidade').value || '',
+    bidirecional: document.getElementById('macro-ed-bidirecional').checked,
+    obs: document.getElementById('macro-ed-obs').value.trim(),
+    editadoEm: Date.now(), editadoPor: S.user?.email || ''
+  };
+  if (!macro_podeEditarMacro(m) || (dados.cidadeId && !macro_podeImportar() && !editorDMC_podeEditarCidade(dados.cidadeId))) { toast('Sem permissão para este município.'); return; }
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'macros', m._id), dados, { merge: true });
+    Object.assign(m, dados);
+    closeModal('modal-macro-editar');
+    toast('Macro salvo.');
+    macro_render();
+  } catch (e) {
+    console.error(e);
+    alert('Erro ao salvar: ' + (e.code || e.message));
+  }
+}
+
+// ---------- Sistemas: municípios atendidos
+function macro_renderSistemas() {
+  const M = macro_estado();
+  const el = document.getElementById('macro-sistemas-tabela');
+  if (!el) return;
+  if (!M.carregado) { el.innerHTML = ''; return; }
+  if (!M.sistemas.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Os sistemas entram junto com a importação da planilha do Gestão de Ativos.</p>'; return; }
+  const cont = {}; M.macros.forEach(m => { if (!m.ausenteNaPlanilha) cont[m.sistemaId] = (cont[m.sistemaId] || 0) + 1; });
+  const lista = [...M.sistemas].sort((a, b) => textoBusca(a.agencia + ' ' + a.nome).localeCompare(textoBusca(b.agencia + ' ' + b.nome)));
+  const semMun = lista.filter(s => !(s.cidades || []).length).length;
+  const res = document.getElementById('macro-sistemas-resumo');
+  if (res) res.innerHTML = '<b>' + lista.length + '</b> sistemas' + (semMun ? ' · <b style="color:var(--amber)">' + semMun + '</b> sem município vinculado' : '') +
+    '. Um município pode ter vários sistemas, e um sistema pode atender vários municípios.';
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Sistema</th><th>Código</th><th>Agência</th><th style="text-align:right">Macros</th><th>Municípios atendidos</th><th></th></tr></thead><tbody>' +
+    lista.map(s => {
+      const mun = (s.cidades || []).map(id => '<span class="badge purple" style="margin:1px">' + escHtml(macro_nomeCidade(id) || id) + '</span>').join(' ') || '<span style="color:var(--amber)">nenhum</span>';
+      return '<tr><td><b>' + escHtml(s.nome) + '</b></td><td style="font-family:monospace;font-size:11px">' + escHtml(s.sid) + '</td><td>' + escHtml(s.agencia || '—') + '</td>' +
+        '<td style="text-align:right">' + (cont[s.sid] || 0) + '</td><td>' + mun + '</td>' +
+        '<td>' + (macro_podeImportar() ? '<button class="btn sm" onclick="macro_abrirSistema(\'' + escHtml(s._id) + '\')"><i class="ti ti-pencil"></i> Municípios</button>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+function macro_abrirSistema(id) {
+  const s = macro_estado().sistemas.find(x => x._id === id);
+  if (!s) return;
+  S._macroSistemaEditando = id;
+  S._macroSistemaSel = new Set(s.cidades || []);
+  document.getElementById('macro-sis-titulo').textContent = s.nome + ' (' + s.sid + ')';
+  document.getElementById('macro-sis-busca').value = '';
+  macro_renderCidadesSistema();
+  openModal('modal-macro-sistema');
+}
+function macro_renderCidadesSistema() {
+  const busca = textoBusca(document.getElementById('macro-sis-busca').value);
+  const sel = S._macroSistemaSel || new Set();
+  const cids = [...S.cidades].sort((a, b) => (sel.has(b.id) - sel.has(a.id)) || textoBusca(a.nome).localeCompare(textoBusca(b.nome)))
+    .filter(c => !busca || textoBusca(c.nome + ' ' + (c.regional || '') + ' ' + (c.prefixo || '')).includes(busca));
+  document.getElementById('macro-sis-cidades').innerHTML = cids.map(c =>
+    '<label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0;cursor:pointer"><input type="checkbox"' + (sel.has(c.id) ? ' checked' : '') +
+    ' onchange="macro_marcarCidadeSistema(\'' + escHtml(c.id) + '\',this.checked)"> ' + escHtml(c.nome) + ' <span style="color:var(--text3)">' + escHtml(c.regional || '') + '</span></label>').join('') ||
+    '<span style="font-size:12px;color:var(--text3)">Nenhuma cidade.</span>';
+}
+function macro_marcarCidadeSistema(id, on) {
+  if (!S._macroSistemaSel) return;
+  if (on) S._macroSistemaSel.add(id); else S._macroSistemaSel.delete(id);
+}
+async function macro_salvarSistema() {
+  const M = macro_estado();
+  const s = M.sistemas.find(x => x._id === S._macroSistemaEditando);
+  if (!s) return;
+  const cidades = [...(S._macroSistemaSel || [])];
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'sistemasAbast', s._id), { cidades, editadoEm: Date.now(), editadoPor: S.user?.email || '' }, { merge: true });
+    s.cidades = cidades;
+    // Macros deste sistema ainda sem município: se o sistema atende um só município, preenche
+    const semCidade = cidades.length === 1 ? M.macros.filter(m => m.sistemaId === s.sid && !m.cidadeId) : [];
+    if (semCidade.length) {
+      const { db, doc, writeBatch } = window.FB;
+      const b = writeBatch(db);
+      semCidade.forEach(m => { b.set(doc(db, 'macros', m._id), { cidadeId: cidades[0] }, { merge: true }); m.cidadeId = cidades[0]; });
+      await b.commit();
+    }
+    closeModal('modal-macro-sistema');
+    toast('Municípios do sistema salvos' + (semCidade.length ? ' (' + semCidade.length + ' macros sem município foram preenchidos)' : '') + '.');
+    macro_render();
+  } catch (e) {
+    console.error(e);
+    alert('Erro ao salvar: ' + (e.code || e.message));
+  }
+}
+
+// ---------- Exportar a lista (filtros aplicados não importam aqui: exporta o cadastro todo)
+function macro_exportarXLSX() {
+  const M = macro_estado();
+  if (!M.macros.length) { toast('Nada para exportar.'); return; }
+  const cab = ['Ponto ID', 'Sistema', 'Código sistema', 'Agência', 'Macro', 'TAG', 'Finalidade', 'Situação', 'DN rede', 'Município (GeoFon)', 'DMC (Gestão de Ativos)', 'Cód. DMC GIS', 'DMC no GeoFon', 'Fluxo nos 2 sentidos', 'Equipamento', 'Latitude', 'Longitude', 'Observação GeoFon', 'Fora da última planilha'];
+  const dados = [cab].concat(M.macros.map(m => {
+    const dmc = macro_dmcGeoFon(m);
+    return [m.pontoId, m.sistemaNome, m.sistemaId, m.agencia, m.nome, m.tag, m.finalidade, m.situacao, m.dnRede, macro_nomeCidade(m.cidadeId),
+      m.dmcAtivos, m.codigoDmcGis, dmc ? dmc.d.nome : '', m.bidirecional ? 'Sim' : 'Não',
+      (m.equipamentos || []).map(e => [e.tipo, e.dn ? 'DN' + e.dn : '', e.fabricante, e.ns].filter(Boolean).join(' ')).join(' | '),
+      m.coord ? m.coord.lat : '', m.coord ? m.coord.lng : '', m.obs || '', m.ausenteNaPlanilha ? 'Sim' : ''];
+  }));
+  const ws = XLSX.utils.aoa_to_sheet(dados);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Macros');
+  XLSX.writeFile(wb, 'GeoFon_Macros_' + setorAtual() + '_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+}
+
+// ================================================================
 // TABS & MODE
 // ================================================================
 function switchTab(tabId, tabsId) {
@@ -12840,6 +13549,7 @@ function switchTab(tabId, tabsId) {
   if(tabId==='editor-dmc'){initEditorDMCMap();setTimeout(()=>{if(mapEditorDMC)mapEditorDMC.invalidateSize();},100);}
   if(tabId==='manage') renderManage();
   if(tabId==='usuarios') renderUsuariosPanel();
+  if(tabId==='macromedicao') macro_abrirAba();
   if(tabId==='campanhas-pc') { renderProgEquipesCheckboxes(); renderCampanhasProgramadasDesktop(); }
   if(tabId==='register') { voltarParaListaRegistro(); }
 }

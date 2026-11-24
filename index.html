@@ -863,7 +863,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div class="panel" id="editor-dmc">
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg);flex-wrap:wrap">
-        <select id="editor-dmc-cidade" onchange="editorDMC_popularSelectDMC()" style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
+        <select id="editor-dmc-cidade" onchange="editorDMC_popularSelectDMC(); editorDMC_aoTrocarCidadeRede()" style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
           <option value="">Selecione a cidade...</option>
         </select>
         <select id="editor-dmc-especifico" disabled style="padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);min-width:180px">
@@ -875,6 +875,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="btn sm" onclick="if(confirm('Limpar tudo que está desenhado no mapa agora? Isso não afeta nada salvo no banco.'))editorDMC_limpar()"><i class="ti ti-eraser"></i> Limpar</button>
         <button class="btn sm" id="editor-dmc-desfazer-btn" onclick="editorDMC_desfazer()" disabled><i class="ti ti-arrow-back-up"></i> Desfazer</button>
         <button class="btn sm" onclick="editorDMC_verificarSobreposicao()"><i class="ti ti-stack-2"></i> Verificar sobreposição</button>
+        <button class="btn sm" id="editor-dmc-btn-rede" onclick="editorDMC_toggleRede()" title="Mostra a rede de água da cidade selecionada como fundo, para ajudar a traçar o perímetro (só visualização)"><i class="ti ti-route"></i> Rede</button>
         <button class="btn sm" onclick="editorDMC_baixarKML()" style="margin-left:auto"><i class="ti ti-download"></i> Baixar KML</button>
         <button class="btn sm primary" id="editor-dmc-btn-salvar" onclick="editorDMC_salvarNoApp()"><i class="ti ti-device-floppy"></i> Salvar</button>
       </div>
@@ -4851,6 +4852,93 @@ let editorDMCProximoIndiceCor = 0;
 // precisa reabrir o texto toda vez que troca de aba.
 const LS_EDITOR_DMC_INFO_KEY = 'geofon_editor_dmc_info_aberto';
 
+// ================================================================
+// EDITOR DE DMC — REDE COMO CAMADA DE FUNDO (2026-11-24)
+// Pedido do Lourenço: poder ver a rede no editor para facilitar traçar os polígonos.
+// NÃO é edição de rede (isso é a Fase 5, adiada). A rede aparece com as cores por
+// diâmetro do app, sem clique, sem edição (pmIgnore) e sem "grudar" o desenho nela
+// (snapIgnore). Mostra a rede da cidade escolhida na barra; ao trocar de cidade com o
+// botão ligado, acrescenta a rede da nova cidade (útil em divisa entre municípios).
+// Liga/desliga lembrado por aparelho (localStorage). Liberado para qualquer perfil que
+// abra o editor, inclusive Supervisor sem escopo (é só visualização).
+// ================================================================
+const LS_EDITOR_DMC_REDE_KEY = 'geofon_editor_dmc_rede';
+let editorDMCRedeLayerGroup = null;
+let editorDMCRedeRenderer = null;
+let editorDMCRedeLigada = false;
+const editorDMCRedeCidades = new Set(); // cidades cuja rede já está desenhada no editor
+
+function editorDMC_atualizarBotaoRede() {
+  const b = document.getElementById('editor-dmc-btn-rede');
+  if (!b) return;
+  b.classList.toggle('primary', editorDMCRedeLigada);
+  b.innerHTML = '<i class="ti ti-route"></i> Rede' + (editorDMCRedeLigada ? ' ✓' : '');
+}
+
+function editorDMC_toggleRede() {
+  if (!mapEditorDMC) return;
+  editorDMCRedeLigada = !editorDMCRedeLigada;
+  try { localStorage.setItem(LS_EDITOR_DMC_REDE_KEY, editorDMCRedeLigada ? '1' : '0'); } catch(e) {}
+  editorDMC_atualizarBotaoRede();
+  if (!editorDMCRedeLigada) {
+    editorDMCRedeLayerGroup.clearLayers();
+    editorDMCRedeCidades.clear();
+    return;
+  }
+  const cidadeId = document.getElementById('editor-dmc-cidade')?.value;
+  if (!cidadeId) { toast('Rede ligada — escolha uma cidade na barra para ver a rede dela'); return; }
+  editorDMC_mostrarRedeCidade(cidadeId, true);
+}
+
+function editorDMC_aoTrocarCidadeRede() {
+  if (!editorDMCRedeLigada) return;
+  const cidadeId = document.getElementById('editor-dmc-cidade')?.value;
+  if (cidadeId) editorDMC_mostrarRedeCidade(cidadeId, true); // só enquadra se o editor estiver vazio
+}
+
+async function editorDMC_mostrarRedeCidade(cidadeId, enquadrar) {
+  if (!mapEditorDMC || !editorDMCRedeLayerGroup || editorDMCRedeCidades.has(cidadeId)) return;
+  const nomeCidade = (S.cidades.find(c => c.id === cidadeId) || {}).nome || cidadeId;
+  const camadas = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!camadas.length) { toast('Esta cidade (' + nomeCidade + ') ainda não tem rede cadastrada'); return; }
+  editorDMCRedeCidades.add(cidadeId);
+  toast('Carregando a rede de ' + nomeCidade + '...');
+  const grupos = [];
+  for (const item of camadas) {
+    try { await garantirGeometriaCarregada(item); } catch(e) {}
+    if (!editorDMCRedeLigada || !editorDMCRedeCidades.has(cidadeId)) return; // desligada no meio da carga
+    if (!item._geojson || !item._geojson.features) continue;
+    const linhas = item._geojson.features.filter(ft => ft.geometry && ['LineString','MultiLineString'].includes(ft.geometry.type));
+    if (!linhas.length) continue;
+    const g = L.geoJSON({ type: 'FeatureCollection', features: linhas }, {
+      pane: 'paneEditorRede',
+      renderer: editorDMCRedeRenderer,
+      interactive: false,
+      pmIgnore: true,
+      snapIgnore: true,
+      style: ft => {
+        const dn = ft.properties && ft.properties._diametroMm ? Number(ft.properties._diametroMm) : null;
+        return { color: resolverCorFeature(ft, 'redes', item) || LAYER_STYLE.redes.color, weight: larguraLinhaPorDN(dn), opacity: 0.85 };
+      },
+    });
+    editorDMCRedeLayerGroup.addLayer(g);
+    grupos.push(g);
+  }
+  if (!grupos.length) {
+    editorDMCRedeCidades.delete(cidadeId);
+    toast('Não consegui desenhar a rede de ' + nomeCidade + ' (arquivo sem trechos de linha ou com erro)');
+    return;
+  }
+  // Só enquadra no "ligar" quando o editor ainda está vazio — se já tem polígono na tela,
+  // não tira a pessoa do lugar em que está trabalhando.
+  const editorVazio = !editorDMCLayerGroup.getLayers().length && !editorDMCReferenciaLayerGroup.getLayers().length;
+  if (enquadrar && editorVazio) {
+    const b = L.featureGroup(grupos).getBounds();
+    if (b.isValid()) mapEditorDMC.fitBounds(b, { maxZoom: 16 });
+  }
+  toast('✓ Rede de ' + nomeCidade + ' no mapa (só visualização)');
+}
+
 function editorDMC_toggleInfo(forcarAberto) {
   const texto = document.getElementById('editor-dmc-info-texto');
   const btn = document.getElementById('editor-dmc-info-toggle-btn');
@@ -4874,6 +4962,13 @@ function initEditorDMCMap() {
   editorDMCLayerGroup = L.featureGroup().addTo(mapEditorDMC);
   editorDMCConflitosLayerGroup = L.featureGroup().addTo(mapEditorDMC);
   editorDMCReferenciaLayerGroup = L.featureGroup().addTo(mapEditorDMC); // (Fase 4) DMCs fora do escopo — só visualização
+  // Rede de água como fundo (só visualização): pane próprio ABAIXO dos polígonos (overlayPane
+  // = 400) e renderer canvas — rede de cidade grande tem milhares de trechos.
+  mapEditorDMC.createPane('paneEditorRede').style.zIndex = 350;
+  editorDMCRedeRenderer = L.canvas({ pane: 'paneEditorRede' });
+  editorDMCRedeLayerGroup = L.layerGroup().addTo(mapEditorDMC);
+  try { editorDMCRedeLigada = localStorage.getItem(LS_EDITOR_DMC_REDE_KEY) === '1'; } catch(e) {}
+  editorDMC_atualizarBotaoRede();
 
   // Restaura se as orientações estavam minimizadas (pedido: aumentar a área de desenho)
   // — o mapa já nasce com o tamanho final, sem precisar de um segundo invalidateSize.

@@ -10845,6 +10845,63 @@ function htmlRegistroCurvaDMC(d, contorno) {
   return '<span style="color:var(--text3)">sem registro</span>';
 }
 
+// ---------------- Baixar o KML de UM DMC (pop-up Editar da Gestão, 2026-11-24) ----------------
+function geometriaDMCParaKml(g) {
+  const cs = arr => arr.map(c => c[0] + ',' + c[1] + ',0').join(' ');
+  const poligono = rings => '<Polygon><outerBoundaryIs><LinearRing><coordinates>' + cs(rings[0]) + '</coordinates></LinearRing></outerBoundaryIs>' +
+    rings.slice(1).map(r => '<innerBoundaryIs><LinearRing><coordinates>' + cs(r) + '</coordinates></LinearRing></innerBoundaryIs>').join('') + '</Polygon>';
+  if (!g) return '';
+  if (g.type === 'Polygon') return poligono(g.coordinates);
+  if (g.type === 'MultiPolygon') return '<MultiGeometry>' + g.coordinates.map(poligono).join('') + '</MultiGeometry>';
+  return geometriaParaKml(g); // linha/ponto (raro em camada de DMC)
+}
+function gerarKMLDMC(c, d, itens) {
+  const cor = d.corPersonalizada || (d.situacao && S.coresPorSituacaoDMC[d.situacao]) ||
+    (itens[0] && itens[0].ft && resolverCorFeature(itens[0].ft, 'dmc', itens[0].item)) || LAYER_STYLE.dmc.color;
+  const corKml = hexParaCorKml(cor);
+  const dados = [['Município', c.nome], ['Sigla', d.sigla], ['Situação', d.situacao], ['Cód. GIS', d.codigoGis],
+    ['Macromedidor', d.macromedidor], ['Ligações', d.ligacoes], ['Extensão de rede (m)', d.extensaoRede != null ? Math.round(d.extensaoRede) : null]]
+    .filter(([, v]) => v != null && v !== '');
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
+    '<name>' + escXml(d.nome) + '</name>',
+    '<Style id="dmc"><LineStyle><color>' + corKml + '</color><width>3</width></LineStyle><PolyStyle><color>' + corKml.replace(/^ff/, '33') + '</color></PolyStyle></Style>'];
+  itens.forEach(({ ft }) => {
+    out.push('<Placemark><name>' + escXml(d.nome) + '</name><styleUrl>#dmc</styleUrl>' +
+      (dados.length ? '<ExtendedData>' + dados.map(([k, v]) => '<Data name="' + escXml(k) + '"><value>' + escXml(v) + '</value></Data>').join('') + '</ExtendedData>' : '') +
+      geometriaDMCParaKml(ft.geometry) + '</Placemark>');
+  });
+  out.push('</Document></kml>');
+  return out.join('\n');
+}
+async function baixarKMLDoDMCEditando() {
+  const e = S._editDMC; if (!e) return;
+  const c = S.cidades.find(x => x.id === e.cidadeId);
+  const idx = _idxDMCEditando();
+  const d = c && c.dmcs[idx];
+  if (!d) return;
+  const btn = document.getElementById('edit-dmc-btn-kml');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Preparando...'; }
+  try {
+    const grupos = await feicoesDoDMC(c.id, d);
+    const itens = grupos.flatMap(g => g.idxs.map(k => ({ item: g.item, ft: g.item._geojson.features[k] }))).filter(x => x.ft && x.ft.geometry);
+    if (!itens.length) { toast('Este DMC ainda não tem curva (contorno) cadastrada'); return; }
+    const kml = gerarKMLDMC(c, d, itens);
+    const nomeArq = nomeArquivoSeguro(d.nome) + '_' + new Date().toISOString().slice(0, 10) + '.kml';
+    const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nomeArq;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('✓ ' + nomeArq + ' baixado');
+  } catch (err) {
+    console.error(err);
+    toast('⚠️ Erro ao gerar o KML: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-download"></i> Baixar KML'; }
+  }
+}
+
 // Pop-up de edição de um DMC (mesmas funções de gravação da visão por município).
 S._editDMC = null;
 function abrirEditarDMC(cidadeId, idx) {
@@ -10896,7 +10953,8 @@ function abrirEditarDMC(cidadeId, idx) {
     '</div>' +
     htmlJuntarDMC(c, d) +
     '<div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">' +
-      '<button class="btn" style="color:var(--red)" onclick="removerDMCDaTabela()"><i class="ti ti-trash"></i> Remover</button>' +
+      '<div style="display:flex;gap:8px"><button class="btn" style="color:var(--red)" onclick="removerDMCDaTabela()"><i class="ti ti-trash"></i> Remover</button>' +
+      '<button class="btn" id="edit-dmc-btn-kml" onclick="baixarKMLDoDMCEditando()"' + (contorno === null ? ' disabled title="Este DMC ainda não tem curva cadastrada"' : ' title="Baixa a curva deste DMC em KML, com os dados do cadastro"') + '><i class="ti ti-download"></i> Baixar KML</button></div>' +
       '<div style="display:flex;gap:8px"><button class="btn" onclick="closeModal(\'modal-editar-dmc\')">Cancelar</button>' +
       '<button class="btn primary" id="edit-dmc-salvar" onclick="salvarEditarDMC()"><i class="ti ti-device-floppy"></i> Salvar</button></div>' +
     '</div>';

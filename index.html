@@ -2018,7 +2018,7 @@ const DMC_SEM_DMC = 'Sem DMC';
 // funcionando sem precisar de uma migração manual separada.
 function normalizarDMC(d) {
   if (typeof d === 'string') {
-    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null, macromedidor:null, supervisorio:null, fpDisponivel:false };
+    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null, macromedidor:null, supervisorio:null, fpDisponivel:false, curvaAlteracao:null };
   }
   return {
     nome: d.nome || '', sigla: d.sigla || '', ligacoes: (d.ligacoes ?? null),
@@ -2039,7 +2039,11 @@ function normalizarDMC(d) {
     // disponível — o FP só faz sentido quando há supervisório.
     macromedidor: d.macromedidor || null,
     supervisorio: (d.supervisorio === true || d.supervisorio === false) ? d.supervisorio : null,
-    fpDisponivel: d.fpDisponivel === true
+    fpDisponivel: d.fpDisponivel === true,
+    // Registro de segurança (2026-11-24): quem fez a última alteração da CURVA deste DMC
+    // { em: ms, uid, nome, email, acao: 'editada'|'criada'|'renomeada'|'juntada' }.
+    // Mostrado só no pop-up Editar da Gestão.
+    curvaAlteracao: (d.curvaAlteracao && typeof d.curvaAlteracao === 'object') ? d.curvaAlteracao : null
   };
 }
 // Normaliza todos os DMCs de uma cidade e garante que "Sem DMC" sempre exista nela.
@@ -3687,15 +3691,17 @@ function iniciarSincronizacaoCamadas() {
         // S.leafletLayers, e o item novo nunca via o resultado (causava busca duplicada
         // e mais uma chance de dar a impressão de "carregamento ignorado").
         _carregandoPromise: existente ? existente._carregandoPromise : null,
-        _carregamentoEmAndamento: existente ? existente._carregamentoEmAndamento : null
+        _carregamentoEmAndamento: existente ? existente._carregamentoEmAndamento : null,
+        _versaoAnterior: existente ? existente._versaoGeo : undefined
       };
       if (item._geoDesatualizada) {
         // Arquivo da curva mudou: tira a curva velha dos mapas e do cache
         removerGeometriaDoMapa(item);
         item.lgField = null; item.lgPC = null; item._geojson = null;
+        item._carregandoPromise = null; item._carregamentoEmAndamento = null;
         if (S._dmcContornosTentados) S._dmcContornosTentados.delete(item.id);
       }
-      delete item._geoDesatualizada;
+      delete item._geoDesatualizada; delete item._versaoAnterior;
       S.leafletLayers[tipo].push(item);
       // Se este dispositivo já tinha marcado como visível e a geometria ainda não foi
       // carregada (ex.: acabou de logar), carrega agora automaticamente. Se já estava
@@ -5142,7 +5148,9 @@ function editorDMC_aoMudar() {
 function editorDMC_construirSnapshot() {
   const features = editorDMCLayerGroup.getLayers().filter(l => l.toGeoJSON).map(l => {
     const ft = l.toGeoJSON();
-    ft.properties = ft.properties || {};
+    // Cópia: toGeoJSON devolve o MESMO objeto de propriedades da curva, e escrever nele
+    // fazia o campo interno __origemDMC ir parar dentro do arquivo salvo.
+    ft.properties = Object.assign({}, ft.properties || {});
     ft.properties.__origemDMC = l._origemDMC || null;
     return ft;
   });
@@ -6292,6 +6300,7 @@ async function editorDMC__salvarNoAppInterno() {
   });
 
   let erros = 0;
+  const alteracoesCurva = []; // registro de quem alterou cada curva (gravado no fim)
 
   // Atualiza camadas já existentes — substitui SÓ a feature editada, preservando as
   // outras formas que porventura estejam no mesmo arquivo.
@@ -6310,7 +6319,8 @@ async function editorDMC__salvarNoAppInterno() {
     Object.entries(porNome).forEach(([nomeDMC, ls]) => {
       const bate = ft => { const n = editorDMC_nomeNaFeature(ft); return n && nomesDMCBatem(n, nomeDMC); };
       const idx = geojsonAtual.features.findIndex(bate);
-      const props = idx === -1 ? { name: nomeDMC } : geojsonAtual.features[idx].properties; // preserva nome/propriedades originais
+      const props = idx === -1 ? { name: nomeDMC } : Object.assign({}, geojsonAtual.features[idx].properties); // preserva nome/propriedades originais
+      delete props.__origemDMC; // campo interno do Editor que vazou para arquivos antigos
       const novas = ls.map(l => { const f = l.toGeoJSON(); f.properties = JSON.parse(JSON.stringify(props)); return f; });
       const pos = idx === -1 ? geojsonAtual.features.length : idx;
       geojsonAtual.features = geojsonAtual.features.filter(ft => !bate(ft));
@@ -6319,13 +6329,15 @@ async function editorDMC__salvarNoAppInterno() {
     const ok = await atualizarGeometriaCamada(camadaId, geojsonAtual);
     if (!ok) { erros++; continue; }
     if (editorDMCGeojsonRecente[camadaId]) editorDMCGeojsonRecente[camadaId].features = geojsonAtual.features;
+    Object.keys(porNome).forEach(nomeDMC => alteracoesCurva.push({ cidadeId: porNome[nomeDMC][0]._origemDMC.cidadeId, nomeDMC, acao: 'editada' }));
   }
 
   // Cria camada nova pra cada DMC que ainda não tinha nenhum arquivo vinculado.
   for (const [nomeDMC, info] of Object.entries(porDMCNovo)) {
     const geojsonNovo = { type: 'FeatureCollection', features: info.layers.map(l => {
       const ft = l.toGeoJSON();
-      ft.properties = ft.properties || {};
+      ft.properties = Object.assign({}, ft.properties || {});
+      delete ft.properties.__origemDMC;
       ft.properties.name = nomeDMC;
       return ft;
     }) };
@@ -6338,6 +6350,7 @@ async function editorDMC__salvarNoAppInterno() {
     // da "segunda curva com o mesmo nome").
     editorDMCGeojsonRecente[novoId] = { cidadeId: info.cidadeId, features: geojsonNovo.features };
     info.layers.forEach(l => { l._origemDMC = { camadaId: novoId, nomeDMC, cidadeId: info.cidadeId }; });
+    alteracoesCurva.push({ cidadeId: info.cidadeId, nomeDMC, acao: 'criada' });
     // Se o DMC em si ainda não existia no cadastro da cidade, cria também.
     if (info.criarDMCNovo) {
       const c = S.cidades.find(c => c.id === info.cidadeId);
@@ -6347,6 +6360,8 @@ async function editorDMC__salvarNoAppInterno() {
       }
     }
   }
+
+  await gravarAlteracaoCurvaDMC(alteracoesCurva);
 
   const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   if (erros) {
@@ -8762,6 +8777,7 @@ async function carregarGeometriaCamada(tipo, camadaId) {
             item._carregandoPromise = buscarGeometriaBruta(item, false).finally(() => { item._carregandoPromise = null; });
           }
           item._geojson = await item._carregandoPromise;
+          entregarGeojsonAoAtual(item, item._geojson);
         }
         if (!item._geojson) return;
         const geojson = item._geojson;
@@ -8894,13 +8910,35 @@ async function garantirGeometriaVarias(itens, aoProgredir) {
   await Promise.all(Array.from({ length: Math.min(6, total) }, trabalhador));
 }
 
+// O snapshot de "camadas" recria os objetos de S.leafletLayers a cada mudança no banco.
+// Uma curva que terminava de baixar depois disso era gravada no objeto ANTIGO e se
+// perdia — a tela (ex.: coluna Contorno da Gestão) achava que o DMC não tinha curva.
+// Estas funções entregam o resultado também ao objeto atual da lista (relato 2026-11-24).
+function itemCamadaAtual(item) {
+  for (const t of ['dmc', 'redes']) {
+    const atual = (S.leafletLayers[t] || []).find(i => i.id === item.id);
+    if (atual) return atual;
+  }
+  return item;
+}
+function entregarGeojsonAoAtual(item, geojson) {
+  if (!geojson) return;
+  const atual = itemCamadaAtual(item);
+  if (atual !== item && !atual._geojson && atual._versaoGeo === item._versaoGeo) atual._geojson = geojson;
+}
 async function garantirGeometriaCarregada(item) {
   if (item._geojson) return;
-  if (item._carregamentoEmAndamento) { await item._carregamentoEmAndamento; return; }
+  if (item._carregamentoEmAndamento) {
+    await item._carregamentoEmAndamento;
+    if (item._geojson) return; // senão, o resultado foi para outro objeto — busca de novo abaixo
+    const atual = itemCamadaAtual(item);
+    if (atual._geojson) { item._geojson = atual._geojson; return; }
+  }
   if (!item._carregandoPromise) {
     item._carregandoPromise = buscarGeometriaBruta(item, true).finally(() => { item._carregandoPromise = null; });
   }
   item._geojson = await item._carregandoPromise;
+  entregarGeojsonAoAtual(item, item._geojson);
 }
 
 // Detecta em qual DMC (e, por consequência, em qual cidade) uma coordenada cai,
@@ -10381,13 +10419,20 @@ function nomeFeatureDMC(p) {
   p = p || {};
   return p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
 }
+S._dmcContornosTentativas = {};
 function garantirContornosDMCTabela(visivel) {
   const camadas = (S.leafletLayers.dmc || []).filter(i => !i.removida);
+  // Tentada, sem curva e sem erro registrado = o resultado se perdeu: libera de novo
+  camadas.forEach(i => {
+    if (!i._geojson && !i._erroCarregamento && S._dmcContornosTentados.has(i.id) && !S._dmcContornosCarregando &&
+        (S._dmcContornosTentativas[i.id] || 0) < 3) S._dmcContornosTentados.delete(i.id);
+  });
   const pendentes = camadas.filter(i => !i._geojson && !S._dmcContornosTentados.has(i.id));
+  pendentes.forEach(i => { S._dmcContornosTentativas[i.id] = (S._dmcContornosTentativas[i.id] || 0) + 1; });
   if (!visivel || !pendentes.length || S._dmcContornosCarregando) return;
   S._dmcContornosCarregando = true;
   pendentes.forEach(i => S._dmcContornosTentados.add(i.id));
-  Promise.allSettled(pendentes.map(garantirGeometriaCarregada)).then(() => {
+  Promise.allSettled(pendentes.map(i => garantirGeometriaCarregada(i).then(() => entregarGeojsonAoAtual(i, i._geojson)))).then(() => {
     S._dmcContornosCarregando = false;
     renderDMCsTabela();
   });
@@ -10397,7 +10442,11 @@ function contornoDoDMC(cidadeId, d) {
   const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
   let carregando = false;
   for (const item of camadas) {
-    if (!item._geojson) { if (!S._dmcContornosTentados.has(item.id) || S._dmcContornosCarregando) carregando = true; continue; }
+    if (!item._geojson) {
+      if (!S._dmcContornosTentados.has(item.id) || S._dmcContornosCarregando ||
+          (!item._erroCarregamento && (S._dmcContornosTentativas[item.id] || 0) < 3)) carregando = true;
+      continue;
+    }
     const bate = (item._geojson.features || []).some(ft => {
       const nome = nomeFeatureDMC(ft.properties);
       if (!nome) return false;
@@ -10610,6 +10659,7 @@ async function renomearFeicoesKML(grupos, novoNome) {
         if (p[key] != null && String(p[key]).trim() === String(atual).trim()) { p[key] = novoNome; trocou = true; }
       });
       if (!trocou) p.name = novoNome;
+      delete p.__origemDMC; // campo interno do Editor que vazou para arquivos antigos
     });
     const ok = await atualizarGeometriaCamada(item.id, gj);
     if (!ok) return false;
@@ -10641,6 +10691,7 @@ async function renomearDMCCompleto(cidadeId, idx, novoNome) {
   }
   d.nome = novoNome;
   d.nomeFeatureKml = null; // a curva agora tem o mesmo nome do cadastro
+  if (grupos.length) marcarAlteracaoCurvaDMC(c, novoNome, 'renomeada');
   await salvarCidadeFirestore(c);
   const m = await migrarNomeDMCRegistros(cidadeId, nomeAntigo, novoNome);
   return { ok: true, curvas: grupos.reduce((n, g) => n + g.idxs.length, 0), ...m };
@@ -10700,7 +10751,7 @@ async function juntarDMCDaTabela() {
     ['sigla','codigoGis','macromedidor','situacao','corPersonalizada'].forEach(k => { if (!fica[k] && sai[k]) fica[k] = sai[k]; });
     if (fica.ligacoes == null && sai.ligacoes != null) fica.ligacoes = sai.ligacoes;
     if (fica.supervisorio == null && sai.supervisorio != null) { fica.supervisorio = sai.supervisorio; fica.fpDisponivel = !!sai.fpDisponivel; }
-    if (curvasSai.length) { fica.extensaoRede = sai.extensaoRede ?? fica.extensaoRede; fica.nomeFeatureKml = null; }
+    if (curvasSai.length) { fica.extensaoRede = sai.extensaoRede ?? fica.extensaoRede; fica.nomeFeatureKml = null; marcarAlteracaoCurvaDMC(c, fica.nome, 'juntada'); }
     if (fica.extensaoPercorrida == null && sai.extensaoPercorrida != null) fica.extensaoPercorrida = sai.extensaoPercorrida;
     c.dmcs = c.dmcs.filter(x => x !== sai);
     await salvarCidadeFirestore(c);
@@ -10713,6 +10764,48 @@ async function juntarDMCDaTabela() {
     toast('⚠️ Erro ao juntar: ' + (err.message || err));
     restaurarBtn();
   } finally { pausarSyncDMC(c.id, false); }
+}
+
+// Grava em cada DMC (do cadastro da cidade) quem alterou a curva por último.
+// alvos: [{ cidadeId, nomeDMC, acao }]. Não grava a cidade — quem chama decide (ou usa
+// gravarAlteracaoCurvaDMC, que grava).
+function marcarAlteracaoCurvaDMC(c, nomeDMC, acao) {
+  const d = c && c.dmcs.find(x => x.nome === nomeDMC) || (c && c.dmcs.find(x => nomesDMCBatem(x.nome, nomeDMC)));
+  if (!d || d.nome === DMC_SEM_DMC) return false;
+  d.curvaAlteracao = { em: Date.now(), uid: S.user?.uid || '', nome: S.user?.nome || '', email: S.user?.email || '', acao: acao || 'editada' };
+  return true;
+}
+async function gravarAlteracaoCurvaDMC(alvos) {
+  const porCidade = {};
+  (alvos || []).forEach(a => { (porCidade[a.cidadeId] = porCidade[a.cidadeId] || []).push(a); });
+  for (const [cid, lista] of Object.entries(porCidade)) {
+    const c = S.cidades.find(x => x.id === cid);
+    if (!c) continue;
+    let mudou = false;
+    lista.forEach(a => { if (marcarAlteracaoCurvaDMC(c, a.nomeDMC, a.acao)) mudou = true; });
+    if (mudou) { try { await salvarCidadeFirestore(c); } catch (e) { console.warn('Não gravou o registro de alteração da curva', e); } }
+  }
+}
+const ACAO_CURVA_TXT = { editada: 'editou a curva no Editor de DMC', criada: 'criou a curva no Editor de DMC', renomeada: 'renomeou o DMC (e a curva)', juntada: 'juntou outro DMC a este (curva trazida do duplicado)' };
+// Texto do registro para o pop-up Editar. Sem registro próprio (curvas alteradas antes
+// de 2026-11-24, ou subidas por "Carregar camadas"), usa o que o arquivo da curva guarda.
+function htmlRegistroCurvaDMC(d, contorno) {
+  const fmt = ms => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const r = d.curvaAlteracao;
+  const msArquivo = contorno ? (msDoCampo(contorno.ultimaAtualizacao) || msDoCampo(contorno.criadoEm) || 0) : 0;
+  // Registro do DMC, a não ser que o arquivo da curva tenha sido alterado depois (ex.:
+  // subido de novo em "Carregar camadas", que não passa pelo registro por DMC)
+  if (r && r.em && !(msArquivo > r.em + 60000)) {
+    const quem = escHtml(r.nome || nomeDeUsuario(r.uid) || 'usuário desconhecido') + (r.email && r.email !== r.nome ? ' <span style="color:var(--text3)">(' + escHtml(r.email) + ')</span>' : '');
+    return '<b>' + fmt(r.em) + '</b> · ' + quem + '<br><span style="color:var(--text3)">' + escHtml(ACAO_CURVA_TXT[r.acao] || r.acao || '') + '</span>';
+  }
+  if (contorno) {
+    const ms = msDoCampo(contorno.ultimaAtualizacao) || msDoCampo(contorno.criadoEm);
+    const nome = contorno.atualizadoPorNome || contorno.criadoPorNome || nomeDeUsuario(contorno.atualizadoPor || contorno.criadoPor);
+    if (ms || nome) return (ms ? '<b>' + fmt(ms) + '</b>' : '') + (nome ? ' · ' + escHtml(nome) : '') +
+      '<br><span style="color:var(--text3)">registro do arquivo da curva</span>';
+  }
+  return '<span style="color:var(--text3)">sem registro</span>';
 }
 
 // Pop-up de edição de um DMC (mesmas funções de gravação da visão por município).
@@ -10757,6 +10850,7 @@ function abrirEditarDMC(cidadeId, idx) {
       'Extensão de rede: <b>' + extTxt + '</b><br>' +
       'Contorno (KML): <b>' + (contorno ? 'vinculado' + (infoUploadCamada(contorno) ? ' — ' + escHtml(infoUploadCamada(contorno)) : '') : contorno === null ? 'não encontrado' : 'conferindo...') + '</b><br>' +
       'Vazamentos registrados: <b>' + S.leaks.filter(l => l.cidade === cidadeId && l.dmc === d.nome).length + '</b>' +
+      '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><i class="ti ti-shield-check" style="color:var(--blue)"></i> Última alteração da curva: ' + htmlRegistroCurvaDMC(d, contorno) + '</div>' +
       (div.nivel ? '<br><span style="color:' + (div.nivel === 'dividir' ? 'var(--red)' : 'var(--amber)') + ';font-weight:600">' + (div.nivel === 'dividir' ? '✂ Precisa ser dividido: ' : 'Verificar divisão: ') + escHtml(div.motivos.join(' · ')) + '</span>' : '') +
     '</div>' +
     htmlJuntarDMC(c, d) +

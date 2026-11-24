@@ -5500,7 +5500,11 @@ async function editorDMC_carregarExistentes() {
   const duplicados = new Set(Object.entries(arquivosPorDMC).filter(([,arqs]) => arqs.size > 1).map(([nome]) => nome));
 
   if (dmcEspecifico && duplicados.has(dmcEspecifico)) {
-    toast('⚠️ "' + dmcEspecifico + '" está cadastrado em ' + arquivosPorDMC[dmcEspecifico].size + ' arquivos diferentes — isso é duplicidade de dados. Resolva em Gestão → Cidades e DMCs antes de editar este DMC. Carregamento cancelado.');
+    if (!somenteVisualizacao) {
+      const corrigiu = await editorDMC_corrigirDuplicidade(cidadeId, dmcEspecifico, [...arquivosPorDMC[dmcEspecifico]]);
+      if (corrigiu) { editorDMC_carregarExistentes(); return; }
+    }
+    toast('⚠️ "' + dmcEspecifico + '" está cadastrado em ' + arquivosPorDMC[dmcEspecifico].size + ' arquivos diferentes — isso é duplicidade de dados. Carregamento cancelado.');
     return;
   }
 
@@ -5550,9 +5554,44 @@ async function editorDMC_carregarExistentes() {
   if (editorDMCLayerGroup.getLayers().length) mapEditorDMC.fitBounds(editorDMCLayerGroup.getBounds(), { maxZoom: 16 });
   editorDMC_atualizarContadorVertices();
   if (duplicados.size) {
-    toast('⚠️ Pulei ' + [...duplicados].join(', ') + ' — cadastrado(s) em mais de um arquivo. Resolva a duplicidade em Gestão antes de editar.');
+    toast('⚠️ Pulei ' + [...duplicados].join(', ') + ' — cadastrado(s) em mais de um arquivo. Para corrigir, escolha esse DMC na segunda lista da barra e clique em Carregar.');
   }
   toast('✓ Carregado — já dá pra editar');
+}
+
+// Corrige DMC gravado em mais de um arquivo (ex.: as "segundas curvas" criadas pelo bug
+// corrigido em 2026-11-24): mantém a versão do arquivo mais recente e tira esse DMC dos
+// arquivos mais antigos. Arquivo antigo que ficar vazio é removido; se tiver outros DMCs,
+// só a forma desse DMC sai dele.
+async function editorDMC_corrigirDuplicidade(cidadeId, nomeDMC, camadaIds) {
+  const itens = camadaIds.map(id => (S.leafletLayers.dmc||[]).find(i => i.id === id)).filter(Boolean);
+  if (itens.length < 2) return false;
+  const ms = i => msDoCampo(i.ultimaAtualizacao) || msDoCampo(i.criadoEm) || 0;
+  itens.sort((a, b) => ms(b) - ms(a));
+  const [manter, ...antigos] = itens;
+  const fmt = i => { const t = ms(i); return '• ' + (i.nome || i.id) + (t ? ' — ' + new Date(t).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''); };
+  if (!confirm('"' + nomeDMC + '" está gravado em ' + itens.length + ' arquivos:\n\n' + itens.map(fmt).join('\n') +
+      '\n\nCorrigir agora? Fica a versão MAIS RECENTE (a primeira da lista) e esse DMC sai dos arquivos mais antigos.')) return false;
+  toast('Corrigindo duplicidade de "' + nomeDMC + '"...');
+  for (const item of antigos) {
+    try { await garantirGeometriaCarregada(item); } catch(e) {}
+    if (!item._geojson) { toast('⚠️ Não consegui ler o arquivo ' + (item.nome || item.id) + ' — correção interrompida'); return false; }
+    const restantes = item._geojson.features.filter(ft => { const n = editorDMC_nomeNaFeature(ft); return !(n && nomesDMCBatem(n, nomeDMC)); });
+    try {
+      if (!restantes.length) {
+        await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { removida: true }, { merge: true });
+        item.removida = true;
+      } else {
+        const ok = await atualizarGeometriaCamada(item.id, { type: 'FeatureCollection', features: restantes });
+        if (!ok) return false;
+      }
+    } catch (err) {
+      toast('⚠️ Erro ao corrigir: ' + (err.code || err.message || err));
+      return false;
+    }
+  }
+  toast('✓ Duplicidade de "' + nomeDMC + '" corrigida — ficou só a versão mais recente');
+  return true;
 }
 
 function editorDMC_importarKML() {
@@ -5817,10 +5856,62 @@ function editorDMC_mostrarResultadoSobreposicao(resultados, silencioso) {
 // DMC (ou nome de um DMC novo) só pra essa forma específica.
 // ================================================================
 let _editorDMCResolverVinculo = null;
+let _editorDMCLayerPerguntada = null; // polígono sobre o qual a janela de vínculo está perguntando
+
+// Nome que veio gravado na feature (KML/arquivo), se houver
+function editorDMC_nomeNaFeature(ft) {
+  const p = (ft && ft.properties) || {};
+  return p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label||null;
+}
+
+// Em qual arquivo (camada) de DMC desta cidade o DMC já tem perímetro? Retorna o id da
+// camada (a mais recente, se por acaso houver mais de uma) ou null. Usada pelo "Salvar"
+// para nunca criar um SEGUNDO arquivo para um DMC que já tem perímetro (correção
+// 2026-11-24: salvar de novo um DMC recém-criado gerava uma segunda curva com o mesmo nome).
+async function editorDMC_acharCamadaDoDMC(cidadeId, nomeDMC) {
+  const camadasCidade = (S.leafletLayers.dmc||[]).filter(i => i.cidade === cidadeId && !i.removida);
+  const achadas = [];
+  for (const item of camadasCidade) {
+    try { await garantirGeometriaCarregada(item); } catch(e) {}
+    const geo = item._geojson || editorDMCGeojsonRecente[item.id];
+    if (geo?.features?.some(ft => { const n = editorDMC_nomeNaFeature(ft); return n && nomesDMCBatem(n, nomeDMC); })) achadas.push(item);
+  }
+  // Arquivo criado agora há pouco por este editor e que ainda não chegou na lista
+  // sincronizada do Firestore
+  Object.entries(editorDMCGeojsonRecente).forEach(([id, info]) => {
+    if (info.cidadeId === cidadeId && !achadas.some(i => i.id === id) && !camadasCidade.some(i => i.id === id) &&
+        info.features.some(ft => { const n = editorDMC_nomeNaFeature(ft); return n && nomesDMCBatem(n, nomeDMC); })) {
+      achadas.push({ id, _recente: true });
+    }
+  });
+  if (!achadas.length) return null;
+  achadas.sort((a, b) => (msDoCampo(b.ultimaAtualizacao) || msDoCampo(b.criadoEm) || (b._recente ? Date.now() : 0)) - (msDoCampo(a.ultimaAtualizacao) || msDoCampo(a.criadoEm) || (a._recente ? Date.now() : 0)));
+  return achadas[0].id;
+}
+
+// Geometria dos arquivos criados nesta sessão do editor (id -> { cidadeId, features }) —
+// o documento novo pode demorar uns instantes para aparecer em S.leafletLayers.dmc.
+const editorDMCGeojsonRecente = {};
 
 function editorDMC_perguntarVinculo(layer, cidadeSugerida) {
   return new Promise((resolve) => {
-    _editorDMCResolverVinculo = resolve;
+    // Destaque laranja só enquanto a pergunta está aberta; depois volta à cor do DMC
+    const o = layer.options || {};
+    const estiloAntes = { color: o.color || '#3388ff', weight: o.weight || 3, fillColor: o.fillColor || o.color || '#3388ff' };
+    const restaurarEstilo = () => { if (layer.setStyle) layer.setStyle(estiloAntes); };
+    const finalizar = (v) => { restaurarEstilo(); resolve(v); };
+    _editorDMCResolverVinculo = finalizar;
+    _editorDMCLayerPerguntada = layer;
+    // Fechar a janela clicando fora dela = cancelar. Antes, isso deixava o "Salvar"
+    // parado esperando para sempre, sem aviso nenhum (parecia que não estava salvando).
+    S._aoFecharModal = S._aoFecharModal || {};
+    S._aoFecharModal['modal-vincular-editor-dmc'] = () => {
+      if (_editorDMCResolverVinculo === finalizar) { _editorDMCResolverVinculo = null; finalizar(null); }
+    };
+    const nomeArquivo = editorDMC_nomeNaFeature(layer.feature);
+    document.getElementById('vincular-editor-dmc-info').innerHTML = nomeArquivo
+      ? 'Este polígono veio do arquivo com o nome <b>"' + nomeArquivo + '"</b>, que não bate com nenhum DMC cadastrado — escolha a cidade e o DMC certo antes de salvar (ou cancele e use "Limpar" para tirá-lo do editor).'
+      : 'Este polígono (em <b style="color:#F08C00">laranja</b> no mapa) ainda não está vinculado a nenhum DMC — escolha a cidade e o DMC certo antes de salvar.';
     const selCidade = document.getElementById('vincular-editor-dmc-cidade');
     // (Fase 4) Só oferece cidades em que o usuário pode editar
     const cidadesPermitidas = [...S.cidades].filter(c => editorDMC_podeEditarCidade(c.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
@@ -5857,24 +5948,34 @@ async function editorDMC_resolverVinculo(modo) {
     _editorDMCResolverVinculo = null;
     closeModal('modal-vincular-editor-dmc');
     // Acha em qual arquivo (camada) esse DMC já vive, se algum — senão vira camada nova.
-    const camadasCidade = (S.leafletLayers.dmc||[]).filter(i=>i.cidade===cidadeId && !i.removida);
-    let camadaId = null;
-    for (const item of camadasCidade) {
-      await garantirGeometriaCarregada(item);
-      const acheiAqui = item._geojson?.features?.some(ft => {
-        const p=ft.properties||{};
-        const nome=p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
-        return nome && nomesDMCBatem(nome, nomeDMC);
-      });
-      if (acheiAqui) { camadaId = item.id; break; }
-    }
+    const camadaId = await editorDMC_acharCamadaDoDMC(cidadeId, nomeDMC);
     resolve({ camadaId: camadaId || 'NOVO', nomeDMC, cidadeId });
   } else if (modo === 'novo') {
     const nome = document.getElementById('vincular-editor-dmc-novo-nome').value.trim();
     if (!nome) { toast('Digite um nome pro novo DMC'); return; }
+    const c = S.cidades.find(c => c.id === cidadeId);
+    // Nome que já existe na cidade E já tem perímetro: não cria uma segunda curva com o
+    // mesmo nome — pergunta se é para substituir o perímetro existente.
+    const dmcExistente = c.dmcs.find(d => nomesDMCBatem(d.nome, nome));
+    const camadaExistente = await editorDMC_acharCamadaDoDMC(cidadeId, dmcExistente ? dmcExistente.nome : nome);
+    if (camadaExistente) {
+      const nomeFinal = dmcExistente ? dmcExistente.nome : nome;
+      if (!confirm('Já existe o DMC "' + nomeFinal + '" em ' + c.nome + ', com perímetro cadastrado.\n\nSubstituir o perímetro dele por este desenho?\n\n(Cancelar = voltar e escolher outro nome)')) return;
+      _editorDMCResolverVinculo = null;
+      closeModal('modal-vincular-editor-dmc');
+      // "Substituir" = o perímetro antigo desse DMC, se estiver carregado no editor, sai
+      // da tela — senão os dois seriam gravados juntos como duas formas do mesmo DMC.
+      editorDMCLayerGroup.getLayers().forEach(l => {
+        if (l !== _editorDMCLayerPerguntada && l._origemDMC && l._origemDMC.cidadeId === cidadeId && nomesDMCBatem(l._origemDMC.nomeDMC, nomeFinal)) {
+          editorDMCLayerGroup.removeLayer(l);
+          editorDMCSelecionadas.delete(l);
+        }
+      });
+      resolve({ camadaId: camadaExistente, nomeDMC: nomeFinal, cidadeId });
+      return;
+    }
     _editorDMCResolverVinculo = null;
     closeModal('modal-vincular-editor-dmc');
-    const c = S.cidades.find(c => c.id === cidadeId);
     // Se o nome digitado já existir cadastrado (mesmo sem geometria vinculada ainda),
     // trata como "primeira geometria desse DMC que já existe" — só marca criarDMCNovo
     // se o nome for mesmo inédito, pra não duplicar o cadastro.
@@ -5899,7 +6000,7 @@ async function editorDMC_resolverVinculo(modo) {
 async function editorDMC_salvarNoApp() {
   if (!editorDMC_temEscopo()) { toast('🔒 Seu usuário não tem cidades liberadas para edição no Editor de DMC — peça ao Administrador'); return; }
   if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) { toast('Nada desenhado pra salvar'); return; }
-  const layers = editorDMCLayerGroup.getLayers().filter(l => l.getLatLngs);
+  let layers = editorDMCLayerGroup.getLayers().filter(l => l.getLatLngs);
   if (!layers.length) { toast('Nenhum polígono/linha válido pra salvar'); return; }
 
   // Resolve o vínculo de quem ainda não tem, um de cada vez, ANTES de gravar qualquer
@@ -5910,6 +6011,22 @@ async function editorDMC_salvarNoApp() {
     const vinculo = await editorDMC_perguntarVinculo(layer, cidadeAtual);
     if (!vinculo) { toast('Salvamento cancelado'); return; }
     layer._origemDMC = vinculo;
+    editorDMC_aplicarCorAutomatica(layer);
+    editorDMC_aplicarTooltip(layer);
+  }
+  // A pergunta de vínculo pode ter tirado do editor o perímetro antigo de um DMC
+  // ("Substituir"), então a lista é refeita
+  layers = editorDMCLayerGroup.getLayers().filter(l => l.getLatLngs);
+
+  // Polígono marcado como "arquivo novo" cujo DMC já tem perímetro em algum arquivo (ex.:
+  // salvar de novo um DMC criado agora há pouco, ou voltar com "Desfazer" para antes do
+  // primeiro salvamento): grava no arquivo existente, nunca cria uma segunda curva.
+  for (const layer of layers) {
+    const o = layer._origemDMC;
+    if (o && o.camadaId === 'NOVO') {
+      const existente = await editorDMC_acharCamadaDoDMC(o.cidadeId, o.nomeDMC);
+      if (existente) layer._origemDMC = { camadaId: existente, nomeDMC: o.nomeDMC, cidadeId: o.cidadeId };
+    }
   }
 
   // (Fase 4) Rede de segurança: nada de cidade fora do escopo é gravado
@@ -5975,28 +6092,28 @@ async function editorDMC_salvarNoApp() {
   // outras formas que porventura estejam no mesmo arquivo.
   for (const [camadaId, layersDaCamada] of Object.entries(porCamadaExistente)) {
     const item = (S.leafletLayers.dmc||[]).find(i => i.id === camadaId);
-    const geojsonAtual = item && item._geojson
-      ? JSON.parse(JSON.stringify(item._geojson))
-      : { type: 'FeatureCollection', features: [] };
-    layersDaCamada.forEach(layer => {
-      const { nomeDMC } = layer._origemDMC;
-      const novaFeature = layer.toGeoJSON();
-      const idx = geojsonAtual.features.findIndex(ft => {
-        const p = ft.properties||{};
-        const nome = p.name||p.Name||p.Nome||p.nome||p.DMC||p.dmc||p.NOME||p.Descricao||p.descricao||p.Label||p.label;
-        return nome && nomesDMCBatem(nome, nomeDMC);
-      });
-      if (idx === -1) {
-        novaFeature.properties = novaFeature.properties || {};
-        novaFeature.properties.name = nomeDMC;
-        geojsonAtual.features.push(novaFeature);
-      } else {
-        novaFeature.properties = geojsonAtual.features[idx].properties; // preserva nome/propriedades originais
-        geojsonAtual.features[idx] = novaFeature;
-      }
+    if (item) { try { await garantirGeometriaCarregada(item); } catch(e) {} }
+    const base = (item && item._geojson) || (editorDMCGeojsonRecente[camadaId] && { type: 'FeatureCollection', features: editorDMCGeojsonRecente[camadaId].features });
+    // Sem a geometria atual do arquivo NÃO grava: gravar só a forma editada apagaria os
+    // outros DMCs que estejam no mesmo arquivo.
+    if (!base) { toast('⚠️ Não consegui ler o arquivo atual de ' + layersDaCamada.map(l => l._origemDMC.nomeDMC).join(', ') + ' — nada foi gravado nele. Tente de novo.'); erros++; continue; }
+    const geojsonAtual = JSON.parse(JSON.stringify(base));
+    // Agrupa por DMC: todas as formas desse DMC no arquivo são trocadas pelas formas do
+    // editor (antes, duas formas do mesmo DMC sobrescreviam a mesma posição e uma se perdia).
+    const porNome = {};
+    layersDaCamada.forEach(l => { (porNome[l._origemDMC.nomeDMC] = porNome[l._origemDMC.nomeDMC] || []).push(l); });
+    Object.entries(porNome).forEach(([nomeDMC, ls]) => {
+      const bate = ft => { const n = editorDMC_nomeNaFeature(ft); return n && nomesDMCBatem(n, nomeDMC); };
+      const idx = geojsonAtual.features.findIndex(bate);
+      const props = idx === -1 ? { name: nomeDMC } : geojsonAtual.features[idx].properties; // preserva nome/propriedades originais
+      const novas = ls.map(l => { const f = l.toGeoJSON(); f.properties = JSON.parse(JSON.stringify(props)); return f; });
+      const pos = idx === -1 ? geojsonAtual.features.length : idx;
+      geojsonAtual.features = geojsonAtual.features.filter(ft => !bate(ft));
+      geojsonAtual.features.splice(Math.min(pos, geojsonAtual.features.length), 0, ...novas);
     });
     const ok = await atualizarGeometriaCamada(camadaId, geojsonAtual);
-    if (!ok) erros++;
+    if (!ok) { erros++; continue; }
+    if (editorDMCGeojsonRecente[camadaId]) editorDMCGeojsonRecente[camadaId].features = geojsonAtual.features;
   }
 
   // Cria camada nova pra cada DMC que ainda não tinha nenhum arquivo vinculado.
@@ -6007,8 +6124,15 @@ async function editorDMC_salvarNoApp() {
       ft.properties.name = nomeDMC;
       return ft;
     }) };
-    const novoId = await salvarCamadaFirestore(geojsonNovo, 'dmc', nomeDMC + '.kml (editor)', info.cidadeId);
+    let novoId = null;
+    try { novoId = await salvarCamadaFirestore(geojsonNovo, 'dmc', nomeDMC + '.kml (editor)', info.cidadeId); }
+    catch (err) { toast('⚠️ Erro ao salvar "' + nomeDMC + '": ' + (err.code || err.message || err)); }
     if (!novoId) { erros++; continue; }
+    // A partir de agora estes polígonos pertencem ao arquivo recém-criado — o próximo
+    // "Salvar" atualiza esse arquivo em vez de criar outro com o mesmo nome (era o bug
+    // da "segunda curva com o mesmo nome").
+    editorDMCGeojsonRecente[novoId] = { cidadeId: info.cidadeId, features: geojsonNovo.features };
+    info.layers.forEach(l => { l._origemDMC = { camadaId: novoId, nomeDMC, cidadeId: info.cidadeId }; });
     // Se o DMC em si ainda não existia no cadastro da cidade, cria também.
     if (info.criarDMCNovo) {
       const c = S.cidades.find(c => c.id === info.cidadeId);

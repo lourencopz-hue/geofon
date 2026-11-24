@@ -780,7 +780,14 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               <option value="semsigla">Sem sigla</option>
               <option value="semcontorno">Sem contorno (KML)</option>
               <option value="semligacoes">Sem nº de ligações</option>
+              <option value="semmacro">Sem macromedidor instalado</option>
+              <option value="supsim">Com supervisório</option>
+              <option value="fp">Com FP disponível</option>
+              <option value="semgis">Sem cód. GIS</option>
             </select>
+            <button class="btn sm hidden" id="btn-dmc-tab-recalc" onclick="recalcularExtensaoDaTabela()" title="Recalcula a extensão real (rede recortada pelo contorno) dos DMCs do município filtrado">
+              <i class="ti ti-ruler-2"></i> Recalcular extensão de rede
+            </button>
             <button class="btn sm" id="btn-dmc-tab-xlsx" onclick="exportarDMCsTabelaXLSX()" title="Baixa a tabela (com os filtros aplicados) em Excel">
               <i class="ti ti-file-spreadsheet"></i> Baixar planilha
             </button>
@@ -2010,7 +2017,7 @@ const DMC_SEM_DMC = 'Sem DMC';
 // funcionando sem precisar de uma migração manual separada.
 function normalizarDMC(d) {
   if (typeof d === 'string') {
-    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null };
+    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null, macromedidor:null, supervisorio:null, fpDisponivel:false };
   }
   return {
     nome: d.nome || '', sigla: d.sigla || '', ligacoes: (d.ligacoes ?? null),
@@ -2025,7 +2032,13 @@ function normalizarDMC(d) {
     // origem, tipo "Linha Batistta" vs "Linha Batista") e a pessoa confirma manualmente
     // que aquele arquivo É esse DMC. Sem isso, o vínculo automático por nome nunca
     // acharia esse KML.
-    nomeFeatureKml: d.nomeFeatureKml || null
+    nomeFeatureKml: d.nomeFeatureKml || null,
+    // Cadastro técnico (2026-11-24): tipo do macromedidor (MACROMEDIDOR_OPCOES), se tem
+    // supervisório (true/false/null = não informado) e se o FP (fator de pesquisa) está
+    // disponível — o FP só faz sentido quando há supervisório.
+    macromedidor: d.macromedidor || null,
+    supervisorio: (d.supervisorio === true || d.supervisorio === false) ? d.supervisorio : null,
+    fpDisponivel: d.fpDisponivel === true
   };
 }
 // Normaliza todos os DMCs de uma cidade e garante que "Sem DMC" sempre exista nela.
@@ -10283,6 +10296,25 @@ function kmlCoords(el) {
 // ================================================================
 // Critério para indicar que um DMC precisa ser dividido (combinado em 2026-11-24).
 const LIMITE_DIVISAO_DMC = { extensaoM: 30000, ligacoes: 5000 };
+// Opções do campo Macromedidor (2026-11-24)
+const MACROMEDIDOR_OPCOES = ['Em instalação', 'Não instalado', 'Ultrassônico', 'Eletromagnético', 'Mecânico'];
+// "Sim" + bolinha FP (acesa = fator de pesquisa disponível) / "Não" / "—"
+function htmlSupervisorioDMC(d) {
+  if (d.supervisorio === true) {
+    const fp = d.fpDisponivel
+      ? '<span title="FP (fator de pesquisa) disponível" style="display:inline-block;margin-left:6px;padding:1px 5px;border-radius:8px;font-size:9.5px;font-weight:700;background:#2F9E44;color:#fff;box-shadow:0 0 6px rgba(47,158,68,.7)">FP</span>'
+      : '<span title="FP (fator de pesquisa) ainda não disponível" style="display:inline-block;margin-left:6px;padding:0 4px;border-radius:8px;font-size:9.5px;font-weight:700;color:var(--text3);border:1px solid var(--border)">FP</span>';
+    return '<span style="white-space:nowrap">Sim' + fp + '</span>';
+  }
+  if (d.supervisorio === false) return 'Não';
+  return '<span style="color:var(--text3)">—</span>';
+}
+async function recalcularExtensaoDaTabela() {
+  const cid = S._manageFiltroCidade;
+  if (!cid) { toast('Escolha primeiro o município no filtro'); return; }
+  await recalcularExtensaoRedeManual(cid);
+  renderDMCsTabela();
+}
 S._dmcTabOrdem = { col: 'municipio', dir: 1 };
 S._dmcTabBusca = ''; S._dmcTabSituacao = ''; S._dmcTabFiltro = '';
 S._dmcContornosTentados = new Set();
@@ -10302,6 +10334,7 @@ function aplicarVistaDMCs() {
   mostrar('dmc-tabela', tabela); mostrar('dmc-tab-resumo', tabela); mostrar('dmc-tab-busca-wrap', tabela);
   mostrar('dmc-tab-situacao', tabela); mostrar('dmc-tab-filtro', tabela); mostrar('btn-dmc-tab-xlsx', tabela);
   mostrar('manage-cidades', !tabela);
+  mostrar('btn-dmc-tab-recalc', tabela && !!S._manageFiltroCidade);
   const bT = document.getElementById('btn-dmc-vista-tabela'), bC = document.getElementById('btn-dmc-vista-cartoes');
   if (bT) bT.classList.toggle('primary', tabela);
   if (bC) bC.classList.toggle('primary', !tabela);
@@ -10378,7 +10411,7 @@ function linhasDMCsTabela() {
 function ordenarDMCsTabela(col) {
   const o = S._dmcTabOrdem;
   if (o.col === col) o.dir = -o.dir;
-  else { o.col = col; o.dir = ['ligacoes', 'extensao', 'vazamentos', 'divisao'].includes(col) ? -1 : 1; }
+  else { o.col = col; o.dir = ['ligacoes', 'extensao', 'vazamentos', 'divisao', 'supervisorio'].includes(col) ? -1 : 1; }
   renderDMCsTabela();
 }
 
@@ -10424,6 +10457,10 @@ function renderDMCsTabela() {
     if (S._dmcTabFiltro === 'semsigla' && l.d.sigla) return false;
     if (S._dmcTabFiltro === 'semcontorno' && l.contorno !== null) return false;
     if (S._dmcTabFiltro === 'semligacoes' && l.d.ligacoes != null) return false;
+    if (S._dmcTabFiltro === 'semmacro' && ['Ultrassônico', 'Eletromagnético', 'Mecânico'].includes(l.d.macromedidor)) return false;
+    if (S._dmcTabFiltro === 'supsim' && l.d.supervisorio !== true) return false;
+    if (S._dmcTabFiltro === 'fp' && !(l.d.supervisorio === true && l.d.fpDisponivel)) return false;
+    if (S._dmcTabFiltro === 'semgis' && l.d.codigoGis) return false;
     return true;
   });
   const { col, dir } = S._dmcTabOrdem;
@@ -10433,7 +10470,10 @@ function renderDMCsTabela() {
     situacao: l => l.d && l.d.situacao ? textoBusca(l.d.situacao) : null,
     ligacoes: l => l.d && l.d.ligacoes != null ? Number(l.d.ligacoes) : null,
     extensao: l => l.d ? l.ext : null, contorno: l => l.d ? (l.contorno ? 1 : l.contorno === null ? 0 : null) : null,
-    vazamentos: l => l.d ? l.vaz : null, divisao: l => l.d ? l.divRank : null
+    vazamentos: l => l.d ? l.vaz : null, divisao: l => l.d ? l.divRank : null,
+    gis: l => l.d && l.d.codigoGis ? (isFinite(Number(l.d.codigoGis)) ? Number(l.d.codigoGis) : textoBusca(l.d.codigoGis)) : null,
+    macro: l => l.d && l.d.macromedidor ? textoBusca(l.d.macromedidor) : null,
+    supervisorio: l => l.d && l.d.supervisorio != null ? (l.d.supervisorio ? (l.d.fpDisponivel ? 2 : 1) : 0) : null
   }[col] || (l => textoBusca(l.c.nome));
   const desempate = (a, b) => textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome)) || textoBusca(a.d ? a.d.nome : '').localeCompare(textoBusca(b.d ? b.d.nome : ''));
   filtradas.sort((a, b) => {
@@ -10452,12 +10492,12 @@ function renderDMCsTabela() {
   };
   const vermelho = 'color:var(--red);font-weight:600';
   el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>' +
-    th('municipio', 'Município') + th('regional', 'Regional') + th('nome', 'DMC (nome)') + th('sigla', 'Sigla') + th('situacao', 'Situação') +
+    th('municipio', 'Município') + th('regional', 'Regional') + th('nome', 'DMC (nome)') + th('sigla', 'Sigla') + th('gis', 'Cód. GIS') + th('situacao', 'Situação') + th('macro', 'Macromedidor') + th('supervisorio', 'Supervisório') +
     th('ligacoes', 'Ligações', true) + th('extensao', 'Extensão de rede', true) + th('contorno', 'Contorno') + th('vazamentos', 'Vaz.', true) + th('divisao', 'Divisão') + '<th></th>' +
     '</tr></thead><tbody>' + filtradas.map(l => {
       const mun = '<td style="white-space:nowrap"><span class="badge purple">' + escHtml(l.c.prefixo) + '</span> ' + escHtml(l.c.nome) + '</td><td>' + escHtml(l.c.regional || '—') + '</td>';
       if (!l.d) {
-        return '<tr style="color:var(--text3)">' + mun + '<td colspan="8"><i>Nenhum DMC cadastrado</i></td>' +
+        return '<tr style="color:var(--text3)">' + mun + '<td colspan="11"><i>Nenhum DMC cadastrado</i></td>' +
           '<td><div style="display:flex;justify-content:flex-end"><button class="btn sm" onclick="adicionarDMCManual(\'' + l.c.id + '\')"><i class="ti ti-plus"></i>DMC</button></div></td></tr>';
       }
       const d = l.d;
@@ -10481,13 +10521,16 @@ function renderDMCsTabela() {
       return '<tr' + (l.div.nivel === 'dividir' ? ' style="background:rgba(226,75,74,.06)"' : '') + '>' + mun +
         '<td style="font-weight:600">' + escHtml(d.nome) + '</td>' +
         '<td style="font-family:monospace;font-size:11px">' + (d.sigla ? escHtml(d.sigla) : '<span style="color:var(--amber);font-family:inherit">sem sigla</span>') + '</td>' +
+        '<td style="font-family:monospace;font-size:11px">' + (d.codigoGis ? escHtml(d.codigoGis) : '<span style="color:var(--text3);font-family:inherit">—</span>') + '</td>' +
         '<td style="white-space:nowrap">' + sit + '</td>' +
+        '<td style="white-space:nowrap">' + (d.macromedidor ? '<span style="color:' + (['Ultrassônico', 'Eletromagnético', 'Mecânico'].includes(d.macromedidor) ? 'inherit' : 'var(--amber)') + '">' + escHtml(d.macromedidor) + '</span>' : '<span style="color:var(--text3)">—</span>') + '</td>' +
+        '<td>' + htmlSupervisorioDMC(d) + '</td>' +
         '<td style="text-align:right;white-space:nowrap' + (ligAlta ? ';' + vermelho : '') + '">' + (d.ligacoes != null ? Number(d.ligacoes).toLocaleString('pt-BR') : '—') + '</td>' +
         '<td style="text-align:right;white-space:nowrap' + (extAlta ? ';' + vermelho : '') + '">' + extTxt + '</td>' +
         '<td>' + contorno + '</td>' +
         '<td style="text-align:right">' + (l.vaz || '—') + '</td>' +
         '<td style="white-space:nowrap">' + divisao + '</td>' +
-        '<td><div style="display:flex;justify-content:flex-end"><button class="btn sm" onclick="abrirEditarDMC(\'' + l.c.id + '\',' + l.idx + ')" title="Editar nome, sigla, situação, ligações e cor"><i class="ti ti-pencil"></i>Editar</button></div></td>' +
+        '<td><div style="display:flex;justify-content:flex-end"><button class="btn sm" onclick="abrirEditarDMC(\'' + l.c.id + '\',' + l.idx + ')" title="Editar nome, sigla, cód. GIS, situação, macromedidor, supervisório, ligações e cor"><i class="ti ti-pencil"></i>Editar</button></div></td>' +
       '</tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -10510,6 +10553,17 @@ function abrirEditarDMC(cidadeId, idx) {
       '<input id="edit-dmc-nome" type="text" value="' + escHtml(d.nome) + '" style="' + inp + '"></div>' +
     '<div class="field"><label>Sigla <small style="color:var(--text3)">(identificador oficial, usado em Gestão/Relatórios e na planilha)</small></label>' +
       '<input id="edit-dmc-sigla" type="text" value="' + escHtml(d.sigla || '') + '" placeholder="ex: BDN-DMC-Alinea" style="' + inp + ';font-family:monospace"></div>' +
+    '<div style="display:flex;gap:10px">' +
+      '<div class="field" style="width:130px"><label>Cód. GIS</label><input id="edit-dmc-gis" type="text" inputmode="numeric" value="' + escHtml(d.codigoGis ?? '') + '" placeholder="ex: 1234" style="' + inp + ';font-family:monospace"></div>' +
+      '<div class="field" style="flex:1"><label>Macromedidor</label><select id="edit-dmc-macro" style="' + inp + '"><option value="">—</option>' +
+        MACROMEDIDOR_OPCOES.map(m => '<option value="' + escHtml(m) + '"' + (d.macromedidor === m ? ' selected' : '') + '>' + escHtml(m) + '</option>').join('') + '</select></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;align-items:flex-end">' +
+      '<div class="field" style="width:130px"><label>Supervisório</label><select id="edit-dmc-sup" onchange="document.getElementById(\'edit-dmc-fp-wrap\').style.opacity=this.value===\'sim\'?1:.4;document.getElementById(\'edit-dmc-fp\').disabled=this.value!==\'sim\'" style="' + inp + '">' +
+        '<option value="">—</option><option value="sim"' + (d.supervisorio === true ? ' selected' : '') + '>Sim</option><option value="nao"' + (d.supervisorio === false ? ' selected' : '') + '>Não</option></select></div>' +
+      '<div class="field" id="edit-dmc-fp-wrap" style="flex:1;opacity:' + (d.supervisorio === true ? 1 : .4) + '"><label style="display:flex;align-items:center;justify-content:flex-start;gap:7px;cursor:pointer;padding:10px 0;font-size:12.5px;color:var(--text)">' +
+        '<input id="edit-dmc-fp" type="checkbox" style="width:16px;height:16px;flex:none;margin:0"' + (d.fpDisponivel ? ' checked' : '') + (d.supervisorio === true ? '' : ' disabled') + '><span style="white-space:nowrap">FP (fator de pesquisa) disponível</span></label></div>' +
+    '</div>' +
     '<div style="display:flex;gap:10px">' +
       '<div class="field" style="flex:1"><label>Situação</label><select id="edit-dmc-situacao" style="' + inp + '"><option value="">—</option>' +
         (S.situacoesDMC || []).map(s => '<option value="' + escHtml(s) + '"' + (d.situacao === s ? ' selected' : '') + '>' + escHtml(s) + '</option>').join('') + '</select></div>' +
@@ -10553,6 +10607,11 @@ async function salvarEditarDMC() {
   const situacao = document.getElementById('edit-dmc-situacao').value || null;
   const ligTxt = document.getElementById('edit-dmc-ligacoes').value;
   const ligacoes = ligTxt === '' ? null : Number(ligTxt);
+  const codigoGis = document.getElementById('edit-dmc-gis').value.trim() || null;
+  const macromedidor = document.getElementById('edit-dmc-macro').value || null;
+  const supTxt = document.getElementById('edit-dmc-sup').value;
+  const supervisorio = supTxt === 'sim' ? true : supTxt === 'nao' ? false : null;
+  const fpDisponivel = supervisorio === true && document.getElementById('edit-dmc-fp').checked;
   const btn = document.getElementById('edit-dmc-salvar');
   if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
   try {
@@ -10560,6 +10619,7 @@ async function salvarEditarDMC() {
     const mudouSituacao = (d.situacao || null) !== situacao;
     const mudouCor = e.cor !== undefined && (e.cor || null) !== (d.corPersonalizada || null);
     d.nome = nome; d.sigla = sigla; d.situacao = situacao; d.ligacoes = ligacoes;
+    d.codigoGis = codigoGis; d.macromedidor = macromedidor; d.supervisorio = supervisorio; d.fpDisponivel = fpDisponivel;
     if (mudouCor) d.corPersonalizada = e.cor ? normalizarCorEntrada(e.cor) : null;
     await salvarCidadeFirestore(c);
     let nLeaks = 0;
@@ -10606,18 +10666,26 @@ function exportarDMCsTabelaXLSX() {
     if (S._dmcTabFiltro === 'semsigla' && l.d.sigla) return false;
     if (S._dmcTabFiltro === 'semcontorno' && l.contorno !== null) return false;
     if (S._dmcTabFiltro === 'semligacoes' && l.d.ligacoes != null) return false;
+    if (S._dmcTabFiltro === 'semmacro' && ['Ultrassônico', 'Eletromagnético', 'Mecânico'].includes(l.d.macromedidor)) return false;
+    if (S._dmcTabFiltro === 'supsim' && l.d.supervisorio !== true) return false;
+    if (S._dmcTabFiltro === 'fp' && !(l.d.supervisorio === true && l.d.fpDisponivel)) return false;
+    if (S._dmcTabFiltro === 'semgis' && l.d.codigoGis) return false;
     return true;
   }).sort((a, b) => textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome)) || textoBusca(a.d.nome).localeCompare(textoBusca(b.d.nome)));
   if (!linhas.length) { toast('Nada para exportar com esses filtros'); return; }
-  const dados = [['Município', 'Sigla município', 'Regional', 'DMC (nome)', 'Sigla DMC', 'Situação', 'Ligações', 'Extensão de rede (km)', 'Extensão aproximada?', 'Contorno KML', 'Vazamentos', 'Divisão', 'Motivo']];
+  const dados = [['Município', 'Sigla município', 'Regional', 'DMC (nome)', 'Sigla DMC', 'Cód. GIS', 'Situação', 'Macromedidor', 'Supervisório', 'FP disponível', 'Ligações', 'Extensão de rede (km)', 'Extensão aproximada?', 'Contorno KML', 'Vazamentos', 'Divisão', 'Motivo']];
   linhas.forEach(l => dados.push([
-    l.c.nome, l.c.prefixo, l.c.regional || '', l.d.nome, l.d.sigla || '', l.d.situacao || '',
+    l.c.nome, l.c.prefixo, l.c.regional || '', l.d.nome, l.d.sigla || '',
+    l.d.codigoGis ? (/^[1-9]\d{0,14}$/.test(String(l.d.codigoGis)) ? Number(l.d.codigoGis) : String(l.d.codigoGis)) : '',
+    l.d.situacao || '', l.d.macromedidor || '',
+    l.d.supervisorio === true ? 'Sim' : l.d.supervisorio === false ? 'Não' : '',
+    l.d.supervisorio === true ? (l.d.fpDisponivel ? 'Sim' : 'Não') : '',
     l.d.ligacoes != null ? Number(l.d.ligacoes) : '', l.ext != null ? Math.round(l.ext / 10) / 100 : '', l.ext != null ? (l.extAprox ? 'Sim' : 'Não') : '',
     l.contorno ? 'Sim' : l.contorno === null ? 'Não' : '', l.vaz,
     l.div.nivel === 'dividir' ? 'Dividir' : l.div.nivel === 'verificar' ? 'Verificar' : '', l.div.motivos.join('; ')
   ]));
   const ws = XLSX.utils.aoa_to_sheet(dados);
-  ws['!cols'] = [18, 8, 12, 26, 22, 14, 9, 11, 10, 9, 9, 9, 50].map(w => ({ wch: w }));
+  ws['!cols'] = [18, 8, 12, 26, 22, 10, 14, 16, 12, 10, 9, 11, 10, 9, 9, 9, 50].map(w => ({ wch: w }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'DMCs');
   const hoje = new Date().toISOString().slice(0, 10);
@@ -11083,6 +11151,9 @@ async function detectarEMesclarDMCsDuplicados() {
         if (sobrevivente.ligacoes==null && dup.ligacoes!=null) sobrevivente.ligacoes = dup.ligacoes;
         if (!sobrevivente.situacao && dup.situacao) sobrevivente.situacao = dup.situacao;
         if (sobrevivente.extensaoRede==null && dup.extensaoRede!=null) sobrevivente.extensaoRede = dup.extensaoRede;
+        if (!sobrevivente.codigoGis && dup.codigoGis) sobrevivente.codigoGis = dup.codigoGis;
+        if (!sobrevivente.macromedidor && dup.macromedidor) sobrevivente.macromedidor = dup.macromedidor;
+        if (sobrevivente.supervisorio == null && dup.supervisorio != null) { sobrevivente.supervisorio = dup.supervisorio; sobrevivente.fpDisponivel = !!dup.fpDisponivel; }
         // Migra vazamentos já registrados com o nome exato do duplicado removido
         if (dup.nome !== sobrevivente.nome) {
           const leaksParaAtualizar = S.leaks.filter(l => l.cidade === c.id && l.dmc === dup.nome);

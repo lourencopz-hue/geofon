@@ -784,6 +784,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               <option value="supsim">Com supervisório</option>
               <option value="fp">Com FP disponível</option>
               <option value="semgis">Sem cód. GIS</option>
+              <option value="dup">Possíveis duplicados</option>
             </select>
             <button class="btn sm hidden" id="btn-dmc-tab-recalc" onclick="recalcularExtensaoDaTabela()" title="Recalcula a extensão real (rede recortada pelo contorno) dos DMCs do município filtrado">
               <i class="ti ti-ruler-2"></i> Recalcular extensão de rede
@@ -3667,10 +3668,19 @@ function iniciarSincronizacaoCamadas() {
         // Retângulo envolvente [oeste, sul, leste, norte] — gravado a partir de 2026-11-24;
         // deixa a checagem de sobreposição baixar só os arquivos de DMCs vizinhos.
         bbox: bboxValido(l.bbox) ? l.bbox : null,
+        // "Versão" do arquivo da curva: se mudou (edição neste ou em outro aparelho), a
+        // curva em cache é descartada e baixada de novo — antes o aparelho ficava com a
+        // curva velha (e o nome velho) até recarregar a página, e a sincronização de DMCs
+        // podia recriar com ela um DMC já renomeado.
+        _versaoGeo: (l.geojsonUrl || '') + '|' + (msDoCampo(l.ultimaAtualizacao) || ''),
         visible: estaVisivelLocalmente(docSnap.id),
         lgField: existente ? existente.lgField : null,
         lgPC: existente ? existente.lgPC : null,
         _geojson: existente ? existente._geojson : null,
+        _geoDesatualizada: !!(existente && existente._geojson && existente._versaoGeo !== undefined &&
+          existente._versaoGeo !== ((l.geojsonUrl || '') + '|' + (msDoCampo(l.ultimaAtualizacao) || '')) &&
+          // ultimaAtualizacao ainda pendente (eco local de serverTimestamp): espera o valor do servidor
+          !(l.ultimaAtualizacao == null && existente.ultimaAtualizacao != null && (l.geojsonUrl || '') === existente._versaoGeo.split('|')[0])),
         // Preserva uma busca já em andamento (se houver) através desse rebuild — sem
         // isso, uma busca que começou antes do metadado atualizar ficava "órfã": ela
         // ainda terminava, mas escrevia num objeto de item que não fazia mais parte de
@@ -3679,6 +3689,13 @@ function iniciarSincronizacaoCamadas() {
         _carregandoPromise: existente ? existente._carregandoPromise : null,
         _carregamentoEmAndamento: existente ? existente._carregamentoEmAndamento : null
       };
+      if (item._geoDesatualizada) {
+        // Arquivo da curva mudou: tira a curva velha dos mapas e do cache
+        removerGeometriaDoMapa(item);
+        item.lgField = null; item.lgPC = null; item._geojson = null;
+        if (S._dmcContornosTentados) S._dmcContornosTentados.delete(item.id);
+      }
+      delete item._geoDesatualizada;
       S.leafletLayers[tipo].push(item);
       // Se este dispositivo já tinha marcado como visível e a geometria ainda não foi
       // carregada (ex.: acabou de logar), carrega agora automaticamente. Se já estava
@@ -3715,18 +3732,22 @@ function sincronizarDMCsCidade(geojson, cidadeId) {
   // Sem cidade definida: não sabemos a quem associar o DMC, então não fazemos nada
   // (evita o bug de "vazar" o DMC para todas as cidades).
   if (!cidadeId) return;
+  // Pausado enquanto um DMC dessa cidade está sendo renomeado/juntado — a curva já tem o
+  // nome novo mas o cadastro ainda não, e isso criaria um DMC duplicado.
+  if (S._syncDMCPausado && S._syncDMCPausado.has(cidadeId)) return;
   const novos = new Set();
   geojson.features.forEach(ft => {
-    const p = ft.properties || {};
-    const candidatos = [p.name,p.Name,p.Nome,p.nome,p.DMC,p.dmc,p.NOME,p.Descricao,p.descricao,p.Label,p.label];
-    candidatos.forEach(v => { if (v && typeof v === 'string' && v.trim().length > 1 && v.trim().length < 80) novos.add(v.trim()); });
+    // Só o NOME PRINCIPAL da curva (o mesmo que o resto do app usa) — antes cada campo
+    // (descrição, rótulo...) com texto virava um DMC à parte.
+    const v = nomeFeatureDMC(ft.properties);
+    if (v && typeof v === 'string' && v.trim().length > 1 && v.trim().length < 80) novos.add(v.trim());
   });
   if (!novos.size) return;
   const lista = [...novos];
   const c = S.cidades.find(c => c.id === cidadeId);
   if (!c) return;
   let mudou = false;
-  lista.forEach(n => { if (!c.dmcs.some(d => nomesDMCBatem(d.nome, n))) { c.dmcs.push(normalizarDMC(n)); mudou = true; } });
+  lista.forEach(n => { if (!c.dmcs.some(d => nomesDMCBatem(d.nome, n) || (d.nomeFeatureKml && d.nomeFeatureKml.trim() === n))) { c.dmcs.push(normalizarDMC(n)); mudou = true; } });
   // Só avisa quando REALMENTE adicionou algo novo — antes, o toast disparava toda vez
   // que essa checagem rodava (inclusive no carregamento automático da geometria em
   // segundo plano pra detecção por coordenada), mesmo quando os DMCs já existiam todos
@@ -8621,7 +8642,7 @@ async function buscarGeometriaBruta(item, silencioso) {
     const l = snap.data();
     let resultado = null;
     if (l.geojsonUrl) {
-      const resp = await fetch(l.geojsonUrl);
+      const resp = await fetch(l.geojsonUrl, { cache: 'no-cache' }); // revalida: o arquivo pode ter sido regravado
       if (!resp.ok) throw new Error('Falha ao baixar geometria (HTTP ' + resp.status + ')');
       resultado = await resp.json();
     } else if (l.geojsonStr) {
@@ -10393,6 +10414,8 @@ function linhasDMCsTabela() {
   (S.leaks || []).forEach(l => { const k = l.cidade + '::' + l.dmc; vazPorDMC[k] = (vazPorDMC[k] || 0) + 1; });
   S.cidades.forEach(c => {
     const reais = (c.dmcs || []).map((d, idx) => ({ d, idx })).filter(x => x.d.nome !== DMC_SEM_DMC);
+    const contNucleo = {};
+    reais.forEach(({ d }) => { const k = nomeNucleoDMC(d.nome); contNucleo[k] = (contNucleo[k] || 0) + 1; });
     if (!reais.length) { linhas.push({ c, d: null, idx: -1 }); return; }
     reais.forEach(({ d, idx }) => {
       const contorno = contornoDoDMC(c.id, d);
@@ -10401,6 +10424,7 @@ function linhasDMCsTabela() {
       linhas.push({
         c, d, idx, contorno, div, ext, extAprox: d.extensaoRede == null && d.extensaoPercorrida != null,
         vaz: vazPorDMC[c.id + '::' + d.nome] || 0,
+        dup: contNucleo[nomeNucleoDMC(d.nome)] > 1,
         divRank: div.nivel === 'dividir' ? 2 : div.nivel === 'verificar' ? 1 : 0
       });
     });
@@ -10438,10 +10462,12 @@ function renderDMCsTabela() {
     const nSemSigla = comDMC.filter(l => !l.d.sigla).length;
     const nSemContorno = comDMC.filter(l => l.contorno === null).length;
     const munComDMC = new Set(comDMC.map(l => l.c.id)).size;
+    const nDup = comDMC.filter(l => l.dup).length;
     resumoEl.innerHTML = '<b>' + comDMC.length + '</b> DMCs em <b>' + munComDMC + '</b> municípios' +
       ' · <b style="color:' + (nDividir ? 'var(--red)' : 'inherit') + '">' + nDividir + '</b> precisam ser divididos' +
       (nVerificar ? ' · <b>' + nVerificar + '</b> a verificar' : '') +
       ' · ' + nSemSigla + ' sem sigla · ' + nSemContorno + ' sem contorno' +
+      (nDup ? ' · <b style="color:var(--amber)">' + nDup + '</b> possíveis duplicados' : '') +
       (S._dmcContornosCarregando ? ' <span style="color:var(--text3)">(conferindo contornos...)</span>' : '') + '.';
   }
 
@@ -10461,6 +10487,7 @@ function renderDMCsTabela() {
     if (S._dmcTabFiltro === 'supsim' && l.d.supervisorio !== true) return false;
     if (S._dmcTabFiltro === 'fp' && !(l.d.supervisorio === true && l.d.fpDisponivel)) return false;
     if (S._dmcTabFiltro === 'semgis' && l.d.codigoGis) return false;
+    if (S._dmcTabFiltro === 'dup' && !l.dup) return false;
     return true;
   });
   const { col, dir } = S._dmcTabOrdem;
@@ -10519,7 +10546,7 @@ function renderDMCsTabela() {
           ? '<span class="badge media" title="' + escHtml(l.div.motivos.join(' · ')) + '">Verificar</span>'
           : '<span style="color:var(--text3)">—</span>';
       return '<tr' + (l.div.nivel === 'dividir' ? ' style="background:rgba(226,75,74,.06)"' : '') + '>' + mun +
-        '<td style="font-weight:600">' + escHtml(d.nome) + '</td>' +
+        '<td style="font-weight:600">' + escHtml(d.nome) + (l.dup ? ' <span class="badge media" style="cursor:pointer" title="Há outro DMC com nome parecido neste município — abra o Editar e use Juntar" onclick="abrirEditarDMC(\'' + l.c.id + '\',' + l.idx + ')">duplicado?</span>' : '') + '</td>' +
         '<td style="font-family:monospace;font-size:11px">' + (d.sigla ? escHtml(d.sigla) : '<span style="color:var(--amber);font-family:inherit">sem sigla</span>') + '</td>' +
         '<td style="font-family:monospace;font-size:11px">' + (d.codigoGis ? escHtml(d.codigoGis) : '<span style="color:var(--text3);font-family:inherit">—</span>') + '</td>' +
         '<td style="white-space:nowrap">' + sit + '</td>' +
@@ -10533,6 +10560,159 @@ function renderDMCsTabela() {
         '<td><div style="display:flex;justify-content:flex-end"><button class="btn sm" onclick="abrirEditarDMC(\'' + l.c.id + '\',' + l.idx + ')" title="Editar nome, sigla, cód. GIS, situação, macromedidor, supervisório, ligações e cor"><i class="ti ti-pencil"></i>Editar</button></div></td>' +
       '</tr>';
     }).join('') + '</tbody></table></div>';
+}
+
+// ================================================================
+// RENOMEAR / JUNTAR DMCs sem gerar duplicidade (2026-11-24)
+// Causa do bug relatado: renomear um DMC na Gestão mudava só o cadastro — a curva no
+// arquivo KML continuava com o nome antigo, e sincronizarDMCsCidade (que cria DMC para
+// todo nome de curva que não acha no cadastro) recriava o DMC antigo. Resultado: o DMC
+// renomeado ficava sem curva e aparecia um "clone" com a curva. Agora a curva é
+// renomeada junto, e dá pra juntar os pares que já ficaram duplicados.
+// ================================================================
+// Curvas (feições) do KML que pertencem a este DMC: [{ item, idxs }]. Prioriza nome
+// idêntico (ou o vínculo manual nomeFeatureKml); só cai na comparação flexível
+// (nomesDMCBatem) se não houver idêntico, e nunca pega curva cujo nome é exatamente
+// o de OUTRO DMC da mesma cidade.
+async function feicoesDoDMC(cidadeId, d) {
+  const c = S.cidades.find(x => x.id === cidadeId);
+  const camadas = (S.leafletLayers.dmc || []).filter(i => i.cidade === cidadeId && !i.removida);
+  await Promise.allSettled(camadas.map(garantirGeometriaCarregada));
+  const outros = new Set((c ? c.dmcs : []).filter(x => x !== d).map(x => normTxt(x.nome)));
+  const alvoExato = new Set([normTxt(d.nome), d.nomeFeatureKml ? normTxt(d.nomeFeatureKml) : null].filter(Boolean));
+  const achar = exato => {
+    const res = [];
+    camadas.forEach(item => {
+      if (!item._geojson || !item._geojson.features) return;
+      const idxs = [];
+      item._geojson.features.forEach((ft, k) => {
+        const n = nomeFeatureDMC(ft.properties);
+        if (!n) return;
+        const nn = normTxt(n);
+        if (exato ? alvoExato.has(nn) : (!outros.has(nn) && nomesDMCBatem(n, d.nome))) idxs.push(k);
+      });
+      if (idxs.length) res.push({ item, idxs });
+    });
+    return res;
+  };
+  const exatos = achar(true);
+  return exatos.length ? exatos : achar(false);
+}
+// Troca o nome nas curvas indicadas e grava os arquivos. Retorna false se algum falhar.
+async function renomearFeicoesKML(grupos, novoNome) {
+  for (const { item, idxs } of grupos) {
+    const gj = JSON.parse(JSON.stringify(item._geojson));
+    idxs.forEach(k => {
+      const p = gj.features[k].properties = gj.features[k].properties || {};
+      const atual = nomeFeatureDMC(p);
+      let trocou = false;
+      ['name','Name','Nome','nome','DMC','dmc','NOME','Descricao','descricao','Label','label'].forEach(key => {
+        if (p[key] != null && String(p[key]).trim() === String(atual).trim()) { p[key] = novoNome; trocou = true; }
+      });
+      if (!trocou) p.name = novoNome;
+    });
+    const ok = await atualizarGeometriaCamada(item.id, gj);
+    if (!ok) return false;
+  }
+  return true;
+}
+// Vazamentos e campanhas (dos últimos 60 dias, as carregadas) guardam o NOME do DMC.
+async function migrarNomeDMCRegistros(cidadeId, nomeAntigo, nomeNovo) {
+  const { db, doc, setDoc } = window.FB;
+  const leaks = S.leaks.filter(l => l.cidade === cidadeId && l.dmc === nomeAntigo);
+  for (const l of leaks) await setDoc(doc(db, 'leaks', l.id), { dmc: nomeNovo }, { merge: true });
+  const camps = Object.entries(S.campanhasAtivas || {}).filter(([, x]) => x.cidade === cidadeId && x.dmc === nomeAntigo);
+  for (const [id] of camps) await setDoc(doc(db, 'campanhas', id), { dmc: nomeNovo }, { merge: true });
+  return { nLeaks: leaks.length, nCamp: camps.length };
+}
+async function renomearDMCCompleto(cidadeId, idx, novoNome) {
+  const c = S.cidades.find(x => x.id === cidadeId);
+  const d = c && c.dmcs[idx];
+  if (!d) return { ok: false };
+  const nomeAntigo = d.nome;
+  toast('⏳ Renomeando o DMC e a curva...');
+  pausarSyncDMC(cidadeId, true);
+  try {
+  const grupos = await feicoesDoDMC(cidadeId, d);
+  // 1º a curva: se falhar, nada muda (senão o DMC antigo voltaria como duplicado)
+  if (grupos.length && !(await renomearFeicoesKML(grupos, novoNome))) {
+    toast('⚠️ Não consegui renomear a curva no arquivo KML — o nome do DMC NÃO foi alterado. Tente de novo.');
+    return { ok: false };
+  }
+  d.nome = novoNome;
+  d.nomeFeatureKml = null; // a curva agora tem o mesmo nome do cadastro
+  await salvarCidadeFirestore(c);
+  const m = await migrarNomeDMCRegistros(cidadeId, nomeAntigo, novoNome);
+  return { ok: true, curvas: grupos.reduce((n, g) => n + g.idxs.length, 0), ...m };
+  } finally { pausarSyncDMC(cidadeId, false); }
+}
+S._syncDMCPausado = new Set();
+function pausarSyncDMC(cidadeId, pausar) {
+  if (pausar) S._syncDMCPausado.add(cidadeId);
+  // solta um instante depois, para os ecos do Firestore da própria gravação passarem
+  else setTimeout(() => S._syncDMCPausado.delete(cidadeId), 4000);
+}
+function textoResultadoRenomear(r) {
+  const partes = [];
+  if (r.curvas) partes.push('curva renomeada');
+  if (r.nLeaks) partes.push(r.nLeaks + ' vazamento(s)');
+  if (r.nCamp) partes.push(r.nCamp + ' campanha(s)');
+  return '✓ DMC renomeado' + (partes.length ? ' (' + partes.join(', ') + ')' : '');
+}
+
+// Junta o DMC "outro" neste (o que está aberto no Editar). Fica o NOME deste; a curva
+// passa a ser a do outro se este não tiver; vazamentos/campanhas do outro migram; campos
+// vazios deste são completados com os do outro; o outro sai do cadastro.
+async function juntarDMCDaTabela() {
+  const e = S._editDMC; if (!e) return;
+  const c = S.cidades.find(x => x.id === e.cidadeId);
+  const idx = _idxDMCEditando();
+  const sel = document.getElementById('edit-dmc-juntar');
+  const outroNome = sel && sel.value;
+  if (!c || idx < 0 || !outroNome) { toast('Escolha o DMC que vai ser juntado a este'); return; }
+  const fica = c.dmcs[idx];
+  const sai = c.dmcs.find(x => x.nome === outroNome);
+  if (!sai || sai === fica) return;
+  const btn = document.getElementById('edit-dmc-btn-juntar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Conferindo curvas...'; }
+  const restaurarBtn = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-git-merge"></i> Juntar'; } };
+  const curvasFica = await feicoesDoDMC(c.id, fica);
+  const curvasSai = await feicoesDoDMC(c.id, sai);
+  if (curvasFica.length && curvasSai.length) {
+    restaurarBtn();
+    alert('Os dois DMCs têm curva própria no mapa:\n\n• ' + fica.nome + '\n• ' + sai.nome +
+      '\n\nAbra o Editor de DMC, apague a curva que não vale mais e salve. Depois volte aqui e junte.');
+    return;
+  }
+  const vaz = S.leaks.filter(l => l.cidade === c.id && l.dmc === sai.nome).length;
+  if (!confirm('Juntar "' + sai.nome + '" em "' + fica.nome + '"?\n\n' +
+    '• Fica o nome "' + fica.nome + '"\n' +
+    (curvasSai.length ? '• A curva de "' + sai.nome + '" passa a se chamar "' + fica.nome + '"\n' : '') +
+    (vaz ? '• ' + vaz + ' vazamento(s) passam para "' + fica.nome + '"\n' : '') +
+    '• "' + sai.nome + '" sai da lista de DMCs')) { restaurarBtn(); return; }
+  if (btn) btn.textContent = 'Juntando...';
+  pausarSyncDMC(c.id, true);
+  try {
+    if (curvasSai.length && !(await renomearFeicoesKML(curvasSai, fica.nome))) {
+      toast('⚠️ Não consegui renomear a curva — nada foi juntado. Tente de novo.'); restaurarBtn(); return;
+    }
+    // Completa o que este não tem com o que o outro tem. A extensão acompanha a curva.
+    ['sigla','codigoGis','macromedidor','situacao','corPersonalizada'].forEach(k => { if (!fica[k] && sai[k]) fica[k] = sai[k]; });
+    if (fica.ligacoes == null && sai.ligacoes != null) fica.ligacoes = sai.ligacoes;
+    if (fica.supervisorio == null && sai.supervisorio != null) { fica.supervisorio = sai.supervisorio; fica.fpDisponivel = !!sai.fpDisponivel; }
+    if (curvasSai.length) { fica.extensaoRede = sai.extensaoRede ?? fica.extensaoRede; fica.nomeFeatureKml = null; }
+    if (fica.extensaoPercorrida == null && sai.extensaoPercorrida != null) fica.extensaoPercorrida = sai.extensaoPercorrida;
+    c.dmcs = c.dmcs.filter(x => x !== sai);
+    await salvarCidadeFirestore(c);
+    const m = await migrarNomeDMCRegistros(c.id, sai.nome, fica.nome);
+    closeModal('modal-editar-dmc');
+    renderManage();
+    toast('✓ "' + sai.nome + '" juntado em "' + fica.nome + '"' + (m.nLeaks ? ' · ' + m.nLeaks + ' vazamento(s) migrados' : ''));
+  } catch (err) {
+    console.error(err);
+    toast('⚠️ Erro ao juntar: ' + (err.message || err));
+    restaurarBtn();
+  } finally { pausarSyncDMC(c.id, false); }
 }
 
 // Pop-up de edição de um DMC (mesmas funções de gravação da visão por município).
@@ -10579,12 +10759,36 @@ function abrirEditarDMC(cidadeId, idx) {
       'Vazamentos registrados: <b>' + S.leaks.filter(l => l.cidade === cidadeId && l.dmc === d.nome).length + '</b>' +
       (div.nivel ? '<br><span style="color:' + (div.nivel === 'dividir' ? 'var(--red)' : 'var(--amber)') + ';font-weight:600">' + (div.nivel === 'dividir' ? '✂ Precisa ser dividido: ' : 'Verificar divisão: ') + escHtml(div.motivos.join(' · ')) + '</span>' : '') +
     '</div>' +
+    htmlJuntarDMC(c, d) +
     '<div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">' +
       '<button class="btn" style="color:var(--red)" onclick="removerDMCDaTabela()"><i class="ti ti-trash"></i> Remover</button>' +
       '<div style="display:flex;gap:8px"><button class="btn" onclick="closeModal(\'modal-editar-dmc\')">Cancelar</button>' +
       '<button class="btn primary" id="edit-dmc-salvar" onclick="salvarEditarDMC()"><i class="ti ti-device-floppy"></i> Salvar</button></div>' +
     '</div>';
   openModal('modal-editar-dmc');
+}
+// Nome sem prefixo de sigla e sem parênteses — "PTS-DMC-Centro (Estudo)" → "CENTRO".
+// Só para sugerir pares parecidos na lista do "Juntar".
+function nomeNucleoDMC(n) {
+  return nomeBaseDMC(String(n || '').replace(/\([^)]*\)/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+function htmlJuntarDMC(c, d) {
+  const outros = c.dmcs.filter(x => x !== d && x.nome !== DMC_SEM_DMC);
+  if (!outros.length) return '';
+  const nucleo = nomeNucleoDMC(d.nome);
+  const parecidos = outros.filter(x => nomeNucleoDMC(x.nome) === nucleo);
+  const demais = outros.filter(x => !parecidos.includes(x)).sort((a, b) => compararNomesAlfabetica(a.nome, b.nome));
+  const opt = x => '<option value="' + escHtml(x.nome) + '">' + escHtml(x.nome) + '</option>';
+  return '<details style="margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius);padding:7px 10px"' + (parecidos.length ? ' open' : '') + '>' +
+    '<summary style="cursor:pointer;font-size:12px;font-weight:600">Juntar com outro DMC (duplicado)' +
+      (parecidos.length ? ' <span class="badge media" style="margin-left:4px">' + parecidos.length + ' parecido(s)</span>' : '') + '</summary>' +
+    '<p style="font-size:11px;color:var(--text2);margin:6px 0">Fica o nome <b>' + escHtml(d.nome) + '</b>. O DMC escolhido sai da lista; a curva e os vazamentos dele passam para este.</p>' +
+    '<div style="display:flex;gap:6px"><select id="edit-dmc-juntar" style="flex:1;min-width:0;padding:7px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">' +
+      '<option value="">Escolha o DMC...</option>' +
+      (parecidos.length ? '<optgroup label="Nome parecido">' + parecidos.map(opt).join('') + '</optgroup><optgroup label="Outros DMCs de ' + escHtml(c.nome) + '">' : '') +
+      demais.map(opt).join('') + (parecidos.length ? '</optgroup>' : '') +
+    '</select><button class="btn sm" id="edit-dmc-btn-juntar" onclick="juntarDMCDaTabela()"><i class="ti ti-git-merge"></i> Juntar</button></div>' +
+  '</details>';
 }
 // Índice atual do DMC aberto no pop-up (a lista pode ter mudado enquanto ele estava aberto).
 function _idxDMCEditando() {
@@ -10616,23 +10820,23 @@ async function salvarEditarDMC() {
   if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
   try {
     const nomeAntigo = d.nome;
+    let rRen = null;
+    if (nome !== nomeAntigo) {
+      // Renomeia primeiro (curva no KML + cadastro + vazamentos + campanhas); se a curva
+      // não puder ser renomeada, para tudo — evita o DMC duplicado.
+      rRen = await renomearDMCCompleto(c.id, idx, nome);
+      if (!rRen.ok) { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-device-floppy"></i> Salvar'; } return; }
+    }
     const mudouSituacao = (d.situacao || null) !== situacao;
     const mudouCor = e.cor !== undefined && (e.cor || null) !== (d.corPersonalizada || null);
-    d.nome = nome; d.sigla = sigla; d.situacao = situacao; d.ligacoes = ligacoes;
+    d.sigla = sigla; d.situacao = situacao; d.ligacoes = ligacoes;
     d.codigoGis = codigoGis; d.macromedidor = macromedidor; d.supervisorio = supervisorio; d.fpDisponivel = fpDisponivel;
     if (mudouCor) d.corPersonalizada = e.cor ? normalizarCorEntrada(e.cor) : null;
     await salvarCidadeFirestore(c);
-    let nLeaks = 0;
-    if (nome !== nomeAntigo) {
-      // Mesmo cuidado de editarCampoDMC: vazamentos guardam o NOME do DMC.
-      const leaksParaAtualizar = S.leaks.filter(l => l.cidade === c.id && l.dmc === nomeAntigo);
-      for (const l of leaksParaAtualizar) await window.FB.setDoc(window.FB.doc(window.FB.db, 'leaks', l.id), { dmc: nome }, { merge: true });
-      nLeaks = leaksParaAtualizar.length;
-    }
     if (mudouSituacao || mudouCor) redesenharCamadasComCorAtualizada();
     closeModal('modal-editar-dmc');
     renderManage();
-    toast('✓ DMC atualizado' + (nLeaks ? ' (' + nLeaks + ' vazamento(s) com o nome novo)' : ''));
+    toast(rRen ? textoResultadoRenomear(rRen) : '✓ DMC atualizado');
   } catch (err) {
     console.error(err);
     toast('Erro ao salvar o DMC: ' + (err.message || err));
@@ -10670,6 +10874,7 @@ function exportarDMCsTabelaXLSX() {
     if (S._dmcTabFiltro === 'supsim' && l.d.supervisorio !== true) return false;
     if (S._dmcTabFiltro === 'fp' && !(l.d.supervisorio === true && l.d.fpDisponivel)) return false;
     if (S._dmcTabFiltro === 'semgis' && l.d.codigoGis) return false;
+    if (S._dmcTabFiltro === 'dup' && !l.dup) return false;
     return true;
   }).sort((a, b) => textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome)) || textoBusca(a.d.nome).localeCompare(textoBusca(b.d.nome)));
   if (!linhas.length) { toast('Nada para exportar com esses filtros'); return; }
@@ -10990,15 +11195,11 @@ async function editarCampoDMC(cidadeId, idx, campo, valor) {
   if (campo === 'nome') {
     valor = valor.trim();
     if (!valor) { renderDMCsEditaveis(cidadeId); return; }
-    const nomeAntigo = c.dmcs[idx].nome;
-    c.dmcs[idx].nome = valor;
-    await salvarCidadeFirestore(c);
-    // Atualiza também os vazamentos já registrados com o DMC antigo (mantém histórico consistente)
-    const leaksParaAtualizar = S.leaks.filter(l => l.cidade === cidadeId && l.dmc === nomeAntigo);
-    for (const l of leaksParaAtualizar) {
-      await window.FB.setDoc(window.FB.doc(window.FB.db,'leaks',l.id), { dmc:valor }, { merge:true });
-    }
-    toast('DMC atualizado' + (leaksParaAtualizar.length ? ' (' + leaksParaAtualizar.length + ' vazamento(s) também atualizados)' : ''));
+    if (valor === c.dmcs[idx].nome) return;
+    if (c.dmcs.some((x, i) => i !== idx && normTxt(x.nome) === normTxt(valor))) { toast('Já existe outro DMC com esse nome em ' + c.nome + ' — use "Juntar" no Editar da tabela'); renderDMCsEditaveis(cidadeId); return; }
+    const r = await renomearDMCCompleto(cidadeId, idx, valor);
+    if (!r.ok) { renderDMCsEditaveis(cidadeId); return; }
+    toast(textoResultadoRenomear(r));
   } else {
     c.dmcs[idx][campo] = valor;
     await salvarCidadeFirestore(c);

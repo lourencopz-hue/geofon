@@ -784,6 +784,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
               <option value="supsim">Com supervisório</option>
               <option value="fp">Com FP disponível</option>
               <option value="semgis">Sem cód. GIS</option>
+              <option value="semativos">Macromedidor fora da Gestão de Ativos</option>
               <option value="dup">Possíveis duplicados</option>
             </select>
             <button class="btn sm hidden" id="btn-dmc-tab-recalc" onclick="recalcularExtensaoDaTabela()" title="Recalcula a extensão real (rede recortada pelo contorno) dos DMCs do município filtrado">
@@ -2018,7 +2019,7 @@ const DMC_SEM_DMC = 'Sem DMC';
 // funcionando sem precisar de uma migração manual separada.
 function normalizarDMC(d) {
   if (typeof d === 'string') {
-    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null, macromedidor:null, supervisorio:null, fpDisponivel:false, curvaAlteracao:null };
+    return { nome: d, sigla:'', ligacoes:null, situacao:null, extensaoRede:null, extensaoPercorrida:null, codigoGis:null, ultimaAtualizacao:null, corPersonalizada:null, nomeFeatureKml:null, macromedidor:null, supervisorio:null, fpDisponivel:false, curvaAlteracao:null, macroCadastroAtivos:false };
   }
   return {
     nome: d.nome || '', sigla: d.sigla || '', ligacoes: (d.ligacoes ?? null),
@@ -2040,6 +2041,9 @@ function normalizarDMC(d) {
     macromedidor: d.macromedidor || null,
     supervisorio: (d.supervisorio === true || d.supervisorio === false) ? d.supervisorio : null,
     fpDisponivel: d.fpDisponivel === true,
+    // Macromedidor cadastrado no sistema Gestão de Ativos - DIPEO (marcação manual;
+    // bloqueada só quando o macromedidor é "Não instalado").
+    macroCadastroAtivos: d.macroCadastroAtivos === true,
     // Registro de segurança (2026-11-24): quem fez a última alteração da CURVA deste DMC
     // { em: ms, uid, nome, email, acao: 'editada'|'criada'|'renomeada'|'juntada' }.
     // Mostrado só no pop-up Editar da Gestão.
@@ -10357,6 +10361,37 @@ function kmlCoords(el) {
 const LIMITE_DIVISAO_DMC = { extensaoM: 30000, ligacoes: 5000 };
 // Opções do campo Macromedidor (2026-11-24)
 const MACROMEDIDOR_OPCOES = ['Em instalação', 'Não instalado', 'Ultrassônico', 'Eletromagnético', 'Mecânico'];
+// Ícone do sistema Gestão de Ativos - DIPEO (medidor + barras + água), redesenhado em SVG.
+// Aceso (cores do sistema) = macromedidor cadastrado lá; apagado (cinza) = não cadastrado.
+function iconeGestaoAtivos(aceso, px) {
+  const navy = aceso ? '#1B3A63' : '#B9BEC6', teal = aceso ? '#1A9488' : '#D3D7DC';
+  return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 64 64" style="vertical-align:middle;flex:none" aria-hidden="true">' +
+    '<rect x="38" y="13" width="9" height="30" rx="1.5" fill="' + teal + '"/>' +
+    '<rect x="51" y="4" width="10" height="39" rx="1.5" fill="' + teal + '"/>' +
+    '<circle cx="20" cy="28" r="17" fill="#fff"/>' +
+    '<circle cx="20" cy="28" r="14" fill="none" stroke="' + navy + '" stroke-width="5.5"/>' +
+    '<path d="M20 28 L27 21" stroke="' + navy + '" stroke-width="3.2" stroke-linecap="round"/>' +
+    '<circle cx="20" cy="28" r="3.6" fill="' + navy + '"/>' +
+    '<path d="M20 17v2.6M11 20l1.9 1.8M29 20l-1.9 1.8M11.5 28h2.6M25.9 28h2.6" stroke="' + navy + '" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M6 49c6-3 11-3 17 0s11 3 17 0s11-3 17 0" fill="none" stroke="' + navy + '" stroke-width="4.5" stroke-linecap="round"/>' +
+    '<path d="M12 58c5-2.5 9-2.5 14 0s9 2.5 14 0s9-2.5 14 0" fill="none" stroke="' + navy + '" stroke-width="4" stroke-linecap="round"/>' +
+    '</svg>';
+}
+// A marcação "cadastrado na Gestão de Ativos" fica bloqueada só em "Não instalado" —
+// liberada em todos os outros casos, inclusive com o macromedidor ainda não informado.
+function macroPermiteCadastroAtivos(macro) { return macro !== 'Não instalado'; }
+function htmlMacromedidorDMC(d) {
+  const instalado = ['Ultrassônico', 'Eletromagnético', 'Mecânico'].includes(d.macromedidor);
+  const txt = d.macromedidor
+    ? '<span style="color:' + (instalado ? 'inherit' : 'var(--amber)') + '">' + escHtml(d.macromedidor) + '</span>'
+    : '<span style="color:var(--text3)">—</span>';
+  if (!macroPermiteCadastroAtivos(d.macromedidor)) return txt;
+  const aceso = !!d.macroCadastroAtivos;
+  if (!d.macromedidor && !aceso) return txt; // vazio e não marcado: sem ícone cinza (evita poluir a tabela)
+  return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + txt +
+    '<span title="' + (aceso ? 'Cadastrado no sistema Gestão de Ativos - DIPEO' : 'Ainda não cadastrado no sistema Gestão de Ativos - DIPEO') + '"' +
+    (aceso ? ' style="filter:drop-shadow(0 0 3px rgba(26,148,136,.55))"' : ' style="opacity:.8"') + '>' + iconeGestaoAtivos(aceso, 18) + '</span></span>';
+}
 // "Sim" + bolinha FP (acesa = fator de pesquisa disponível) / "Não" / "—"
 function htmlSupervisorioDMC(d) {
   if (d.supervisorio === true) {
@@ -10536,6 +10571,7 @@ function renderDMCsTabela() {
     if (S._dmcTabFiltro === 'supsim' && l.d.supervisorio !== true) return false;
     if (S._dmcTabFiltro === 'fp' && !(l.d.supervisorio === true && l.d.fpDisponivel)) return false;
     if (S._dmcTabFiltro === 'semgis' && l.d.codigoGis) return false;
+    if (S._dmcTabFiltro === 'semativos' && !(l.d.macromedidor && macroPermiteCadastroAtivos(l.d.macromedidor) && !l.d.macroCadastroAtivos)) return false;
     if (S._dmcTabFiltro === 'dup' && !l.dup) return false;
     return true;
   });
@@ -10599,7 +10635,7 @@ function renderDMCsTabela() {
         '<td style="font-family:monospace;font-size:11px">' + (d.sigla ? escHtml(d.sigla) : '<span style="color:var(--amber);font-family:inherit">sem sigla</span>') + '</td>' +
         '<td style="font-family:monospace;font-size:11px">' + (d.codigoGis ? escHtml(d.codigoGis) : '<span style="color:var(--text3);font-family:inherit">—</span>') + '</td>' +
         '<td style="white-space:nowrap">' + sit + '</td>' +
-        '<td style="white-space:nowrap">' + (d.macromedidor ? '<span style="color:' + (['Ultrassônico', 'Eletromagnético', 'Mecânico'].includes(d.macromedidor) ? 'inherit' : 'var(--amber)') + '">' + escHtml(d.macromedidor) + '</span>' : '<span style="color:var(--text3)">—</span>') + '</td>' +
+        '<td style="white-space:nowrap">' + htmlMacromedidorDMC(d) + '</td>' +
         '<td>' + htmlSupervisorioDMC(d) + '</td>' +
         '<td style="text-align:right;white-space:nowrap' + (ligAlta ? ';' + vermelho : '') + '">' + (d.ligacoes != null ? Number(d.ligacoes).toLocaleString('pt-BR') : '—') + '</td>' +
         '<td style="text-align:right;white-space:nowrap' + (extAlta ? ';' + vermelho : '') + '">' + extTxt + '</td>' +
@@ -10751,6 +10787,7 @@ async function juntarDMCDaTabela() {
     ['sigla','codigoGis','macromedidor','situacao','corPersonalizada'].forEach(k => { if (!fica[k] && sai[k]) fica[k] = sai[k]; });
     if (fica.ligacoes == null && sai.ligacoes != null) fica.ligacoes = sai.ligacoes;
     if (fica.supervisorio == null && sai.supervisorio != null) { fica.supervisorio = sai.supervisorio; fica.fpDisponivel = !!sai.fpDisponivel; }
+    if (!fica.macroCadastroAtivos && sai.macroCadastroAtivos && macroPermiteCadastroAtivos(fica.macromedidor)) fica.macroCadastroAtivos = true;
     if (curvasSai.length) { fica.extensaoRede = sai.extensaoRede ?? fica.extensaoRede; fica.nomeFeatureKml = null; marcarAlteracaoCurvaDMC(c, fica.nome, 'juntada'); }
     if (fica.extensaoPercorrida == null && sai.extensaoPercorrida != null) fica.extensaoPercorrida = sai.extensaoPercorrida;
     c.dmcs = c.dmcs.filter(x => x !== sai);
@@ -10828,9 +10865,13 @@ function abrirEditarDMC(cidadeId, idx) {
       '<input id="edit-dmc-sigla" type="text" value="' + escHtml(d.sigla || '') + '" placeholder="ex: BDN-DMC-Alinea" style="' + inp + ';font-family:monospace"></div>' +
     '<div style="display:flex;gap:10px">' +
       '<div class="field" style="width:130px"><label>Cód. GIS</label><input id="edit-dmc-gis" type="text" inputmode="numeric" value="' + escHtml(d.codigoGis ?? '') + '" placeholder="ex: 1234" style="' + inp + ';font-family:monospace"></div>' +
-      '<div class="field" style="flex:1"><label>Macromedidor</label><select id="edit-dmc-macro" style="' + inp + '"><option value="">—</option>' +
+      '<div class="field" style="flex:1"><label>Macromedidor</label><select id="edit-dmc-macro" onchange="atualizarCaixaAtivosDMC()" style="' + inp + '"><option value="">—</option>' +
         MACROMEDIDOR_OPCOES.map(m => '<option value="' + escHtml(m) + '"' + (d.macromedidor === m ? ' selected' : '') + '>' + escHtml(m) + '</option>').join('') + '</select></div>' +
     '</div>' +
+    '<div class="field" id="edit-dmc-ativos-wrap" style="margin-top:-4px;opacity:' + (macroPermiteCadastroAtivos(d.macromedidor) ? 1 : .4) + '"><label style="display:flex;align-items:center;justify-content:flex-start;gap:7px;cursor:pointer;padding:4px 0;font-size:12.5px;color:var(--text)">' +
+      '<input id="edit-dmc-ativos" type="checkbox" onchange="atualizarCaixaAtivosDMC()" style="width:16px;height:16px;flex:none;margin:0"' + (d.macroCadastroAtivos ? ' checked' : '') + (macroPermiteCadastroAtivos(d.macromedidor) ? '' : ' disabled') + '>' +
+      '<span id="edit-dmc-ativos-icone">' + iconeGestaoAtivos(!!d.macroCadastroAtivos && macroPermiteCadastroAtivos(d.macromedidor), 20) + '</span>' +
+      '<span style="white-space:nowrap">Macromedidor cadastrado na Gestão de Ativos - DIPEO</span></label></div>' +
     '<div style="display:flex;gap:10px;align-items:flex-end">' +
       '<div class="field" style="width:130px"><label>Supervisório</label><select id="edit-dmc-sup" onchange="document.getElementById(\'edit-dmc-fp-wrap\').style.opacity=this.value===\'sim\'?1:.4;document.getElementById(\'edit-dmc-fp\').disabled=this.value!==\'sim\'" style="' + inp + '">' +
         '<option value="">—</option><option value="sim"' + (d.supervisorio === true ? ' selected' : '') + '>Sim</option><option value="nao"' + (d.supervisorio === false ? ' selected' : '') + '>Não</option></select></div>' +
@@ -10884,6 +10925,18 @@ function htmlJuntarDMC(c, d) {
     '</select><button class="btn sm" id="edit-dmc-btn-juntar" onclick="juntarDMCDaTabela()"><i class="ti ti-git-merge"></i> Juntar</button></div>' +
   '</details>';
 }
+// Caixinha "Gestão de Ativos" do pop-up: bloqueada sem macromedidor; ícone acende junto
+function atualizarCaixaAtivosDMC() {
+  const macro = document.getElementById('edit-dmc-macro')?.value || '';
+  const cb = document.getElementById('edit-dmc-ativos');
+  const wrap = document.getElementById('edit-dmc-ativos-wrap');
+  if (!cb) return;
+  const pode = macroPermiteCadastroAtivos(macro);
+  cb.disabled = !pode;
+  if (wrap) wrap.style.opacity = pode ? 1 : .4;
+  const ic = document.getElementById('edit-dmc-ativos-icone');
+  if (ic) ic.innerHTML = iconeGestaoAtivos(pode && cb.checked, 20);
+}
 // Índice atual do DMC aberto no pop-up (a lista pode ter mudado enquanto ele estava aberto).
 function _idxDMCEditando() {
   const e = S._editDMC; if (!e) return -1;
@@ -10910,6 +10963,7 @@ async function salvarEditarDMC() {
   const supTxt = document.getElementById('edit-dmc-sup').value;
   const supervisorio = supTxt === 'sim' ? true : supTxt === 'nao' ? false : null;
   const fpDisponivel = supervisorio === true && document.getElementById('edit-dmc-fp').checked;
+  const macroCadastroAtivos = macroPermiteCadastroAtivos(macromedidor) && document.getElementById('edit-dmc-ativos').checked;
   const btn = document.getElementById('edit-dmc-salvar');
   if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
   try {
@@ -10924,7 +10978,7 @@ async function salvarEditarDMC() {
     const mudouSituacao = (d.situacao || null) !== situacao;
     const mudouCor = e.cor !== undefined && (e.cor || null) !== (d.corPersonalizada || null);
     d.sigla = sigla; d.situacao = situacao; d.ligacoes = ligacoes;
-    d.codigoGis = codigoGis; d.macromedidor = macromedidor; d.supervisorio = supervisorio; d.fpDisponivel = fpDisponivel;
+    d.codigoGis = codigoGis; d.macromedidor = macromedidor; d.supervisorio = supervisorio; d.fpDisponivel = fpDisponivel; d.macroCadastroAtivos = macroCadastroAtivos;
     if (mudouCor) d.corPersonalizada = e.cor ? normalizarCorEntrada(e.cor) : null;
     await salvarCidadeFirestore(c);
     if (mudouSituacao || mudouCor) redesenharCamadasComCorAtualizada();
@@ -10968,15 +11022,17 @@ function exportarDMCsTabelaXLSX() {
     if (S._dmcTabFiltro === 'supsim' && l.d.supervisorio !== true) return false;
     if (S._dmcTabFiltro === 'fp' && !(l.d.supervisorio === true && l.d.fpDisponivel)) return false;
     if (S._dmcTabFiltro === 'semgis' && l.d.codigoGis) return false;
+    if (S._dmcTabFiltro === 'semativos' && !(l.d.macromedidor && macroPermiteCadastroAtivos(l.d.macromedidor) && !l.d.macroCadastroAtivos)) return false;
     if (S._dmcTabFiltro === 'dup' && !l.dup) return false;
     return true;
   }).sort((a, b) => textoBusca(a.c.nome).localeCompare(textoBusca(b.c.nome)) || textoBusca(a.d.nome).localeCompare(textoBusca(b.d.nome)));
   if (!linhas.length) { toast('Nada para exportar com esses filtros'); return; }
-  const dados = [['Município', 'Sigla município', 'Regional', 'DMC (nome)', 'Sigla DMC', 'Cód. GIS', 'Situação', 'Macromedidor', 'Supervisório', 'FP disponível', 'Ligações', 'Extensão de rede (km)', 'Extensão aproximada?', 'Contorno KML', 'Vazamentos', 'Divisão', 'Motivo']];
+  const dados = [['Município', 'Sigla município', 'Regional', 'DMC (nome)', 'Sigla DMC', 'Cód. GIS', 'Situação', 'Macromedidor', 'Na Gestão de Ativos', 'Supervisório', 'FP disponível', 'Ligações', 'Extensão de rede (km)', 'Extensão aproximada?', 'Contorno KML', 'Vazamentos', 'Divisão', 'Motivo']];
   linhas.forEach(l => dados.push([
     l.c.nome, l.c.prefixo, l.c.regional || '', l.d.nome, l.d.sigla || '',
     l.d.codigoGis ? (/^[1-9]\d{0,14}$/.test(String(l.d.codigoGis)) ? Number(l.d.codigoGis) : String(l.d.codigoGis)) : '',
     l.d.situacao || '', l.d.macromedidor || '',
+    macroPermiteCadastroAtivos(l.d.macromedidor) ? (l.d.macroCadastroAtivos ? 'Sim' : 'Não') : '',
     l.d.supervisorio === true ? 'Sim' : l.d.supervisorio === false ? 'Não' : '',
     l.d.supervisorio === true ? (l.d.fpDisponivel ? 'Sim' : 'Não') : '',
     l.d.ligacoes != null ? Number(l.d.ligacoes) : '', l.ext != null ? Math.round(l.ext / 10) / 100 : '', l.ext != null ? (l.extAprox ? 'Sim' : 'Não') : '',
@@ -10984,7 +11040,7 @@ function exportarDMCsTabelaXLSX() {
     l.div.nivel === 'dividir' ? 'Dividir' : l.div.nivel === 'verificar' ? 'Verificar' : '', l.div.motivos.join('; ')
   ]));
   const ws = XLSX.utils.aoa_to_sheet(dados);
-  ws['!cols'] = [18, 8, 12, 26, 22, 10, 14, 16, 12, 10, 9, 11, 10, 9, 9, 9, 50].map(w => ({ wch: w }));
+  ws['!cols'] = [18, 8, 12, 26, 22, 10, 14, 16, 11, 12, 10, 9, 11, 10, 9, 9, 9, 50].map(w => ({ wch: w }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'DMCs');
   const hoje = new Date().toISOString().slice(0, 10);
@@ -11447,7 +11503,7 @@ async function detectarEMesclarDMCsDuplicados() {
         if (!sobrevivente.situacao && dup.situacao) sobrevivente.situacao = dup.situacao;
         if (sobrevivente.extensaoRede==null && dup.extensaoRede!=null) sobrevivente.extensaoRede = dup.extensaoRede;
         if (!sobrevivente.codigoGis && dup.codigoGis) sobrevivente.codigoGis = dup.codigoGis;
-        if (!sobrevivente.macromedidor && dup.macromedidor) sobrevivente.macromedidor = dup.macromedidor;
+        if (!sobrevivente.macromedidor && dup.macromedidor) { sobrevivente.macromedidor = dup.macromedidor; sobrevivente.macroCadastroAtivos = !!dup.macroCadastroAtivos; }
         if (sobrevivente.supervisorio == null && dup.supervisorio != null) { sobrevivente.supervisorio = dup.supervisorio; sobrevivente.fpDisponivel = !!dup.fpDisponivel; }
         // Migra vazamentos já registrados com o nome exato do duplicado removido
         if (dup.nome !== sobrevivente.nome) {

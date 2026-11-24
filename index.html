@@ -891,6 +891,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         </p>
       </div>
       <div id="editor-dmc-escopo-aviso" style="display:none;margin:8px 14px 0;padding:7px 12px;border-radius:var(--radius);font-size:11.5px;line-height:1.5"></div>
+      <div id="editor-dmc-status" style="display:none;margin:8px 14px 0;padding:7px 12px;border-radius:var(--radius);font-size:12px;font-weight:500;line-height:1.5"></div>
       <div style="display:flex;justify-content:space-between;padding:0 14px;margin-top:4px">
         <div id="editor-dmc-selecao-info" style="font-size:11.5px;color:var(--red);font-weight:600;min-height:16px"></div>
         <div id="editor-dmc-vertices-info" style="font-size:11.5px;color:var(--text2);min-height:16px"></div>
@@ -1372,6 +1373,18 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Confirmar notificação por WhatsApp (aparece DEPOIS de salvar o ponto) -->
+<!-- Modal: escolher qual versão manter quando um DMC está gravado em mais de um arquivo -->
+<div class="modal-overlay" id="modal-versoes-dmc">
+  <div class="modal" style="max-width:520px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px"><i class="ti ti-copy"></i> <span id="versoes-dmc-titulo"></span></h3>
+    <p style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+      As versões estão desenhadas no mapa, cada uma com uma cor (tracejado). Clique em <b>Ver</b> para aproximar numa delas. Ao escolher <b>Manter esta</b>, esse DMC sai dos outros arquivos. Nada é alterado se você cancelar.
+    </p>
+    <div id="versoes-dmc-lista" style="max-height:340px;overflow:auto;margin-bottom:12px"></div>
+    <button class="btn btn-block" style="justify-content:center;background:var(--bg2)" onclick="closeModal('modal-versoes-dmc')">Cancelar — não mexer em nada</button>
+  </div>
+</div>
+
 <!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
 <div class="modal-overlay" id="modal-escopo-editor-dmc">
   <div class="modal" style="max-width:480px">
@@ -5564,19 +5577,67 @@ async function editorDMC_carregarExistentes() {
 // arquivos mais antigos. Arquivo antigo que ficar vazio é removido; se tiver outros DMCs,
 // só a forma desse DMC sai dele.
 async function editorDMC_corrigirDuplicidade(cidadeId, nomeDMC, camadaIds) {
+  // (2026-11-24, pedido do Lourenço) Em vez de manter automaticamente a mais recente,
+  // mostra todas as versões no mapa e deixa ESCOLHER qual fica — ou cancelar.
   const itens = camadaIds.map(id => (S.leafletLayers.dmc||[]).find(i => i.id === id)).filter(Boolean);
   if (itens.length < 2) return false;
+  toast('Carregando as versões de "' + nomeDMC + '"...');
+  await garantirGeometriaVarias(itens);
   const ms = i => msDoCampo(i.ultimaAtualizacao) || msDoCampo(i.criadoEm) || 0;
   itens.sort((a, b) => ms(b) - ms(a));
-  const [manter, ...antigos] = itens;
-  const fmt = i => { const t = ms(i); return '• ' + (i.nome || i.id) + (t ? ' — ' + new Date(t).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''); };
-  if (!confirm('"' + nomeDMC + '" está gravado em ' + itens.length + ' arquivos:\n\n' + itens.map(fmt).join('\n') +
-      '\n\nCorrigir agora? Fica a versão MAIS RECENTE (a primeira da lista) e esse DMC sai dos arquivos mais antigos.')) return false;
+  const bate = ft => { const n = editorDMC_nomeNaFeature(ft); return n && nomesDMCBatem(n, nomeDMC); };
+  const cores = ['#1f77b4', '#d62728', '#2ca02c', '#9467bd', '#ff7f0e', '#17becf'];
+  const versoes = itens.map((item, k) => {
+    const fts = ((item._geojson && item._geojson.features) || []).filter(bate);
+    let areaHa = 0, vertices = 0;
+    fts.forEach(ft => { try { areaHa += turf.area(ft) / 10000; } catch(e) {} try { vertices += turf.coordAll(ft).length; } catch(e) {} });
+    const outros = ((item._geojson && item._geojson.features) || []).length - fts.length;
+    return { item, fts, cor: cores[k % cores.length], areaHa, vertices, outros, n: k + 1 };
+  });
+
+  const grupoPrevia = L.featureGroup().addTo(mapEditorDMC);
+  versoes.forEach(v => {
+    v.grupo = L.geoJSON({ type: 'FeatureCollection', features: v.fts }, { pmIgnore: true, interactive: true,
+      style: { color: v.cor, weight: 3, dashArray: '7 5', fillColor: v.cor, fillOpacity: 0.08 } });
+    v.grupo.eachLayer(l => l.bindTooltip('Versão ' + v.n, { sticky: true }));
+    grupoPrevia.addLayer(v.grupo);
+  });
+  if (grupoPrevia.getLayers().length) mapEditorDMC.fitBounds(grupoPrevia.getBounds(), { maxZoom: 17 });
+
+  const fmtData = t => t ? new Date(t).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : 'data desconhecida';
+  document.getElementById('versoes-dmc-titulo').textContent = '"' + nomeDMC + '" está gravado em ' + versoes.length + ' arquivos';
+  document.getElementById('versoes-dmc-lista').innerHTML = versoes.map((v, k) => `
+    <div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+      <span style="width:14px;height:14px;border-radius:3px;background:${v.cor};flex-shrink:0"></span>
+      <div style="flex:1;font-size:12px;line-height:1.5">
+        <b>Versão ${v.n}</b>${k === 0 ? ' <span style="color:var(--text3)">(mais recente)</span>' : ''}<br>
+        <span style="color:var(--text2)">${fmtData(ms(v.item))}${(v.item.atualizadoPorNome || v.item.criadoPorNome) ? ' · ' + (v.item.atualizadoPorNome || v.item.criadoPorNome) : ''}</span><br>
+        <span style="color:var(--text2)">${v.areaHa.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha · ${v.vertices} vértices · arquivo: ${v.item.nome || v.item.id}${v.outros ? ' (+' + v.outros + ' outro(s) DMC no arquivo)' : ''}</span>
+      </div>
+      <button class="btn sm" onclick="editorDMC__versaoVer(${k})">Ver</button>
+      <button class="btn sm primary" onclick="editorDMC__versaoEscolher(${k})">Manter esta</button>
+    </div>`).join('');
+
+  const escolha = await new Promise(resolve => {
+    let resolvido = false;
+    const fim = v => { if (!resolvido) { resolvido = true; resolve(v); } };
+    window.editorDMC__versaoVer = k => { const g = versoes[k].grupo; if (g.getLayers().length) mapEditorDMC.fitBounds(g.getBounds(), { maxZoom: 18 }); };
+    window.editorDMC__versaoEscolher = k => { fim(k); closeModal('modal-versoes-dmc'); };
+    S._aoFecharModal = S._aoFecharModal || {};
+    S._aoFecharModal['modal-versoes-dmc'] = () => fim(null);
+    openModal('modal-versoes-dmc');
+  });
+  mapEditorDMC.removeLayer(grupoPrevia);
+  if (escolha == null) { toast('Nada foi alterado'); return false; }
+
+  const manter = versoes[escolha];
+  const remover = versoes.filter((v, k) => k !== escolha);
+  if (!confirm('Manter a Versão ' + manter.n + ' de "' + nomeDMC + '" e tirar esse DMC dos outros ' + remover.length + ' arquivo(s)?')) { toast('Nada foi alterado'); return false; }
   toast('Corrigindo duplicidade de "' + nomeDMC + '"...');
-  for (const item of antigos) {
-    try { await garantirGeometriaCarregada(item); } catch(e) {}
+  for (const v of remover) {
+    const item = v.item;
     if (!item._geojson) { toast('⚠️ Não consegui ler o arquivo ' + (item.nome || item.id) + ' — correção interrompida'); return false; }
-    const restantes = item._geojson.features.filter(ft => { const n = editorDMC_nomeNaFeature(ft); return !(n && nomesDMCBatem(n, nomeDMC)); });
+    const restantes = item._geojson.features.filter(ft => !bate(ft));
     try {
       if (!restantes.length) {
         await window.FB.setDoc(window.FB.doc(window.FB.db, 'camadas', item.id), { removida: true }, { merge: true });
@@ -5590,7 +5651,7 @@ async function editorDMC_corrigirDuplicidade(cidadeId, nomeDMC, camadaIds) {
       return false;
     }
   }
-  toast('✓ Duplicidade de "' + nomeDMC + '" corrigida — ficou só a versão mais recente');
+  toast('✓ Ficou só a Versão ' + manter.n + ' de "' + nomeDMC + '"', 4000);
   return true;
 }
 
@@ -5629,6 +5690,7 @@ function editorDMC_limpar() {
   editorDMCSelecionadas.clear();
   editorDMC_atualizarContadorSelecao();
   editorDMC_atualizarContadorVertices();
+  editorDMC_status('');
   toast('Mapa limpo');
 }
 
@@ -5697,7 +5759,7 @@ function editorDMC_formatarArea(m2) {
 // ser que silencioso=true, usado pela chamada automática dentro de "Salvar", que nesse
 // caso só quer o resultado pra decidir se avisa, sem interromper com um toast de "nada
 // encontrado" toda vez que salvar sem problema nenhum).
-async function editorDMC_verificarSobreposicao(silencioso) {
+async function editorDMC_verificarSobreposicao(silencioso, aoProgredir) {
   if (typeof turf === 'undefined') {
     if (!silencioso) toast('⚠️ Biblioteca de geometria (Turf) ainda não carregou — tente de novo em alguns segundos');
     return [];
@@ -5722,7 +5784,7 @@ async function editorDMC_verificarSobreposicao(silencioso) {
   // escolhida na barra — antes de comparar. Camadas já vistas antes nesta sessão não
   // geram nova busca (garantirGeometriaCarregada só busca o que ainda não tem _geojson).
   const todasCamadas = (S.leafletLayers.dmc || []).filter(i => !i.removida);
-  for (const item of todasCamadas) await garantirGeometriaCarregada(item);
+  await garantirGeometriaVarias(todasCamadas, aoProgredir);
 
   // Lista achatada de "candidatos": um por feature-polígono de DMC já cadastrada, com o
   // nome do DMC e da cidade já resolvidos, pronta pra comparar contra cada forma do editor.
@@ -5997,7 +6059,40 @@ async function editorDMC_resolverVinculo(modo) {
 // esse abre uma janela pedindo cidade + DMC (ou nome de um DMC novo). Um DMC que já
 // veio carregado só passa por uma confirmação simples, sem perguntar de novo o óbvio.
 // ================================================================
+// Linha de situação acima do mapa (fica visível, ao contrário do toast que some em 2 s)
+function editorDMC_status(texto, tipo) {
+  const el = document.getElementById('editor-dmc-status');
+  if (!el) return;
+  if (!texto) { el.style.display = 'none'; return; }
+  const cores = { andamento: ['#E6F1FB', '#0C447C'], ok: ['#EAF3DE', '#27500A'], erro: ['#FCEBEB', '#791F1F'] }[tipo || 'andamento'];
+  el.style.display = '';
+  el.style.background = cores[0];
+  el.style.color = cores[1];
+  el.innerHTML = texto;
+}
+
+// Trava contra clique duplo / segundo "Salvar" enquanto o primeiro ainda roda — era assim
+// que apareciam DOIS arquivos do mesmo DMC novo (relato 2026-11-24).
+let _editorDMCSalvando = false;
 async function editorDMC_salvarNoApp() {
+  if (_editorDMCSalvando) { toast('⏳ Ainda salvando — aguarde terminar'); return; }
+  _editorDMCSalvando = true;
+  const btn = document.getElementById('editor-dmc-btn-salvar');
+  const htmlBtn = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Salvando...'; }
+  try {
+    await editorDMC__salvarNoAppInterno();
+  } catch (err) {
+    console.warn('Erro ao salvar no editor de DMC:', err);
+    editorDMC_status('⚠️ Erro ao salvar: ' + (err.code || err.message || err), 'erro');
+  } finally {
+    _editorDMCSalvando = false;
+    if (btn) { btn.innerHTML = htmlBtn; btn.disabled = !editorDMC_temEscopo(); }
+  }
+}
+
+async function editorDMC__salvarNoAppInterno() {
+  editorDMC_status('');
   if (!editorDMC_temEscopo()) { toast('🔒 Seu usuário não tem cidades liberadas para edição no Editor de DMC — peça ao Administrador'); return; }
   if (!editorDMCLayerGroup || !editorDMCLayerGroup.getLayers().length) { toast('Nada desenhado pra salvar'); return; }
   let layers = editorDMCLayerGroup.getLayers().filter(l => l.getLatLngs);
@@ -6041,7 +6136,11 @@ async function editorDMC_salvarNoApp() {
   // bloqueia o salvamento (sobreposição de fronteira às vezes é proposital), mas destaca
   // em vermelho no mapa e num modal à parte se algum polígono invade outro DMC já
   // cadastrado, de qualquer cidade (pega também sobreposição com cidade vizinha/conurbada).
-  const conflitosSobreposicao = await editorDMC_verificarSobreposicao(true);
+  editorDMC_status('⏳ Verificando sobreposição com os DMCs cadastrados...');
+  const conflitosSobreposicao = await editorDMC_verificarSobreposicao(true, (n, total) => {
+    editorDMC_status('⏳ Verificando sobreposição com os DMCs cadastrados... (' + n + ' de ' + total + ' arquivos)');
+  });
+  editorDMC_status('⏳ Aguardando sua confirmação...');
 
   // Resumo antes de confirmar — mostra exatamente quais DMCs serão tocados, e alerta se
   // as formas de um mesmo DMC vêm de arquivos DIFERENTES (sinal de duplicidade de dados
@@ -6065,8 +6164,9 @@ async function editorDMC_salvarNoApp() {
   const pergunta = (linhasResumo.length === 1
     ? 'Confirma alterar o DMC "' + Object.keys(porDMC)[0] + '"?'
     : 'Confirma salvar? Isso vai gravar:\n\n' + linhasResumo.join('\n')) + avisoSobreposicao;
-  if (!confirm(pergunta)) return;
+  if (!confirm(pergunta)) { editorDMC_status('Salvamento cancelado — nada foi gravado', 'erro'); return; }
 
+  editorDMC_status('⏳ Gravando...');
   toast('Salvando...');
 
   // Agrupa por camada de destino — várias formas do mesmo arquivo (ex.: um KML com
@@ -6143,8 +6243,14 @@ async function editorDMC_salvarNoApp() {
     }
   }
 
-  if (erros) toast(`⚠️ ${erros} de ${Object.keys(porCamadaExistente).length + Object.keys(porDMCNovo).length} não foram salvos — confira os avisos acima`);
-  else toast('✓ Tudo salvo com sucesso');
+  const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (erros) {
+    toast(`⚠️ ${erros} de ${Object.keys(porCamadaExistente).length + Object.keys(porDMCNovo).length} não foram salvos — confira os avisos acima`, 6000);
+    editorDMC_status(`⚠️ ${erros} arquivo(s) não foram salvos (${hora}) — confira os avisos e tente de novo`, 'erro');
+  } else {
+    toast('✓ Tudo salvo com sucesso', 5000);
+    editorDMC_status('✓ Salvo às ' + hora + ': ' + Object.keys(porDMC).join(', '), 'ok');
+  }
 
   // Recalcula extensão em CADA cidade envolvida — normalmente é só uma, mas o modal de
   // vínculo permite escolher uma cidade diferente da que está selecionada na barra.
@@ -8635,6 +8741,23 @@ async function carregarGeometriaCamada(tipo, camadaId) {
 // de todos os DMCs conhecidos, mesmo os que o técnico nunca marcou como "visível".
 // Aproveita uma operação de carregarGeometriaCamada já em andamento pra essa camada, se
 // houver, em vez de duplicar a busca.
+// Carrega a geometria de várias camadas em paralelo (até 6 ao mesmo tempo), com aviso de
+// progresso opcional — buscar uma a uma deixava a checagem de sobreposição antes do
+// "Salvar" muito lenta (relato 2026-11-24: parecia que não tinha salvo).
+async function garantirGeometriaVarias(itens, aoProgredir) {
+  let feitos = 0, pos = 0;
+  const total = itens.length;
+  const trabalhador = async () => {
+    while (pos < total) {
+      const item = itens[pos++];
+      try { await garantirGeometriaCarregada(item); } catch(e) {}
+      feitos++;
+      if (aoProgredir) aoProgredir(feitos, total);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, total) }, trabalhador));
+}
+
 async function garantirGeometriaCarregada(item) {
   if (item._geojson) return;
   if (item._carregamentoEmAndamento) { await item._carregamentoEmAndamento; return; }

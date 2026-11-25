@@ -433,6 +433,12 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="config-nav-item" data-macro-section="leituras" onclick="mostrarSecaoMacro('leituras')">
         <i class="ti ti-chart-dots"></i> <span>Leituras do supervisório</span>
       </div>
+      <div class="config-nav-item" data-macro-section="regras" onclick="mostrarSecaoMacro('regras')">
+        <i class="ti ti-math-function"></i> <span>Regras de volume</span>
+      </div>
+      <div class="config-nav-item" data-macro-section="volumes" onclick="mostrarSecaoMacro('volumes')">
+        <i class="ti ti-calendar-stats"></i> <span>Volumes do mês</span>
+      </div>
     </div>
     <div class="config-content">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -474,6 +480,34 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <label style="font-size:12px">Mês <select id="macro-leit-mes" onchange="macro_estado().mesLeituras=this.value;macro_renderLeituras()" style="font-size:12px;padding:4px"></select></label>
         </div>
         <div id="macro-leituras-tabela"></div>
+      </div>
+
+      <div id="macrosec-regras" class="macro-sec config-section-panel" style="max-width:none;display:none">
+        <div class="section-title" style="margin:0 0 6px">Regras de volume</div>
+        <p style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:8px">
+          <b>Produção</b>: macros somados/subtraídos que dão o produzido de um sistema ou município. <b>Transferência</b>: água que sai de um e entra em outro — conta como exportado da origem e importado do destino (ou só de um lado, quando cada lado mede com um macro diferente). Cada regra vale a partir de um mês; quando a composição mudar, use <i class="ti ti-versions"></i> <b>nova versão</b> para não alterar os meses antigos.
+        </p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <select id="vol-regras-escopo" onchange="vol_estado().filtroRegras=this.value;vol_renderRegras()" style="font-size:12px;padding:5px"></select>
+          <span style="flex:1"></span>
+          <span id="vol-regras-botoes">
+            <button class="btn sm" onclick="vol_novaRegra('producao')"><i class="ti ti-plus"></i> Produção</button>
+            <button class="btn sm" onclick="vol_novaRegra('transferencia')"><i class="ti ti-plus"></i> Transferência</button>
+          </span>
+        </div>
+        <div id="vol-regras-tabela"></div>
+      </div>
+
+      <div id="macrosec-volumes" class="macro-sec config-section-panel" style="max-width:none;display:none">
+        <div class="section-title" style="margin:0 0 6px">Volumes do mês</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:12px">Mês <input type="month" id="vol-mes" onchange="vol_estado().mes=this.value;vol_estado().resultado=null;vol_renderVolumes()" style="font-size:12px;padding:4px"></label>
+          <button class="btn sm primary" onclick="vol_estado().mes=document.getElementById('vol-mes').value;vol_calcular()"><i class="ti ti-calculator"></i> Calcular</button>
+          <select id="vol-escopo" onchange="vol_estado().escopo=this.value;vol_renderVolumes()" style="font-size:12px;padding:5px"></select>
+          <span style="flex:1"></span>
+          <button class="btn sm" onclick="vol_exportarXLSX()"><i class="ti ti-download"></i> Baixar planilha</button>
+        </div>
+        <div id="vol-resultado"></div>
       </div>
 
       <div id="macrosec-sistemas" class="macro-sec config-section-panel" style="max-width:none;display:none">
@@ -1496,6 +1530,18 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
+<div class="modal-overlay" id="modal-vol-regra">
+  <div class="modal" style="max-width:640px">
+    <h3 id="vol-regra-titulo" style="font-size:15px;font-weight:600;margin-bottom:8px"></h3>
+    <div id="vol-regra-corpo" style="max-height:65vh;overflow:auto;padding-right:4px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="vol_salvarRegra()"><i class="ti ti-device-floppy"></i> Salvar</button>
+      <button class="btn" id="btn-vol-regra-excluir" style="color:var(--red)" onclick="vol_excluirRegra()"><i class="ti ti-trash"></i> Excluir</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-vol-regra')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-macro-scada">
   <div class="modal" style="max-width:1100px;width:96vw">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:6px"><i class="ti ti-file-upload"></i> Importar relatório do supervisório</h3>
@@ -13021,6 +13067,15 @@ async function macro_carregar(forcar) {
       const cfg = await window.FB.getDoc(window.FB.doc(db, 'macroConfig', setorAtual()));
       M.config = cfg.exists() ? cfg.data() : {};
     } catch (e) { console.warn('macroConfig', e.code || e); M.config = {}; }
+    try {
+      const snapR = await getDocs(query(collection(db, 'regrasVolume'), where('setor', '==', setorAtual())));
+      M.regras = snapR.docs.map(d => ({ _id: d.id, ...d.data() })).filter(r => !r.excluida);
+      M.erroRegras = '';
+    } catch (e) {
+      console.warn('regrasVolume', e.code || e); M.regras = [];
+      M.erroRegras = e && e.code === 'permission-denied' ? 'O banco recusou a leitura das regras (permissão). Falta publicar a regra da coleção "regrasVolume" no Firebase Console.' : 'Erro ao ler as regras: ' + (e.code || e.message);
+    }
+    if (M.vol) { M.vol.resultado = null; M.vol.cache = {}; }
     M.carregado = true;
   } catch (e) {
     console.error('macro_carregar', e);
@@ -13329,6 +13384,8 @@ function macro_render() {
   }
   if (M.secao === 'sistemas') macro_renderSistemas();
   else if (M.secao === 'leituras') macro_renderLeituras();
+  else if (M.secao === 'regras') vol_renderRegras();
+  else if (M.secao === 'volumes') vol_renderVolumes();
   else macro_renderMacros();
 }
 
@@ -13996,6 +14053,442 @@ async function macro_removerApelido(macroId, idx) {
     macro_abrirEditar(m._id);
     macro_render();
   } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
+}
+
+
+// ================================================================
+// MACROMEDIÇÃO — Fase 3: regras de volume (vigência) e volume mensal por Sistema/Município
+// ================================================================
+// Coleção nova (regra própria no firestore.rules):
+//   regrasVolume/{SETOR}_{id} = {
+//     setor, tipo: 'producao' | 'transferencia', nome,
+//     escopo: 'S:s12' | 'M:CIA'                      (produção: de quem é)
+//     origem, destino: 'S:..' | 'M:..' | 'X:<nome livre>'   (transferência; X = fora do app)
+//     contaEm: 'ambos' | 'origem' | 'destino'        (transferência: onde entra — ver abaixo)
+//     parcelas: [{ macroId, sinal: 1 | -1 }], vigIni: 'AAAA-MM', vigFim: 'AAAA-MM' | '', obs }
+// Produzido(escopo)   = Σ regras de produção do escopo
+// Exportado(escopo)   = Σ transferências com origem = escopo (contaEm ambos|origem)
+// Importado(escopo)   = Σ transferências com destino = escopo (contaEm ambos|destino)
+// Disponibilizado     = Produzido + Importado − Exportado
+// Transferência "ambos" = mesma medição para os dois lados (cadastrada uma vez só). Quando cada
+// lado é medido por um macro diferente, cadastram-se duas: uma "só origem" e outra "só destino".
+// Fechamento (decisão do Lourenço, 2026-11-25): dia 1º às 08:00. Em cada virada usa a leitura mais
+// próxima de 01/MM 08:00; com leituras dos dois lados a até 1 h, interpola o valor das 08:00. A mesma
+// leitura de virada fecha um mês e abre o seguinte. Alerta se os dias medidos diferirem do mês em > 12 h.
+const VOL_HORA_FECHAMENTO = 8;
+const VOL_INTERPOLAR_ATE_MS = 3600e3;
+const VOL_JANELA_DIAS = 3;           // procura leitura de fechamento até 3 dias antes/depois
+const VOL_ALERTA_DIF_DIAS = 0.5;     // 12 h
+
+function vol_estado() {
+  const M = macro_estado();
+  if (!M.regras) M.regras = [];
+  if (!M.vol) M.vol = { mes: '', escopo: '', calculando: false, resultado: null, cache: {} };
+  return M.vol;
+}
+function vol_mesAnteriorAoAtual() {
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+function vol_fmtMes(m) { return m ? m.split('-').reverse().join('/') : ''; }
+function vol_proxMes(m) { const [a, b] = m.split('-').map(Number); return b === 12 ? (a + 1) + '-01' : a + '-' + String(b + 1).padStart(2, '0'); }
+function vol_diasNoMes(m) { const [a, b] = m.split('-').map(Number); return new Date(a, b, 0).getDate(); }
+function vol_alvoFechamento(m) { const [a, b] = m.split('-').map(Number); return new Date(a, b - 1, 1, VOL_HORA_FECHAMENTO, 0, 0).getTime(); }
+function vol_fmtDataHora(t) {
+  return new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function vol_fmtM3(v) { return v == null || !isFinite(v) ? '—' : Math.round(v).toLocaleString('pt-BR'); }
+
+// ---------- Escopos (Sistema / Município / fora do app)
+function vol_listaEscopos() {
+  const M = macro_estado();
+  const sis = [...M.sistemas].sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)))
+    .map(s => ({ k: 'S:' + s.sid, nome: 'Sistema ' + s.nome, curto: s.nome, tipo: 'S' }));
+  const mun = [...S.cidades].sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)))
+    .map(c => ({ k: 'M:' + c.id, nome: 'Município ' + c.nome, curto: c.nome, tipo: 'M' }));
+  return { sis, mun };
+}
+function vol_nomeEscopo(k, curto) {
+  if (!k) return '—';
+  const [t, ...r] = k.split(':'); const id = r.join(':');
+  if (t === 'X') return id + (curto ? '' : ' (fora do app)');
+  if (t === 'S') { const s = macro_estado().sistemas.find(x => x.sid === id); return (curto ? '' : 'Sistema ') + (s ? s.nome : id); }
+  if (t === 'M') { const n = macro_nomeCidade(id); return (curto ? '' : 'Município ') + (n || id); }
+  return k;
+}
+function vol_opcoesEscopo(atual, comExterno) {
+  const { sis, mun } = vol_listaEscopos();
+  const ext = comExterno && atual && atual.startsWith('X:') ? '<option value="' + escHtml(atual) + '">' + escHtml(atual.slice(2)) + ' (fora do app)</option>' : '';
+  return '<option value="">— escolher —</option>' +
+    (comExterno ? '<option value="__X">Outro, fora do app (digitar nome)…</option>' + ext : '') +
+    '<optgroup label="Municípios">' + mun.map(e => '<option value="' + escHtml(e.k) + '">' + escHtml(e.curto) + '</option>').join('') + '</optgroup>' +
+    '<optgroup label="Sistemas">' + sis.map(e => '<option value="' + escHtml(e.k) + '">' + escHtml(e.curto) + '</option>').join('') + '</optgroup>';
+}
+function vol_regraVigente(r, mes) {
+  return (!r.vigIni || r.vigIni <= mes) && (!r.vigFim || mes <= r.vigFim);
+}
+
+// ---------- Tela: lista de regras
+function vol_renderRegras() {
+  const M = macro_estado(); vol_estado();
+  const el = document.getElementById('vol-regras-tabela');
+  if (!el) return;
+  const fil = document.getElementById('vol-regras-escopo');
+  if (fil) {
+    const usados = new Set();
+    M.regras.forEach(r => [r.escopo, r.origem, r.destino].forEach(k => k && usados.add(k)));
+    const html = '<option value="">Todos os sistemas e municípios</option>' + [...usados].sort((a, b) => textoBusca(vol_nomeEscopo(a)).localeCompare(textoBusca(vol_nomeEscopo(b))))
+      .map(k => '<option value="' + escHtml(k) + '">' + escHtml(vol_nomeEscopo(k)) + '</option>').join('');
+    if (fil.dataset.html !== html) { fil.innerHTML = html; fil.dataset.html = html; }
+    fil.value = M.vol.filtroRegras || '';
+  }
+  const bts = document.getElementById('vol-regras-botoes');
+  if (bts) bts.style.display = macro_podeImportar() ? '' : 'none';
+  if (!M.carregado) { el.innerHTML = ''; return; }
+  if (M.erroRegras) { el.innerHTML = '<p style="font-size:12px;color:var(--red)">' + escHtml(M.erroRegras) + '</p>'; return; }
+  const f = M.vol.filtroRegras || '';
+  const lista = M.regras.filter(r => !f || r.escopo === f || r.origem === f || r.destino === f)
+    .sort((a, b) => (a.tipo === b.tipo ? 0 : a.tipo === 'producao' ? -1 : 1) ||
+      textoBusca(vol_nomeEscopo(a.escopo || a.origem)).localeCompare(textoBusca(vol_nomeEscopo(b.escopo || b.origem))) ||
+      textoBusca(a.nome).localeCompare(textoBusca(b.nome)) || String(a.vigIni).localeCompare(String(b.vigIni)));
+  if (!lista.length) {
+    el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhuma regra ainda. Use <b>+ Produção</b> (ex.: Produzido de Criciúma = AAT 300 velha + AAT 300 nova + AAT 700) ou <b>+ Transferência</b> (ex.: Criciúma → Içara = ICR 252).</p>';
+    return;
+  }
+  const hoje = vol_mesAnteriorAoAtual();
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Tipo</th><th>Nome</th><th>De quem / origem → destino</th><th>Parcelas</th><th>Vigência</th><th></th></tr></thead><tbody>' +
+    lista.map(r => {
+      const ativa = !r.vigFim || r.vigFim >= hoje;
+      const parc = (r.parcelas || []).map(p => {
+        const m = M.macros.find(x => x._id === p.macroId);
+        return '<span class="badge ' + (p.sinal < 0 ? 'alta' : 'purple') + '" style="margin:1px;white-space:nowrap">' + (p.sinal < 0 ? '− ' : '+ ') + escHtml(m ? m.nome : '(macro não encontrado)') + '</span>';
+      }).join(' ');
+      const quem = r.tipo === 'producao'
+        ? escHtml(vol_nomeEscopo(r.escopo))
+        : escHtml(vol_nomeEscopo(r.origem, true)) + ' → ' + escHtml(vol_nomeEscopo(r.destino, true)) +
+          (r.contaEm === 'origem' ? ' <span style="font-size:10.5px;color:var(--amber)">(só exportado da origem)</span>' : r.contaEm === 'destino' ? ' <span style="font-size:10.5px;color:var(--amber)">(só importado do destino)</span>' : '');
+      return '<tr' + (ativa ? '' : ' style="opacity:.55"') + '><td style="white-space:nowrap">' + (r.tipo === 'producao' ? '<i class="ti ti-droplet"></i> Produção' : '<i class="ti ti-arrows-exchange"></i> Transferência') + '</td>' +
+        '<td><b>' + escHtml(r.nome || '') + '</b>' + (r.obs ? '<div style="font-size:10.5px;color:var(--text3)">' + escHtml(r.obs) + '</div>' : '') + '</td>' +
+        '<td>' + quem + '</td><td style="max-width:420px">' + parc + '</td>' +
+        '<td style="white-space:nowrap;font-size:11.5px">' + (r.vigIni ? 'de ' + vol_fmtMes(r.vigIni) : 'desde sempre') + '<br>' + (r.vigFim ? 'até ' + vol_fmtMes(r.vigFim) : 'sem fim') + '</td>' +
+        '<td>' + (macro_podeImportar() ? '<button class="btn sm" onclick="vol_abrirRegra(\'' + escHtml(r._id) + '\')" title="Editar"><i class="ti ti-pencil"></i></button> ' +
+          '<button class="btn sm" onclick="vol_abrirRegra(\'' + escHtml(r._id) + '\',true)" title="Nova versão: encerra esta no mês anterior e cria uma cópia a partir do mês escolhido"><i class="ti ti-versions"></i></button>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+// ---------- Modal de regra
+function vol_novaRegra(tipo) {
+  if (!macro_podeImportar()) return;
+  S._volRegra = { _id: '', tipo, nome: '', escopo: '', origem: '', destino: '', contaEm: 'ambos', parcelas: [{ macroId: '', sinal: 1 }], vigIni: '', vigFim: '', obs: '' };
+  S._volRegraVersaoDe = null;
+  vol_renderModalRegra();
+  openModal('modal-vol-regra');
+}
+function vol_abrirRegra(id, novaVersao) {
+  const r = macro_estado().regras.find(x => x._id === id);
+  if (!r) return;
+  S._volRegra = JSON.parse(JSON.stringify(r));
+  S._volRegraVersaoDe = null;
+  if (novaVersao) {
+    S._volRegraVersaoDe = r._id;
+    S._volRegra._id = '';
+    S._volRegra.vigIni = vol_proxMes(vol_mesAnteriorAoAtual());
+    S._volRegra.vigFim = '';
+  }
+  vol_renderModalRegra();
+  openModal('modal-vol-regra');
+}
+function vol_renderModalRegra() {
+  const R = S._volRegra, M = macro_estado();
+  if (!R) return;
+  const prod = R.tipo === 'producao';
+  document.getElementById('vol-regra-titulo').innerHTML = (prod ? '<i class="ti ti-droplet"></i> Regra de produção' : '<i class="ti ti-arrows-exchange"></i> Transferência') +
+    (S._volRegraVersaoDe ? ' — nova versão' : R._id ? '' : ' — nova');
+  const busca = textoBusca(R._buscaMacro || '');
+  const macrosOrd = [...M.macros].filter(m => !m.ausenteNaPlanilha || R.parcelas.some(p => p.macroId === m._id))
+    .sort((a, b) => textoBusca(a.sistemaNome + ' ' + a.nome).localeCompare(textoBusca(b.sistemaNome + ' ' + b.nome)));
+  const temV = m => (m.apelidos || []).some(a => a.grandeza === 'V');
+  const opcMacro = sel => '<option value="">— escolher macro —</option>' + macrosOrd
+    .filter(m => m._id === sel || !busca || textoBusca([m.nome, m.sistemaNome, m.tag, m.pontoId, macro_nomeCidade(m.cidadeId)].join(' ')).includes(busca))
+    .map(m => '<option value="' + escHtml(m._id) + '"' + (m._id === sel ? ' selected' : '') + '>' + escHtml(m.nome + ' — ' + (m.sistemaNome || '') + (temV(m) ? '' : ' (sem leitura de volume vinculada)')) + '</option>').join('');
+  const campoEscopo = (campo, rotulo, externo) => {
+    const v = R[campo] || '';
+    return '<div class="field"><label>' + rotulo + '</label><select id="vol-regra-' + campo + '" onchange="vol_mudarEscopo(\'' + campo + '\',this.value)">' + vol_opcoesEscopo(v, externo) + '</select></div>';
+  };
+  document.getElementById('vol-regra-corpo').innerHTML =
+    '<div class="field"><label>Nome</label><input type="text" id="vol-regra-nome" value="' + escHtml(R.nome || '') + '" placeholder="' + (prod ? 'ex.: ETA São Defende' : 'ex.: Adutora para Içara') + '" oninput="S._volRegra.nome=this.value"></div>' +
+    (prod ? campoEscopo('escopo', 'Produzido de (sistema ou município)', false)
+      : '<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="flex:1;min-width:180px">' + campoEscopo('origem', 'Origem (exporta)', true) + '</div><div style="flex:1;min-width:180px">' + campoEscopo('destino', 'Destino (importa)', true) + '</div></div>' +
+        '<div class="field"><label>Entra como</label><select id="vol-regra-contaEm" onchange="S._volRegra.contaEm=this.value">' +
+        '<option value="ambos">Exportado da origem E importado do destino (mesma medição)</option>' +
+        '<option value="origem">Só exportado da origem (o destino mede com outro macro)</option>' +
+        '<option value="destino">Só importado do destino (a origem mede com outro macro)</option></select></div>') +
+    '<div style="font-size:12px;font-weight:600;margin:6px 0 4px">Parcelas (macros somados ou subtraídos)</div>' +
+    '<input type="search" placeholder="Filtrar a lista de macros..." value="' + escHtml(R._buscaMacro || '') + '" oninput="S._volRegra._buscaMacro=this.value;vol_renderModalRegra();setTimeout(()=>{const i=document.querySelector(\'#vol-regra-corpo input[type=search]\');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},0)" style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">' +
+    R.parcelas.map((p, i) => '<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center">' +
+      '<select onchange="S._volRegra.parcelas[' + i + '].sinal=+this.value" style="width:56px;font-weight:700"><option value="1"' + (p.sinal >= 0 ? ' selected' : '') + '>+</option><option value="-1"' + (p.sinal < 0 ? ' selected' : '') + '>−</option></select>' +
+      '<select onchange="S._volRegra.parcelas[' + i + '].macroId=this.value" style="flex:1;min-width:0;font-size:12px">' + opcMacro(p.macroId) + '</select>' +
+      '<button class="btn sm" title="Tirar parcela" onclick="S._volRegra.parcelas.splice(' + i + ',1);vol_renderModalRegra()"><i class="ti ti-x"></i></button></div>').join('') +
+    '<button class="btn sm" onclick="S._volRegra.parcelas.push({macroId:\'\',sinal:1});vol_renderModalRegra()"><i class="ti ti-plus"></i> Parcela</button>' +
+    '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
+      '<div class="field" style="flex:1;min-width:150px"><label>Vale a partir de (mês)</label><input type="month" id="vol-regra-vigIni" value="' + escHtml(R.vigIni || '') + '" onchange="S._volRegra.vigIni=this.value"></div>' +
+      '<div class="field" style="flex:1;min-width:150px"><label>Até (mês, vazio = sem fim)</label><input type="month" id="vol-regra-vigFim" value="' + escHtml(R.vigFim || '') + '" onchange="S._volRegra.vigFim=this.value"></div></div>' +
+    (S._volRegraVersaoDe ? '<div style="font-size:11.5px;color:var(--amber);margin-bottom:6px">Ao salvar, a versão atual passa a valer até o mês anterior ao "a partir de".</div>' : '') +
+    '<div class="field"><label>Observação</label><input type="text" value="' + escHtml(R.obs || '') + '" oninput="S._volRegra.obs=this.value"></div>';
+  if (!prod) document.getElementById('vol-regra-contaEm').value = R.contaEm || 'ambos';
+  ['escopo', 'origem', 'destino'].forEach(c => { const s = document.getElementById('vol-regra-' + c); if (s) s.value = R[c] || ''; });
+  document.getElementById('btn-vol-regra-excluir').style.display = R._id ? '' : 'none';
+}
+function vol_mudarEscopo(campo, v) {
+  if (v === '__X') {
+    const n = (prompt('Nome do município/sistema fora do app (ex.: SAMAE Araranguá):') || '').trim();
+    if (n) S._volRegra[campo] = 'X:' + n;
+    vol_renderModalRegra();
+    return;
+  }
+  S._volRegra[campo] = v;
+}
+async function vol_salvarRegra() {
+  const R = S._volRegra, M = macro_estado();
+  if (!R) return;
+  const parcelas = R.parcelas.filter(p => p.macroId).map(p => ({ macroId: p.macroId, sinal: p.sinal < 0 ? -1 : 1 }));
+  const erros = [];
+  if (!String(R.nome || '').trim()) erros.push('Dê um nome à regra.');
+  if (R.tipo === 'producao' && !R.escopo) erros.push('Escolha de qual sistema ou município é a produção.');
+  if (R.tipo === 'transferencia') {
+    if (!R.origem || !R.destino) erros.push('Escolha a origem e o destino.');
+    if (R.origem && R.origem === R.destino) erros.push('Origem e destino iguais.');
+    if (R.origem && R.origem.startsWith('X:') && R.destino && R.destino.startsWith('X:')) erros.push('Pelo menos um lado precisa ser um sistema ou município do app.');
+    if (R.contaEm === 'origem' && R.origem && R.origem.startsWith('X:')) erros.push('"Só exportado da origem" precisa de uma origem do app.');
+    if (R.contaEm === 'destino' && R.destino && R.destino.startsWith('X:')) erros.push('"Só importado do destino" precisa de um destino do app.');
+  }
+  if (!parcelas.length) erros.push('Inclua pelo menos um macro.');
+  if (new Set(parcelas.map(p => p.macroId)).size !== parcelas.length) erros.push('O mesmo macro aparece duas vezes.');
+  if (R.vigIni && R.vigFim && R.vigFim < R.vigIni) erros.push('O fim da vigência é antes do início.');
+  if (S._volRegraVersaoDe && !R.vigIni) erros.push('Na nova versão, informe "Vale a partir de".');
+  if (erros.length) { alert(erros.join('\n')); return; }
+  const { db, doc, setDoc, writeBatch } = window.FB;
+  const setor = setorAtual();
+  const agora = Date.now();
+  const id = R._id || (setor + '_' + agora.toString(36) + Math.random().toString(36).slice(2, 6));
+  const dados = { setor, tipo: R.tipo, nome: R.nome.trim(), escopo: R.tipo === 'producao' ? R.escopo : '',
+    origem: R.tipo === 'transferencia' ? R.origem : '', destino: R.tipo === 'transferencia' ? R.destino : '',
+    contaEm: R.tipo === 'transferencia' ? (R.contaEm || 'ambos') : '', parcelas, vigIni: R.vigIni || '', vigFim: R.vigFim || '',
+    obs: (R.obs || '').trim(), atualizadoEm: agora, atualizadoPor: S.user?.email || '' };
+  try {
+    const b = writeBatch(db);
+    b.set(doc(db, 'regrasVolume', id), dados);
+    let anterior = null;
+    if (S._volRegraVersaoDe) {
+      anterior = M.regras.find(x => x._id === S._volRegraVersaoDe);
+      const [a, mm] = R.vigIni.split('-').map(Number);
+      const fimAnt = mm === 1 ? (a - 1) + '-12' : a + '-' + String(mm - 1).padStart(2, '0');
+      if (anterior) b.set(doc(db, 'regrasVolume', anterior._id), { vigFim: fimAnt, atualizadoEm: agora, atualizadoPor: S.user?.email || '' }, { merge: true });
+      if (anterior) anterior.vigFim = fimAnt;
+    }
+    await b.commit();
+    const i = M.regras.findIndex(x => x._id === id);
+    if (i >= 0) M.regras[i] = { _id: id, ...dados }; else M.regras.push({ _id: id, ...dados });
+    closeModal('modal-vol-regra');
+    S._volRegra = null;
+    vol_estado().resultado = null;
+    toast('Regra salva.');
+    macro_render();
+  } catch (e) {
+    console.error(e);
+    alert(e && e.code === 'permission-denied' ? 'O banco recusou (permissão). Falta publicar a regra da coleção "regrasVolume" no Firebase Console.' : 'Erro ao salvar: ' + (e.code || e.message));
+  }
+}
+async function vol_excluirRegra() {
+  const R = S._volRegra, M = macro_estado();
+  if (!R || !R._id) return;
+  if (!confirm('Excluir a regra "' + R.nome + '"?\n\nSe ela só deixou de valer, prefira "Até (mês)" — assim os meses antigos continuam calculados com ela.')) return;
+  try {
+    // Exclusão "lógica" (o app não usa deleteDoc): a regra some da lista e dos cálculos
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'regrasVolume', R._id), { excluida: true, atualizadoEm: Date.now(), atualizadoPor: S.user?.email || '' }, { merge: true });
+    M.regras = M.regras.filter(x => x._id !== R._id);
+    closeModal('modal-vol-regra');
+    vol_estado().resultado = null;
+    macro_render();
+  } catch (e) { alert('Erro ao excluir: ' + (e.code || e.message)); }
+}
+
+// ---------- Cálculo do volume do mês
+// Lê as leituras de volume (V) de um macro nos dias em volta dos fechamentos pedidos
+async function vol_leiturasPerto(m, alvos) {
+  const V = vol_estado();
+  const dias = new Set();
+  alvos.forEach(T => {
+    for (let k = -VOL_JANELA_DIAS; k <= VOL_JANELA_DIAS; k++) {
+      const d = new Date(T); d.setDate(d.getDate() + k);
+      dias.add(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'));
+    }
+  });
+  const chaveCache = m.pontoId;
+  const cache = V.cache[chaveCache] = V.cache[chaveCache] || {};
+  const faltam = [...dias].filter(d => !(d in cache));
+  const { db, collection, query, where, getDocs } = window.FB;
+  for (let i = 0; i < faltam.length; i += 10) {
+    const lote = faltam.slice(i, i + 10);
+    const snap = await getDocs(query(collection(db, 'leiturasMacro'), where('setor', '==', setorAtual()), where('pontoId', '==', m.pontoId),
+      where('grandeza', '==', 'V'), where('dia', 'in', lote)));
+    lote.forEach(d => { cache[d] = null; });
+    snap.docs.forEach(doc => { const x = doc.data(); cache[x.dia] = { s: x.s || [], v: x.v || [] }; });
+  }
+  const out = [];
+  [...dias].sort().forEach(d => {
+    const x = cache[d];
+    if (!x) return;
+    const [a, mo, dd] = d.split('-').map(Number);
+    const base = new Date(a, mo - 1, dd).getTime();
+    x.s.forEach((s, i) => out.push({ t: base + s * 1000, v: x.v[i] }));
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+// Valor do totalizador no fechamento T: exato, interpolado (leituras a até 1 h dos dois lados) ou a mais próxima
+function vol_fronteira(leit, T) {
+  let lo = 0, hi = leit.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (leit[mid].t < T) lo = mid + 1; else hi = mid; }
+  const a = lo > 0 ? leit[lo - 1] : null, b = lo < leit.length ? leit[lo] : null;
+  if (b && b.t === T) return { t: T, v: b.v, modo: 'exata' };
+  if (a && b && T - a.t <= VOL_INTERPOLAR_ATE_MS && b.t - T <= VOL_INTERPOLAR_ATE_MS) {
+    return { t: T, v: a.v + (b.v - a.v) * (T - a.t) / (b.t - a.t), modo: 'interpolada', de: a.t, ate: b.t };
+  }
+  const c = !a ? b : !b ? a : (T - a.t <= b.t - T ? a : b);
+  return c ? { t: c.t, v: c.v, modo: 'mais próxima' } : null;
+}
+async function vol_volumeMacroMes(m, mes) {
+  const T0 = vol_alvoFechamento(mes), T1 = vol_alvoFechamento(vol_proxMes(mes));
+  const r = { macroId: m._id, nome: m.nome, sistema: m.sistemaNome, mes, alertas: [], ini: null, fim: null, volume: null, dias: null };
+  if (!(m.apelidos || []).some(a => a.grandeza === 'V')) { r.alertas.push('sem ponto de volume do supervisório vinculado'); return r; }
+  const leit = await vol_leiturasPerto(m, [T0, T1]);
+  r.ini = vol_fronteira(leit, T0);
+  r.fim = vol_fronteira(leit, T1);
+  if (!r.ini) r.alertas.push('sem leitura perto de ' + vol_fmtDataHora(T0) + ' (±' + VOL_JANELA_DIAS + ' dias)');
+  if (!r.fim) r.alertas.push('sem leitura perto de ' + vol_fmtDataHora(T1) + ' (±' + VOL_JANELA_DIAS + ' dias)');
+  if (r.ini && r.fim && r.fim.t <= r.ini.t) { r.alertas.push('leituras de início e fim coincidem'); r.ini = r.fim = null; }
+  if (r.ini && r.fim) {
+    r.volume = r.fim.v - r.ini.v;
+    r.dias = (r.fim.t - r.ini.t) / 86400e3;
+    const dm = vol_diasNoMes(mes);
+    if (Math.abs(r.dias - dm) > VOL_ALERTA_DIF_DIAS) r.alertas.push('período medido de ' + r.dias.toFixed(1).replace('.', ',') + ' dias (mês tem ' + dm + ')');
+    if (r.volume < 0 && !m.bidirecional) r.alertas.push('volume negativo — possível troca/zeramento do totalizador');
+  }
+  const c = (m.cobertura || {})['V_' + mes];
+  if (c) {
+    const semDado = vol_diasNoMes(mes) - Object.values(c.dias || {}).filter(n => n > 0).length;
+    if (semDado > 0) r.alertas.push(semDado + ' dia(s) do mês sem leitura (conferir; lacunas são tratadas na Fase 5)');
+  }
+  return r;
+}
+async function vol_calcular() {
+  const M = macro_estado(), V = vol_estado();
+  const mes = V.mes || vol_mesAnteriorAoAtual();
+  V.mes = mes;
+  const regras = M.regras.filter(r => vol_regraVigente(r, mes));
+  if (!regras.length) { V.resultado = { mes, escopos: [], macros: {} }; vol_renderVolumes(); return; }
+  V.calculando = true; vol_renderVolumes();
+  try {
+    const ids = [...new Set(regras.flatMap(r => (r.parcelas || []).map(p => p.macroId)))];
+    const porMacro = {};
+    for (const id of ids) {
+      const m = M.macros.find(x => x._id === id);
+      porMacro[id] = m ? await vol_volumeMacroMes(m, mes) : { macroId: id, nome: '(macro não encontrado)', alertas: ['macro não existe mais no cadastro'], volume: null };
+    }
+    const valorRegra = r => {
+      let soma = 0, ok = true;
+      (r.parcelas || []).forEach(p => { const x = porMacro[p.macroId]; if (!x || x.volume == null) ok = false; else soma += p.sinal * x.volume; });
+      return ok ? soma : null;
+    };
+    const escopos = {};
+    const pega = k => escopos[k] = escopos[k] || { k, nome: vol_nomeEscopo(k), producao: [], importado: [], exportado: [] };
+    regras.forEach(r => {
+      const linha = { regra: r, volume: valorRegra(r) };
+      if (r.tipo === 'producao') pega(r.escopo).producao.push(linha);
+      else {
+        if (r.contaEm !== 'destino' && r.origem && !r.origem.startsWith('X:')) pega(r.origem).exportado.push(linha);
+        if (r.contaEm !== 'origem' && r.destino && !r.destino.startsWith('X:')) pega(r.destino).importado.push(linha);
+      }
+    });
+    const tot = l => l.some(x => x.volume == null) ? null : l.reduce((a, x) => a + x.volume, 0);
+    Object.values(escopos).forEach(e => {
+      e.P = tot(e.producao); e.I = tot(e.importado); e.E = tot(e.exportado);
+      e.D = e.P == null || e.I == null || e.E == null ? null : e.P + e.I - e.E;
+    });
+    V.resultado = { mes, escopos: Object.values(escopos).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome))), macros: porMacro, calculadoEm: Date.now() };
+  } catch (e) {
+    console.error('vol_calcular', e);
+    alert(e && e.code === 'permission-denied' ? 'O banco recusou a leitura das leituras (permissão).' : 'Erro ao calcular: ' + (e.code || e.message));
+  } finally {
+    V.calculando = false;
+    vol_renderVolumes();
+  }
+}
+
+// ---------- Tela: volumes do mês
+function vol_renderVolumes() {
+  const M = macro_estado(), V = vol_estado();
+  const el = document.getElementById('vol-resultado');
+  if (!el) return;
+  const inp = document.getElementById('vol-mes');
+  if (inp && !inp.value) inp.value = V.mes || vol_mesAnteriorAoAtual();
+  const fil = document.getElementById('vol-escopo');
+  if (V.calculando) { el.innerHTML = '<p style="font-size:12px;color:var(--text2)"><i class="ti ti-loader"></i> Calculando...</p>'; return; }
+  const R = V.resultado;
+  if (!R) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Escolha o mês e clique em <b>Calcular</b>. O mês vai do dia 1º às 08:00 ao dia 1º do mês seguinte às 08:00.</p>'; return; }
+  if (fil) {
+    const html = '<option value="">Todos</option>' + R.escopos.map(e => '<option value="' + escHtml(e.k) + '">' + escHtml(e.nome) + '</option>').join('');
+    if (fil.dataset.html !== html) { fil.innerHTML = html; fil.dataset.html = html; }
+    fil.value = V.escopo || '';
+  }
+  if (!R.escopos.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhuma regra vale em ' + vol_fmtMes(R.mes) + '. Cadastre em <b>Regras de volume</b>.</p>'; return; }
+  const linhaMacros = r => (r.parcelas || []).map(p => {
+    const x = R.macros[p.macroId] || {};
+    const al = (x.alertas || []);
+    return '<div style="font-size:11px;color:var(--text2);padding-left:14px;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<span style="min-width:12px;font-weight:700">' + (p.sinal < 0 ? '−' : '+') + '</span><span style="flex:1;min-width:160px">' + escHtml(x.nome || '') + '</span>' +
+      '<span style="white-space:nowrap" title="' + escHtml(x.ini ? 'início: leitura ' + x.ini.modo + (x.ini.modo === 'interpolada' ? ' entre ' + vol_fmtDataHora(x.ini.de) + ' e ' + vol_fmtDataHora(x.ini.ate) : '') : '') + '">' + (x.ini ? vol_fmtDataHora(x.ini.t) : '—') + ' → ' + (x.fim ? vol_fmtDataHora(x.fim.t) : '—') + '</span>' +
+      '<span style="white-space:nowrap;min-width:70px;text-align:right">' + (x.dias != null ? x.dias.toFixed(1).replace('.', ',') + ' d' : '') + '</span>' +
+      '<span style="white-space:nowrap;min-width:95px;text-align:right;font-weight:600">' + vol_fmtM3(x.volume) + ' m³</span>' +
+      (al.length ? '<span style="flex-basis:100%;color:var(--amber);padding-left:18px"><i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') + '</span>' : '') + '</div>';
+  }).join('');
+  const bloco = (titulo, linhas, total, cor, rotulo) => {
+    if (!linhas.length) return '<tr><td style="font-weight:600;color:' + cor + '">' + titulo + '</td><td style="color:var(--text3);font-size:11.5px">nenhuma regra</td><td style="text-align:right">0</td></tr>';
+    return '<tr><td style="font-weight:600;color:' + cor + ';vertical-align:top">' + titulo + '</td><td>' + linhas.map(l => {
+      const r = l.regra;
+      const lado = r.tipo === 'transferencia' ? (rotulo === 'E' ? 'para ' + vol_nomeEscopo(r.destino, true) : 'de ' + vol_nomeEscopo(r.origem, true)) + ' — ' : '';
+      return '<details style="margin-bottom:3px"><summary style="cursor:pointer;font-size:12px;display:flex;gap:8px"><span style="flex:1">' + escHtml(lado + r.nome) + '</span><b style="white-space:nowrap">' + vol_fmtM3(l.volume) + ' m³</b></summary>' + linhaMacros(r) + '</details>';
+    }).join('') + '</td><td style="text-align:right;font-weight:700;vertical-align:top;white-space:nowrap">' + vol_fmtM3(total) + '</td></tr>';
+  };
+  const escopos = R.escopos.filter(e => !V.escopo || e.k === V.escopo);
+  const nAlertas = Object.values(R.macros).filter(x => (x.alertas || []).length).length;
+  el.innerHTML = '<p style="font-size:12px;color:var(--text2);margin-bottom:8px">' + vol_fmtMes(R.mes) + ': 01/' + R.mes.slice(5) + ' 08:00 → 01/' + vol_proxMes(R.mes).slice(5) + ' 08:00 (' + vol_diasNoMes(R.mes) + ' dias). ' +
+    Object.keys(R.macros).length + ' macros calculados' + (nAlertas ? ' · <b style="color:var(--amber)">' + nAlertas + ' com alerta</b>' : '') + '. Clique numa linha para ver os macros.</p>' +
+    escopos.map(e => '<div style="border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px">' +
+      '<div style="font-weight:700;font-size:13.5px;margin-bottom:6px">' + escHtml(e.nome) + '</div>' +
+      '<table class="data-table" style="margin:0"><colgroup><col style="width:130px"><col><col style="width:120px"></colgroup><tbody>' +
+      bloco('Produzido', e.producao, e.P, 'var(--blue)', 'P') +
+      bloco('Importado', e.importado, e.I, 'var(--green)', 'I') +
+      bloco('Exportado', e.exportado, e.E, 'var(--red)', 'E') +
+      '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado</td><td style="text-align:right;font-weight:800;white-space:nowrap">' + vol_fmtM3(e.D) + ' m³</td></tr>' +
+      '</tbody></table>' + (e.D == null ? '<div style="font-size:11px;color:var(--amber);margin-top:4px"><i class="ti ti-alert-triangle"></i> Algum macro ficou sem volume — total incompleto.</div>' : '') + '</div>').join('');
+}
+function vol_exportarXLSX() {
+  const R = vol_estado().resultado;
+  if (!R || !R.escopos.length) { toast('Calcule um mês primeiro.'); return; }
+  const res = [['Mês', 'Sistema / Município', 'Grandeza', 'Regra', 'Origem', 'Destino', 'Volume (m³)']];
+  R.escopos.forEach(e => {
+    const add = (g, l, rot) => l.forEach(x => res.push([vol_fmtMes(R.mes), e.nome, g, x.regra.nome, x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.origem) : '', x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.destino) : '', x.volume == null ? '' : Math.round(x.volume)]));
+    add('Produzido', e.producao); add('Importado', e.importado); add('Exportado', e.exportado);
+    [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, v]) => res.push([vol_fmtMes(R.mes), e.nome, g, '', '', '', v == null ? '' : Math.round(v)]));
+  });
+  const mac = [['Mês', 'Macro', 'Sistema', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Volume (m³)', 'Alertas']];
+  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.nome, x.sistema || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? Math.round(x.ini.v * 1000) / 1000 : '', x.ini ? x.ini.modo : '',
+    x.fim ? vol_fmtDataHora(x.fim.t) : '', x.fim ? Math.round(x.fim.v * 1000) / 1000 : '', x.fim ? x.fim.modo : '', x.dias != null ? Math.round(x.dias * 100) / 100 : '', x.volume == null ? '' : Math.round(x.volume), (x.alertas || []).join(' | ')]));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(res), 'Volumes');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mac), 'Macros');
+  XLSX.writeFile(wb, 'GeoFon_Volumes_' + setorAtual() + '_' + R.mes + '.xlsx');
 }
 
 // ================================================================

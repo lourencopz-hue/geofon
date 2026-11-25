@@ -430,12 +430,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="config-nav-item" data-macro-section="sistemas" onclick="mostrarSecaoMacro('sistemas')">
         <i class="ti ti-topology-star-3"></i> <span>Sistemas e municípios</span>
       </div>
+      <div class="config-nav-item" data-macro-section="leituras" onclick="mostrarSecaoMacro('leituras')">
+        <i class="ti ti-chart-dots"></i> <span>Leituras do supervisório</span>
+      </div>
     </div>
     <div class="config-content">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
         <span class="badge media" title="Só a conta do DIPEO vê esta aba até a liberação"><i class="ti ti-flask"></i> Em teste</span>
         <div id="macro-status" style="font-size:12px;color:var(--text2);flex:1;min-width:200px"></div>
         <button class="btn sm" id="btn-macro-importar" onclick="macro_abrirImportacao()"><i class="ti ti-file-spreadsheet"></i> Importar Gestão de Ativos (.xlsx)</button>
+        <button class="btn sm" id="btn-macro-scada" onclick="macro_abrirImportacaoSupervisorio()" title="Relatório exportado do ScadaBR (Nome do data point, Tempo, Valor)"><i class="ti ti-file-upload"></i> Importar relatório do supervisório (.csv)</button>
+        <input type="file" id="up-macro-scada" accept=".csv,.txt" style="display:none" onchange="macro_handleArquivoScada(this)">
         <button class="btn sm" onclick="macro_exportarXLSX()" title="Baixa o cadastro de macros em Excel"><i class="ti ti-download"></i> Baixar planilha</button>
         <button class="btn sm" onclick="macro_carregar(true)" title="Recarregar do banco"><i class="ti ti-refresh"></i></button>
         <input type="file" id="up-macro-ativos" accept=".xlsx,.xls" style="display:none" onchange="macro_handleArquivoAtivos(this)">
@@ -460,6 +465,15 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         </div>
         <div id="macro-resumo" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
         <div id="macro-tabela"></div>
+      </div>
+
+      <div id="macrosec-leituras" class="macro-sec config-section-panel" style="max-width:none;display:none">
+        <div class="section-title" style="margin:0 0 6px">Leituras do supervisório</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <div id="macro-leituras-resumo" style="font-size:12px;color:var(--text2);flex:1"></div>
+          <label style="font-size:12px">Mês <select id="macro-leit-mes" onchange="macro_estado().mesLeituras=this.value;macro_renderLeituras()" style="font-size:12px;padding:4px"></select></label>
+        </div>
+        <div id="macro-leituras-tabela"></div>
       </div>
 
       <div id="macrosec-sistemas" class="macro-sec config-section-panel" style="max-width:none;display:none">
@@ -1482,6 +1496,23 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
+<div class="modal-overlay" id="modal-macro-scada">
+  <div class="modal" style="max-width:1100px;width:96vw">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:6px"><i class="ti ti-file-upload"></i> Importar relatório do supervisório</h3>
+    <p style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:8px">
+      Ligue cada ponto do supervisório ao seu macro. O vínculo fica salvo: nas próximas importações ele já vem preenchido. Pontos sem macro não são gravados; "Ignorar" faz o ponto não aparecer como pendente das próximas vezes. Reimportar o mesmo período não duplica leituras.
+    </p>
+    <div id="macro-scada-resumo" style="font-size:12px;line-height:1.6;background:var(--bg2);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px"></div>
+    <div id="macro-scada-lista" style="max-height:55vh;overflow:auto;margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="macro_aceitarSugestoesScada()" title="Preenche os pontos ainda sem macro com a primeira sugestão — confira antes de gravar"><i class="ti ti-wand"></i> Usar sugestões nos pendentes</button>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="btn-macro-scada-gravar" onclick="macro_gravarImportScada()"><i class="ti ti-database-import"></i> Gravar leituras</button>
+      <button class="btn" style="background:var(--bg2)" onclick="closeModal('modal-macro-scada')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-macro-importar">
   <div class="modal" style="max-width:520px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:6px"><i class="ti ti-file-spreadsheet"></i> Importar Gestão de Ativos - DIPEO</h3>
@@ -1513,6 +1544,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <label>Observação (GeoFon)</label>
       <textarea id="macro-ed-obs" rows="2" style="width:100%;box-sizing:border-box"></textarea>
     </div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:4px">Pontos do supervisório vinculados</div>
+    <div id="macro-ed-apelidos" style="margin-bottom:12px"></div>
     <div style="display:flex;gap:8px">
       <button class="btn primary" style="flex:1;justify-content:center" onclick="macro_salvarEditar()"><i class="ti ti-device-floppy"></i> Salvar</button>
       <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-macro-editar')">Cancelar</button>
@@ -12967,7 +13000,7 @@ function macro_aplicarVisibilidade() {
 
 function macro_estado() {
   if (!S._macro) S._macro = { carregado: false, carregando: false, erro: '', macros: [], sistemas: [], secao: 'macros',
-    busca: '', fSistema: '', fFinalidade: '', fSituacao: '', fEspecial: '', ordem: { col: 'sistema', dir: 1 } };
+    busca: '', fSistema: '', fFinalidade: '', fSituacao: '', fEspecial: '', ordem: { col: 'sistema', dir: 1 }, config: {}, mesLeituras: '' };
   return S._macro;
 }
 
@@ -12984,6 +13017,10 @@ async function macro_carregar(forcar) {
     ]);
     M.macros = snapM.docs.map(d => ({ _id: d.id, ...d.data() }));
     M.sistemas = snapS.docs.map(d => ({ _id: d.id, ...d.data() }));
+    try {
+      const cfg = await window.FB.getDoc(window.FB.doc(db, 'macroConfig', setorAtual()));
+      M.config = cfg.exists() ? cfg.data() : {};
+    } catch (e) { console.warn('macroConfig', e.code || e); M.config = {}; }
     M.carregado = true;
   } catch (e) {
     console.error('macro_carregar', e);
@@ -13270,6 +13307,8 @@ function macro_abrirAba() {
   if (!macroVisivel()) return;
   const btn = document.getElementById('btn-macro-importar');
   if (btn) btn.style.display = macro_podeImportar() ? '' : 'none';
+  const btnS = document.getElementById('btn-macro-scada');
+  if (btnS) btnS.style.display = macro_podeImportar() ? '' : 'none';
   mostrarSecaoMacro(macro_estado().secao);
   macro_carregar(false);
 }
@@ -13288,7 +13327,9 @@ function macro_render() {
     st.innerHTML = '<b>' + M.macros.filter(m => !m.ausenteNaPlanilha).length + '</b> macros e <b>' + M.sistemas.length + '</b> sistemas no setor ' + escHtml(setorAtual()) +
       (ult ? ' · última importação ' + new Date(ult).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ' · nenhuma importação ainda');
   }
-  if (M.secao === 'sistemas') macro_renderSistemas(); else macro_renderMacros();
+  if (M.secao === 'sistemas') macro_renderSistemas();
+  else if (M.secao === 'leituras') macro_renderLeituras();
+  else macro_renderMacros();
 }
 
 function macro_opcoesSelect(id, valores, atual, rotuloTodos) {
@@ -13421,6 +13462,13 @@ function macro_abrirEditar(id) {
   sel.value = m.cidadeId || '';
   document.getElementById('macro-ed-bidirecional').checked = !!m.bidirecional;
   document.getElementById('macro-ed-obs').value = m.obs || '';
+  const ap = m.apelidos || [];
+  document.getElementById('macro-ed-apelidos').innerHTML = ap.length
+    ? ap.map((a, i) => '<div style="display:flex;gap:6px;align-items:flex-start;font-size:11.5px;padding:3px 0;border-bottom:1px solid var(--border)">' +
+        '<span class="badge ' + (a.grandeza === 'V' ? 'purple' : 'media') + '">' + (a.grandeza === 'V' ? 'Volume' : 'Vazão') + '</span>' +
+        '<span style="flex:1">' + escHtml(a.nome) + '</span>' +
+        (macro_podeImportar() ? '<button class="btn sm" title="Desvincular" onclick="macro_removerApelido(\'' + escHtml(m._id) + '\',' + i + ')"><i class="ti ti-unlink"></i></button>' : '') + '</div>').join('')
+    : '<span style="font-size:11.5px;color:var(--text3)">Nenhum — o vínculo é feito ao importar o relatório do supervisório.</span>';
   openModal('modal-macro-editar');
 }
 async function macro_salvarEditar() {
@@ -13532,6 +13580,422 @@ function macro_exportarXLSX() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Macros');
   XLSX.writeFile(wb, 'GeoFon_Macros_' + setorAtual() + '_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+}
+
+
+// ================================================================
+// MACROMEDIÇÃO — Fase 2: importação do relatório do supervisório (ScadaBR)
+// ================================================================
+// Coleções novas (regra própria no firestore.rules):
+//   leiturasMacro/{SETOR}_{PontoID}_{G}_{AAAAMMDD} -> leituras de UM macro, UMA grandeza, UM dia
+//       G = 'V' (volume/totalizador, m³) ou 'Q' (vazão). s[] = segundos desde 00:00 (hora local),
+//       v[] = valores, ordenados por s. Reimportar o mesmo período mescla por (dia, segundo).
+//   macroConfig/{SETOR} -> { scadaIgnorados: [nomes de pontos do supervisório a ignorar] }
+// O vínculo nome-do-ponto → macro fica no próprio macro: macros/{id}.apelidos = [{ nome, grandeza }].
+// O resumo por mês (para a tela de leituras não precisar baixar as leituras) fica em
+// macros/{id}.cobertura['V_2026-10'] = { n, dias: { '1': nLeituras, ... }, ini, fim, primeiro, ultimo }.
+// A leitura do arquivo fica isolada em macro_parserSupervisorio: quando a fonte mudar do ScadaBR
+// para o sistema novo, só ela muda.
+const MACRO_MAX_LEITURAS_DIA = 20000;
+const MACRO_STOP_TOKENS = new Set(['macromedidor', 'macromedicao', 'modbus', 'volume', 'vazao', 'm3', 'm', 'r', 'de', 'da', 'do', 'dos', 'das', 'e',
+  'mm', 'dn', 'saa', 'totalizado', 'liquido', 'positivo', 'clp', 'sao', 'santa', 'santo', 'agua', 'h', 'l', 's', 'ls', 'booster', 'erat', 'eta']);
+
+function macro_nomePontoLimpo(n) {
+  return String(n || '').replace(/[\t\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function macro_grandezaDoNome(n) {
+  const t = textoBusca(n);
+  if (/\bvazao\b|\bvazão\b|m3\/h|m³\/h|l\/s/.test(t)) return 'Q';
+  if (/\bvolume\b|totaliz/.test(t)) return 'V';
+  return '';
+}
+// Divide uma linha de CSV respeitando aspas ("a, b" fica num campo só)
+function macro_splitCSV(linha, sep) {
+  if (linha.indexOf('"') < 0) return linha.split(sep);
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < linha.length; i++) {
+    const ch = linha[i];
+    if (q) {
+      if (ch === '"') { if (linha[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === sep) { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+// "2026/10/01 00:02:53" | "2026-10-01 00:02:53" | "01/10/2026 00:02:53" -> { dia:'2026-10-01', s:173 }
+function macro_parseTempo(t) {
+  let m = String(t || '').trim().match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  let a, mo, d;
+  if (m) { a = m[1]; mo = m[2]; d = m[3]; }
+  else {
+    m = String(t || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return null;
+    d = m[1]; mo = m[2]; a = m[3];
+  }
+  const h = +m[4], mi = +m[5], se = +(m[6] || 0);
+  if (h > 23 || mi > 59 || se > 59 || +mo < 1 || +mo > 12 || +d < 1 || +d > 31) return null;
+  return { dia: a + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0'), s: h * 3600 + mi * 60 + se };
+}
+function macro_parseValor(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return null;
+  let n = Number(s);
+  if (!isFinite(n)) n = Number(s.replace(/\./g, '').replace(',', '.'));
+  return isFinite(n) ? n : null;
+}
+// Lê o relatório do ScadaBR. Retorna { pontos: Map(nome -> { nome, grandeza, dias: Map(dia -> Map(s -> v)), n, ini, fim }), linhas, invalidas }
+function macro_parserSupervisorio(texto) {
+  const linhas = texto.split(/\r?\n/);
+  let i = 0; while (i < linhas.length && !linhas[i].trim()) i++;
+  const cab = linhas[i] || '';
+  const sep = (cab.split(';').length > cab.split(',').length) ? ';' : ',';
+  const cols = macro_splitCSV(cab, sep).map(textoBusca);
+  const iNome = cols.findIndex(c => c.includes('data point') || c === 'nome' || c.includes('ponto'));
+  const iTempo = cols.findIndex(c => c === 'tempo' || c.includes('data/hora') || c === 'time' || c.includes('timestamp'));
+  const iValor = cols.findIndex(c => c === 'valor' || c === 'value');
+  if (iNome < 0 || iTempo < 0 || iValor < 0) throw new Error('Não achei as colunas "Nome do data point", "Tempo" e "Valor" no arquivo.');
+  const pontos = new Map();
+  let lidas = 0, invalidas = 0;
+  for (i = i + 1; i < linhas.length; i++) {
+    const l = linhas[i];
+    if (!l) continue;
+    const f = macro_splitCSV(l, sep);
+    const nome = macro_nomePontoLimpo(f[iNome]);
+    const tp = macro_parseTempo(f[iTempo]);
+    const val = macro_parseValor(f[iValor]);
+    if (!nome || !tp || val == null) { invalidas++; continue; }
+    lidas++;
+    let p = pontos.get(nome);
+    if (!p) { p = { nome, grandeza: macro_grandezaDoNome(nome), dias: new Map(), n: 0, ini: null, fim: null }; pontos.set(nome, p); }
+    let d = p.dias.get(tp.dia);
+    if (!d) { d = new Map(); p.dias.set(tp.dia, d); }
+    if (!d.has(tp.s)) p.n++;
+    d.set(tp.s, val);
+    const chave = tp.dia + ' ' + String(tp.s).padStart(5, '0');
+    if (!p.ini || chave < p.ini) p.ini = chave;
+    if (!p.fim || chave > p.fim) p.fim = chave;
+  }
+  return { pontos, linhas: lidas, invalidas };
+}
+function macro_fmtChaveTempo(k) {
+  if (!k) return '';
+  const [dia, s] = k.split(' ');
+  const seg = +s, h = Math.floor(seg / 3600), mi = Math.floor((seg % 3600) / 60);
+  return dia.split('-').reverse().join('/') + ' ' + String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
+}
+
+// ---------- Sugestão de macro para um ponto do supervisório
+function macro_tokens(t) {
+  return textoBusca(t).replace(/[^a-z0-9]+/g, ' ').split(' ').filter(x => x && !MACRO_STOP_TOKENS.has(x) && x.length > 1);
+}
+function macro_sugestoesPonto(nome) {
+  const M = macro_estado();
+  const partes = nome.replace(/^#/, '').split(' - ');
+  const munNome = textoBusca(partes[0] || '');
+  const tk = new Set(macro_tokens(partes.slice(1).join(' ')));
+  if (!tk.size) return [];
+  const res = [];
+  // O nome começa pelo município ("#Criciúma - ..."): macros desse município/sistema ganham bônus,
+  // mas os outros continuam concorrendo (ex.: macro do sistema Forquilhinha instalado em Criciúma).
+  M.macros.forEach(m => {
+    if (m.ausenteNaPlanilha) return;
+    const tm = new Set(macro_tokens([m.nome, m.tag, m.logradouro, m.dmcAtivos, (m.equipamentos || []).map(e => e.dn).join(' ')].join(' ')));
+    let comum = 0, peso = 0;
+    tk.forEach(t => { if (tm.has(t)) { comum++; peso += /\d/.test(t) ? 2 : 1; } });
+    if (!comum) return;
+    let score = peso / Math.sqrt(tk.size * Math.max(tm.size, 1));
+    const cid = textoBusca(macro_nomeCidade(m.cidadeId));
+    if (munNome && (cid === munNome || textoBusca(m.sistemaNome) === munNome)) score += 0.35;
+    if (textoBusca(m.situacao) === 'operando') score += 0.05;
+    res.push({ m, score });
+  });
+  res.sort((a, b) => b.score - a.score);
+  return res.slice(0, 6);
+}
+function macro_vinculoAtual(nome) {
+  const M = macro_estado();
+  for (const m of M.macros) {
+    const a = (m.apelidos || []).find(x => x.nome === nome);
+    if (a) return { m, grandeza: a.grandeza };
+  }
+  return null;
+}
+
+// ---------- Tela de importação
+function macro_abrirImportacaoSupervisorio() {
+  if (!macro_podeImportar()) { toast('Só o administrador importa o relatório do supervisório.'); return; }
+  const M = macro_estado();
+  if (!M.carregado) { toast('Aguarde o cadastro de macros carregar.'); return; }
+  if (!M.macros.length) { toast('Importe primeiro a planilha do Gestão de Ativos.'); return; }
+  document.getElementById('up-macro-scada').click();
+}
+function macro_lerTextoArquivo(file) {
+  return new Promise((ok, erro) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const buf = new Uint8Array(fr.result);
+      // O ScadaBR exporta em Latin-1; se o arquivo for UTF-8 válido, usa UTF-8
+      let txt;
+      try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+      catch (e) { txt = new TextDecoder('iso-8859-1').decode(buf); }
+      ok(txt);
+    };
+    fr.onerror = () => erro(fr.error);
+    fr.readAsArrayBuffer(file);
+  });
+}
+async function macro_handleArquivoScada(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  toast('Lendo o relatório (' + (f.size / 1048576).toFixed(1) + ' MB)...');
+  await new Promise(r => setTimeout(r, 50));
+  try {
+    const txt = await macro_lerTextoArquivo(f);
+    const r = macro_parserSupervisorio(txt);
+    if (!r.pontos.size) throw new Error('Nenhuma leitura válida no arquivo.');
+    const ign = new Set((macro_estado().config.scadaIgnorados) || []);
+    const lista = [...r.pontos.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    lista.forEach(p => {
+      const v = macro_vinculoAtual(p.nome);
+      p.vinculoAnterior = v ? v.m._id : '';
+      p.sugestoes = macro_sugestoesPonto(p.nome);
+      p.escolha = v ? v.m._id : (ign.has(p.nome) ? '__ignorar' : '');
+      if (v && v.grandeza) p.grandeza = v.grandeza;
+    });
+    S._macroScada = { arquivo: f.name, linhas: r.linhas, invalidas: r.invalidas, lista };
+    macro_renderImportScada();
+    openModal('modal-macro-scada');
+  } catch (e) {
+    console.error(e);
+    alert('Não foi possível ler o relatório: ' + e.message);
+  }
+}
+function macro_opcoesMacroSelect(p) {
+  const M = macro_estado();
+  const sug = new Set(p.sugestoes.map(s => s.m._id));
+  const nomeMacro = m => (m.nome || m.pontoId) + ' — ' + (m.sistemaNome || '') + (m.situacao && textoBusca(m.situacao) !== 'operando' ? ' (' + m.situacao + ')' : '');
+  const todos = [...M.macros].filter(m => !sug.has(m._id)).sort((a, b) => textoBusca(a.sistemaNome + ' ' + a.nome).localeCompare(textoBusca(b.sistemaNome + ' ' + b.nome)));
+  return '<option value="">— escolher macro —</option><option value="__ignorar">Ignorar este ponto</option>' +
+    (p.sugestoes.length ? '<optgroup label="Mais parecidos">' + p.sugestoes.map(s => '<option value="' + escHtml(s.m._id) + '">' + escHtml(nomeMacro(s.m)) + '</option>').join('') + '</optgroup>' : '') +
+    '<optgroup label="Todos os macros">' + todos.map(m => '<option value="' + escHtml(m._id) + '">' + escHtml(nomeMacro(m)) + '</option>').join('') + '</optgroup>';
+}
+function macro_renderImportScada() {
+  const X = S._macroScada;
+  if (!X) return;
+  const nV = X.lista.filter(p => p.escolha && p.escolha !== '__ignorar' && p.grandeza).length;
+  const nPend = X.lista.filter(p => !p.escolha || (p.escolha !== '__ignorar' && !p.grandeza)).length;
+  const nLeit = X.lista.filter(p => p.escolha && p.escolha !== '__ignorar' && p.grandeza).reduce((a, p) => a + p.n, 0);
+  document.getElementById('macro-scada-resumo').innerHTML =
+    'Arquivo <b>' + escHtml(X.arquivo) + '</b> — ' + X.linhas.toLocaleString('pt-BR') + ' leituras em <b>' + X.lista.length + '</b> pontos' +
+    (X.invalidas ? ' (' + X.invalidas.toLocaleString('pt-BR') + ' linhas sem data/valor ignoradas)' : '') + '.<br>' +
+    '<b style="color:var(--green)">' + nV + '</b> pontos vinculados (' + nLeit.toLocaleString('pt-BR') + ' leituras a gravar)' +
+    (nPend ? ' · <b style="color:var(--amber)">' + nPend + '</b> sem macro ou sem grandeza (não serão gravados)' : '') + '.';
+  const el = document.getElementById('macro-scada-lista');
+  el.innerHTML = '<table class="data-table"><thead><tr><th>Ponto no supervisório</th><th style="text-align:right">Leituras</th><th>Período</th><th>Grandeza</th><th>Macro (Gestão de Ativos)</th></tr></thead><tbody>' +
+    X.lista.map((p, i) => {
+      const ok = p.escolha && p.escolha !== '__ignorar' && p.grandeza;
+      const cor = p.escolha === '__ignorar' ? ';opacity:.55' : (ok ? '' : ';background:rgba(245,158,11,.08)');
+      const novo = ok && p.escolha !== p.vinculoAnterior ? ' <span class="badge media" title="Vínculo novo — será salvo no macro">novo</span>' : '';
+      const sug = !p.vinculoAnterior && p.sugestoes[0] && p.escolha === p.sugestoes[0].m._id ? ' <span style="color:var(--text3);font-size:10.5px">(sugerido)</span>' : '';
+      return '<tr style="vertical-align:top' + cor + '"><td style="font-size:11.5px;max-width:330px">' + escHtml(p.nome) + '</td>' +
+        '<td style="text-align:right">' + p.n.toLocaleString('pt-BR') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap">' + escHtml(macro_fmtChaveTempo(p.ini)) + '<br>' + escHtml(macro_fmtChaveTempo(p.fim)) + '</td>' +
+        '<td><select onchange="S._macroScada.lista[' + i + '].grandeza=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px">' +
+          '<option value=""' + (!p.grandeza ? ' selected' : '') + '>?</option><option value="V"' + (p.grandeza === 'V' ? ' selected' : '') + '>Volume (m³)</option><option value="Q"' + (p.grandeza === 'Q' ? ' selected' : '') + '>Vazão</option></select></td>' +
+        '<td><select id="macro-scada-sel-' + i + '" onchange="S._macroScada.lista[' + i + '].escolha=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px;max-width:330px">' + macro_opcoesMacroSelect(p) + '</select>' + novo + sug + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  X.lista.forEach((p, i) => { const s = document.getElementById('macro-scada-sel-' + i); if (s) s.value = p.escolha || ''; });
+  document.getElementById('btn-macro-scada-gravar').disabled = !nV;
+}
+function macro_aceitarSugestoesScada() {
+  const X = S._macroScada;
+  if (!X) return;
+  X.lista.forEach(p => { if (!p.escolha && p.sugestoes[0]) p.escolha = p.sugestoes[0].m._id; });
+  macro_renderImportScada();
+}
+
+// Grava: vínculos/ignorados, leituras (mescladas por dia) e o resumo de cobertura no macro
+async function macro_gravarImportScada() {
+  const X = S._macroScada, M = macro_estado();
+  if (!X) return;
+  const validos = X.lista.filter(p => p.escolha && p.escolha !== '__ignorar' && p.grandeza);
+  // Dois pontos do supervisório no mesmo macro e mesma grandeza misturariam totalizadores diferentes
+  const dup = {};
+  for (const p of validos) {
+    const k = p.escolha + '|' + p.grandeza;
+    if (dup[k]) { alert('Dois pontos do supervisório estão ligados ao mesmo macro com a mesma grandeza:\n\n' + dup[k] + '\n' + p.nome + '\n\nCorrija antes de gravar.'); return; }
+    dup[k] = p.nome;
+  }
+  const btn = document.getElementById('btn-macro-scada-gravar');
+  btn.disabled = true;
+  const prog = t => { btn.innerHTML = '<i class="ti ti-loader"></i> ' + t; };
+  const { db, doc, collection, query, where, getDocs, writeBatch, setDoc } = window.FB;
+  const setor = setorAtual();
+  const agora = Date.now();
+  try {
+    // 1) Ignorados (lista do setor)
+    const ign = new Set(M.config.scadaIgnorados || []);
+    X.lista.forEach(p => { if (p.escolha === '__ignorar') ign.add(p.nome); else if (p.escolha) ign.delete(p.nome); });
+    const ignLista = [...ign].sort();
+    if (JSON.stringify(ignLista) !== JSON.stringify([...(M.config.scadaIgnorados || [])].sort())) {
+      await setDoc(doc(db, 'macroConfig', setor), { setor, scadaIgnorados: ignLista, atualizadoEm: agora }, { merge: true });
+      M.config.scadaIgnorados = ignLista;
+    }
+    // 2) Vínculos (apelidos) — tira o nome de qualquer outro macro e põe no escolhido
+    const alterados = new Map();
+    X.lista.forEach(p => {
+      if (!p.escolha) return;
+      M.macros.forEach(m => {
+        const tinha = (m.apelidos || []).some(a => a.nome === p.nome);
+        const deveTer = p.escolha === m._id && p.grandeza;
+        if (tinha && (!deveTer || (m.apelidos.find(a => a.nome === p.nome).grandeza !== p.grandeza))) {
+          m.apelidos = m.apelidos.filter(a => a.nome !== p.nome); alterados.set(m._id, m);
+        }
+        if (deveTer && !(m.apelidos || []).some(a => a.nome === p.nome)) {
+          m.apelidos = [...(m.apelidos || []), { nome: p.nome, grandeza: p.grandeza }]; alterados.set(m._id, m);
+        }
+      });
+    });
+    if (alterados.size) {
+      const b = writeBatch(db);
+      alterados.forEach(m => b.set(doc(db, 'macros', m._id), { apelidos: m.apelidos }, { merge: true }));
+      await b.commit();
+    }
+    // 3) Leituras — para cada ponto: lê os dias já gravados nos meses do arquivo, mescla e regrava
+    let gravDocs = 0, novas = 0, repetidas = 0, cortadas = 0;
+    for (let k = 0; k < validos.length; k++) {
+      const p = validos[k];
+      const m = M.macros.find(x => x._id === p.escolha);
+      prog('Gravando ' + (k + 1) + '/' + validos.length + '...');
+      const meses = [...new Set([...p.dias.keys()].map(d => d.slice(0, 7)))];
+      const existentes = new Map();
+      for (let j = 0; j < meses.length; j += 10) {
+        const snap = await getDocs(query(collection(db, 'leiturasMacro'), where('setor', '==', setor), where('pontoId', '==', m.pontoId),
+          where('grandeza', '==', p.grandeza), where('mes', 'in', meses.slice(j, j + 10))));
+        snap.docs.forEach(d => existentes.set(d.data().dia, d.data()));
+      }
+      const cob = { ...(m.cobertura || {}) };
+      const ops = [];
+      [...p.dias.keys()].sort().forEach(dia => {
+        const novo = p.dias.get(dia);
+        const ant = existentes.get(dia);
+        const mapa = new Map();
+        if (ant && Array.isArray(ant.s)) ant.s.forEach((s, i) => mapa.set(s, ant.v[i]));
+        novo.forEach((v, s) => { if (mapa.has(s)) repetidas++; else novas++; mapa.set(s, Math.round(v * 1000) / 1000); });
+        let ss = [...mapa.keys()].sort((a, b) => a - b);
+        if (ss.length > MACRO_MAX_LEITURAS_DIA) { cortadas += ss.length - MACRO_MAX_LEITURAS_DIA; ss = ss.slice(0, MACRO_MAX_LEITURAS_DIA); }
+        const dados = { setor, pontoId: m.pontoId, macroId: m._id, grandeza: p.grandeza, dia, mes: dia.slice(0, 7), s: ss, v: ss.map(s => mapa.get(s)),
+          n: ss.length, fonte: p.nome, arquivo: X.arquivo, atualizadoEm: agora, atualizadoPor: S.user?.email || '' };
+        ops.push({ ref: doc(db, 'leiturasMacro', setor + '_' + m.pontoId + '_' + p.grandeza + '_' + dia.replace(/-/g, '')), dados });
+        // resumo de cobertura do mês
+        const ck = p.grandeza + '_' + dados.mes;
+        const c = cob[ck] = { ...(cob[ck] || { n: 0, dias: {} }) };
+        c.dias = { ...(c.dias || {}) };
+        c.dias[String(+dia.slice(8))] = ss.length;
+        c.n = Object.values(c.dias).reduce((a, x) => a + x, 0);
+        const ini = dia + ' ' + String(ss[0]).padStart(5, '0'), fim = dia + ' ' + String(ss[ss.length - 1]).padStart(5, '0');
+        if (!c.ini || ini < c.ini) { c.ini = ini; c.primeiro = dados.v[0]; }
+        if (!c.fim || fim > c.fim) { c.fim = fim; c.ultimo = dados.v[dados.v.length - 1]; }
+        c.atualizadoEm = agora;
+      });
+      // lotes pequenos: cada dia pode ter dezenas de KB
+      for (let j = 0; j < ops.length; j += 40) {
+        const b = writeBatch(db);
+        ops.slice(j, j + 40).forEach(o => b.set(o.ref, o.dados));
+        await b.commit();
+        gravDocs += Math.min(40, ops.length - j);
+      }
+      await setDoc(doc(db, 'macros', m._id), { cobertura: cob }, { merge: true });
+      m.cobertura = cob;
+    }
+    closeModal('modal-macro-scada');
+    S._macroScada = null;
+    alert('Relatório importado.\n\n' + validos.length + ' pontos · ' + gravDocs + ' dias gravados\n' + novas.toLocaleString('pt-BR') + ' leituras novas' +
+      (repetidas ? '\n' + repetidas.toLocaleString('pt-BR') + ' leituras já existiam (não duplicaram)' : '') +
+      (cortadas ? '\n' + cortadas.toLocaleString('pt-BR') + ' leituras acima do limite de ' + MACRO_MAX_LEITURAS_DIA + ' por dia foram descartadas' : ''));
+    mostrarSecaoMacro('leituras');
+  } catch (e) {
+    console.error('macro_gravarImportScada', e);
+    alert(e && e.code === 'permission-denied'
+      ? 'O banco recusou a gravação (permissão). Falta publicar as regras novas (leiturasMacro e macroConfig) no Firebase Console.'
+      : 'Erro ao gravar: ' + (e.code || e.message) + '\n\nO que já foi gravado fica; é só importar o arquivo de novo (não duplica).');
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="ti ti-database-import"></i> Gravar leituras';
+    macro_render();
+  }
+}
+
+// ---------- Tela "Leituras do supervisório": cobertura por mês (usa só o resumo do macro)
+function macro_mesesCobertura() {
+  const M = macro_estado();
+  const set = new Set();
+  M.macros.forEach(m => Object.keys(m.cobertura || {}).forEach(k => set.add(k.slice(2))));
+  return [...set].sort().reverse();
+}
+function macro_renderLeituras() {
+  const M = macro_estado();
+  const el = document.getElementById('macro-leituras-tabela');
+  if (!el) return;
+  if (!M.carregado) { el.innerHTML = ''; return; }
+  const meses = macro_mesesCobertura();
+  const selMes = document.getElementById('macro-leit-mes');
+  if (selMes) {
+    const html = meses.map(m => '<option value="' + m + '">' + m.split('-').reverse().join('/') + '</option>').join('');
+    if (selMes.dataset.html !== html) { selMes.innerHTML = html; selMes.dataset.html = html; }
+    if (!M.mesLeituras || !meses.includes(M.mesLeituras)) M.mesLeituras = meses[0] || '';
+    selMes.value = M.mesLeituras;
+  }
+  const vinc = [];
+  M.macros.forEach(m => (m.apelidos || []).forEach(a => vinc.push({ m, a })));
+  const res = document.getElementById('macro-leituras-resumo');
+  if (res) res.innerHTML = '<b>' + vinc.length + '</b> pontos do supervisório vinculados a <b>' + new Set(vinc.map(x => x.m._id)).size + '</b> macros' +
+    ((M.config.scadaIgnorados || []).length ? ' · ' + M.config.scadaIgnorados.length + ' ignorados' : '') + '.';
+  if (!vinc.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhum ponto vinculado ainda. Use <b>Importar relatório do supervisório (.csv)</b>.</p>'; return; }
+  const mes = M.mesLeituras;
+  const [ano, mm] = (mes || '2000-01').split('-').map(Number);
+  const nDias = new Date(ano, mm, 0).getDate();
+  vinc.sort((x, y) => textoBusca(x.m.sistemaNome + ' ' + x.m.nome).localeCompare(textoBusca(y.m.sistemaNome + ' ' + y.m.nome)));
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Macro</th><th>G.</th><th style="text-align:right">Leituras</th><th>Dias com dado (' + escHtml(mes.split('-').reverse().join('/')) + ')</th><th>Primeira / última</th><th style="text-align:right" title="Última leitura do mês menos a primeira, sem nenhum tratamento (resets, lacunas e fechamento no horário certo entram nas próximas fases)">Δ bruto</th></tr></thead><tbody>' +
+    vinc.map(({ m, a }) => {
+      const c = (m.cobertura || {})[a.grandeza + '_' + mes];
+      const dias = (c && c.dias) || {};
+      const vals = Object.values(dias);
+      const mediana = vals.length ? [...vals].sort((x, y) => x - y)[Math.floor(vals.length / 2)] : 0;
+      let barra = '';
+      for (let d = 1; d <= nDias; d++) {
+        const n = dias[String(d)] || 0;
+        const cor = !n ? 'var(--red)' : (n < mediana * 0.5 ? 'var(--amber)' : 'var(--green)');
+        barra += '<span title="' + String(d).padStart(2, '0') + '/' + String(mm).padStart(2, '0') + ': ' + n + ' leituras" style="display:inline-block;width:7px;height:14px;margin-right:1px;border-radius:1px;background:' + cor + ';opacity:' + (n ? '.85' : '.35') + '"></span>';
+      }
+      const diasCom = vals.filter(x => x > 0).length;
+      const delta = c && a.grandeza === 'V' && c.primeiro != null && c.ultimo != null ? c.ultimo - c.primeiro : null;
+      return '<tr><td><b>' + escHtml(m.nome) + '</b> <span style="color:var(--text3);font-size:10.5px">' + escHtml(m.sistemaNome || '') + '</span>' +
+        '<div style="font-size:10.5px;color:var(--text3);max-width:360px">' + escHtml(a.nome) + '</div></td>' +
+        '<td>' + (a.grandeza === 'V' ? 'V' : 'Q') + '</td>' +
+        '<td style="text-align:right">' + (c ? c.n.toLocaleString('pt-BR') : '—') + '</td>' +
+        '<td style="white-space:nowrap">' + (c ? barra + ' <span style="font-size:11px;color:var(--text2)">' + diasCom + '/' + nDias + '</span>' : '<span style="color:var(--text3);font-size:11px">sem leituras neste mês</span>') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap">' + (c ? escHtml(macro_fmtChaveTempo(c.ini)) + '<br>' + escHtml(macro_fmtChaveTempo(c.fim)) : '') + '</td>' +
+        '<td style="text-align:right;white-space:nowrap' + (delta != null && delta < 0 ? ';color:var(--red)' : '') + '">' + (delta != null ? Math.round(delta).toLocaleString('pt-BR') + ' m³' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' +
+    '<p style="font-size:11px;color:var(--text3);margin-top:6px">Verde = dia com leituras; amarelo = menos da metade das leituras de um dia típico; vermelho = sem leitura. O Δ bruto é só conferência: o volume do mês (fechamento no horário, resets, lacunas, volume líquido) é calculado nas próximas fases.</p>';
+}
+
+// Remover um vínculo (no Editar do macro)
+async function macro_removerApelido(macroId, idx) {
+  const m = macro_estado().macros.find(x => x._id === macroId);
+  if (!m || !m.apelidos || !m.apelidos[idx]) return;
+  if (!confirm('Desvincular o ponto do supervisório?\n\n' + m.apelidos[idx].nome + '\n\nAs leituras já gravadas continuam no banco; na próxima importação ele aparece para vincular de novo.')) return;
+  const apelidos = m.apelidos.filter((_, i) => i !== idx);
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'macros', m._id), { apelidos }, { merge: true });
+    m.apelidos = apelidos;
+    macro_abrirEditar(m._id);
+    macro_render();
+  } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
 }
 
 // ================================================================

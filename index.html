@@ -433,6 +433,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="config-nav-item" data-macro-section="leituras" onclick="mostrarSecaoMacro('leituras')">
         <i class="ti ti-chart-dots"></i> <span>Leituras do supervisório</span>
       </div>
+      <div class="config-nav-item" data-macro-section="lancamentos" onclick="mostrarSecaoMacro('lancamentos')">
+        <i class="ti ti-edit"></i> <span>Lançamentos do mês</span>
+      </div>
       <div class="config-nav-item" data-macro-section="campo" onclick="mostrarSecaoMacro('campo')">
         <i class="ti ti-clipboard-list"></i> <span>Leituras de campo</span>
       </div>
@@ -450,7 +453,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         <button class="btn sm" id="btn-macro-importar" onclick="macro_abrirImportacao()"><i class="ti ti-file-spreadsheet"></i> Importar Gestão de Ativos (.xlsx)</button>
         <button class="btn sm" id="btn-macro-scada" onclick="macro_abrirImportacaoSupervisorio()" title="Relatório exportado do ScadaBR (Nome do data point, Tempo, Valor)"><i class="ti ti-file-upload"></i> Importar relatório do supervisório (.csv)</button>
         <input type="file" id="up-macro-scada" accept=".csv,.txt" style="display:none" onchange="macro_handleArquivoScada(this)">
-        <button class="btn sm" onclick="macro_exportarXLSX()" title="Baixa o cadastro de macros em Excel"><i class="ti ti-download"></i> Baixar planilha</button>
+        <button class="btn sm" id="btn-macro-exportar" onclick="macro_exportarXLSX()" title="Baixa o cadastro de macros em Excel"><i class="ti ti-download"></i> Baixar planilha</button>
         <button class="btn sm" onclick="macro_carregar(true)" title="Recarregar do banco"><i class="ti ti-refresh"></i></button>
         <input type="file" id="up-macro-ativos" accept=".xlsx,.xls" style="display:none" onchange="macro_handleArquivoAtivos(this)">
       </div>
@@ -470,9 +473,12 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
             <option value="dmcsemvinculo">DMC sem par no GeoFon</option>
             <option value="bidirecional">Fluxo nos 2 sentidos</option>
             <option value="ausente">Fora da última planilha</option>
+            <option value="virtual">Pontos virtuais</option>
+            <option value="campo">Medição por leitura de campo</option>
           </select>
         </div>
-        <div id="macro-resumo" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><div id="macro-resumo" style="font-size:12px;color:var(--text2);flex:1"></div>
+          <button class="btn sm" onclick="virt_abrir()" title="Região sem macromedidor: volume = micromedido ÷ (1 − IPD)"><i class="ti ti-plus"></i> Ponto virtual</button></div>
         <div id="macro-tabela"></div>
       </div>
 
@@ -483,6 +489,19 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <label style="font-size:12px">Mês <select id="macro-leit-mes" onchange="macro_estado().mesLeituras=this.value;macro_renderLeituras()" style="font-size:12px;padding:4px"></select></label>
         </div>
         <div id="macro-leituras-tabela"></div>
+      </div>
+
+      <div id="macrosec-lancamentos" class="macro-sec config-section-panel" style="max-width:none;display:none">
+        <div class="section-title" style="margin:0 0 6px">Lançamentos do mês</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:12px">Mês de referência <input type="month" id="lanc-mes" onchange="lanc_estado().mes=this.value;lanc_estado().rasc={};lanc_render()" style="font-size:12px;padding:4px"></label>
+          <select id="lanc-filtro" onchange="lanc_estado().filtro=this.value;lanc_render()" style="font-size:12px;padding:5px"></select>
+          <span style="flex:1"></span>
+          <button class="btn sm" onclick="lanc_baixarPlanilha()" title="Planilha com os pontos do seu escopo e a última leitura, para preencher"><i class="ti ti-file-download"></i> Planilha do mês</button>
+          <button class="btn sm" onclick="lanc_abrirImportacao()" title="Carrega na grade a planilha preenchida (depois é só conferir e gravar)"><i class="ti ti-file-upload"></i> Importar planilha</button>
+          <input type="file" id="up-lanc" accept=".xlsx,.xls" style="display:none" onchange="lanc_handleArquivo(this)">
+        </div>
+        <div id="lanc-conteudo"></div>
       </div>
 
       <div id="macrosec-campo" class="macro-sec config-section-panel" style="max-width:none;display:none">
@@ -1549,6 +1568,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
+<div class="modal-overlay" id="modal-ponto-virtual">
+  <div class="modal" style="max-width:480px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:8px"><i class="ti ti-gauge"></i> <span id="virt-titulo"></span></h3>
+    <div id="virt-corpo"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn primary" style="flex:1;justify-content:center" onclick="virt_salvar()"><i class="ti ti-device-floppy"></i> Salvar</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-ponto-virtual')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-vol-ajuste">
   <div class="modal" style="max-width:560px">
     <h3 style="font-size:15px;font-weight:600;margin-bottom:8px"><i class="ti ti-adjustments"></i> <span id="vol-aj-titulo"></span></h3>
@@ -1615,6 +1645,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin:4px 0 10px;cursor:pointer">
       <input type="checkbox" id="macro-ed-bidirecional"> <span>Fluxo nos dois sentidos — usar o <b>volume líquido</b> (o totalizador pode diminuir)</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin:-4px 0 10px;cursor:pointer">
+      <input type="checkbox" id="macro-ed-campo"> <span>Medição por <b>leitura de campo</b> (aparece na grade "Lançamentos do mês")</span>
     </label>
     <div class="field">
       <label>Observação (GeoFon)</label>
@@ -13304,7 +13337,7 @@ function macro_renderPreviaImportacao(inicial) {
   const existentes = new Set(M.macros.map(m => m.pontoId));
   const novos = sel.filter(p => !existentes.has(p.pontoId)).length;
   const ids = new Set(sel.map(p => p.pontoId));
-  const ausentes = M.macros.filter(m => marcadas.has(m.agencia || '(sem agência)') && !ids.has(m.pontoId) && !m.ausenteNaPlanilha).length;
+  const ausentes = M.macros.filter(m => marcadas.has(m.agencia || '(sem agência)') && !ids.has(m.pontoId) && !m.ausenteNaPlanilha && !m.virtual).length;
   const nSis = new Set(sel.map(p => p.sistemaId)).size;
   document.getElementById('macro-imp-resumo').innerHTML =
     'Arquivo <b>' + escHtml(L.arquivo) + '</b> — ' + L.pontos.length + ' pontos "MVA - Água" (' + L.ignorados + ' de outras aplicações ignorados).<br>' +
@@ -13357,7 +13390,7 @@ async function macro_confirmarImportacao() {
   });
   // 3) Macros das agências selecionadas que sumiram da planilha: só marca
   const ids = new Set(sel.map(p => p.pontoId));
-  M.macros.filter(m => set.has(m.agencia || '(sem agência)') && !ids.has(m.pontoId) && !m.ausenteNaPlanilha)
+  M.macros.filter(m => set.has(m.agencia || '(sem agência)') && !ids.has(m.pontoId) && !m.ausenteNaPlanilha && !m.virtual)
     .forEach(m => ops.push({ ref: doc(db, 'macros', m._id), dados: { ausenteNaPlanilha: true, importadoEm: agora }, merge: true }));
   try {
     for (let i = 0; i < ops.length; i += 400) {
@@ -13394,6 +13427,12 @@ function macro_abrirAba() {
   if (btn) btn.style.display = macro_podeImportar() ? '' : 'none';
   const btnS = document.getElementById('btn-macro-scada');
   if (btnS) btnS.style.display = macro_podeImportar() ? '' : 'none';
+  const btnE = document.getElementById('btn-macro-exportar');
+  if (btnE) btnE.style.display = macro_podeImportar() ? '' : 'none';
+  // Supervisor (quando a Macromedição for liberada ao setor): só a grade de lançamentos do escopo dele
+  const so = !macro_podeImportar();
+  document.querySelectorAll('[data-macro-section]').forEach(el => { el.style.display = so && el.dataset.macroSection !== 'lancamentos' ? 'none' : ''; });
+  if (so) macro_estado().secao = 'lancamentos';
   mostrarSecaoMacro(macro_estado().secao);
   macro_carregar(false);
 }
@@ -13416,6 +13455,7 @@ function macro_render() {
   else if (M.secao === 'leituras') macro_renderLeituras();
   else if (M.secao === 'regras') vol_renderRegras();
   else if (M.secao === 'campo') campo_render();
+  else if (M.secao === 'lancamentos') lanc_render();
   else if (M.secao === 'volumes') vol_renderVolumes();
   else macro_renderMacros();
 }
@@ -13459,6 +13499,8 @@ function macro_renderMacros() {
     if (M.fEspecial === 'dmcsemvinculo' && !((m.dmcAtivos || m.codigoDmcGis) && !dmc)) return false;
     if (M.fEspecial === 'bidirecional' && !m.bidirecional) return false;
     if (M.fEspecial === 'ausente' && !m.ausenteNaPlanilha) return false;
+    if (M.fEspecial === 'virtual' && !m.virtual) return false;
+    if (M.fEspecial === 'campo' && !macro_ehCampo(m)) return false;
     if (busca && !textoBusca([m.pontoId, m.nome, m.tag, m.sistemaNome, m.finalidade, m.dmcAtivos, m.logradouro, cidade, ...(m.equipamentos || []).map(e => e.fabricante + ' ' + e.tipo + ' ' + e.ns)].join(' ')).includes(busca)) return false;
     return true;
   });
@@ -13519,7 +13561,7 @@ function macro_renderMacros() {
         '<td style="font-size:11px">' + eqTxt + '</td>' +
         '<td style="font-size:11px">' + dmcTxt + '</td>' +
         '<td style="text-align:center">' + (m.bidirecional ? '<i class="ti ti-arrows-left-right" style="color:var(--blue)" title="Fluxo nos dois sentidos (volume líquido)"></i>' : '') + '</td>' +
-        '<td>' + (macro_podeEditarMacro(m) ? '<button class="btn sm" onclick="macro_abrirEditar(\'' + escHtml(m._id) + '\')"><i class="ti ti-pencil"></i></button>' : '') + '</td></tr>';
+        '<td>' + (macro_podeEditarMacro(m) ? '<button class="btn sm" onclick="' + (m.virtual ? 'virt_abrir' : 'macro_abrirEditar') + '(\'' + escHtml(m._id) + '\')"><i class="ti ti-pencil"></i></button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>' +
     (filtradas.length > MAX ? '<p style="font-size:11.5px;color:var(--text2)">Mostrando os primeiros ' + MAX + ' — use os filtros para achar os demais.</p>' : '');
 }
@@ -13549,6 +13591,7 @@ function macro_abrirEditar(id) {
     '<optgroup label="Todos">' + cids.filter(c => !doSis.has(c.id)).map(c => '<option value="' + escHtml(c.id) + '">' + escHtml(c.nome) + '</option>').join('') + '</optgroup>';
   sel.value = m.cidadeId || '';
   document.getElementById('macro-ed-bidirecional').checked = !!m.bidirecional;
+  document.getElementById('macro-ed-campo').checked = !!m.medicaoCampo;
   document.getElementById('macro-ed-obs').value = m.obs || '';
   const ap = m.apelidos || [];
   document.getElementById('macro-ed-apelidos').innerHTML = ap.length
@@ -13566,6 +13609,7 @@ async function macro_salvarEditar() {
   const dados = {
     cidadeId: document.getElementById('macro-ed-cidade').value || '',
     bidirecional: document.getElementById('macro-ed-bidirecional').checked,
+    medicaoCampo: document.getElementById('macro-ed-campo').checked,
     obs: document.getElementById('macro-ed-obs').value.trim(),
     editadoEm: Date.now(), editadoPor: S.user?.email || ''
   };
@@ -13595,12 +13639,13 @@ function macro_renderSistemas() {
   const res = document.getElementById('macro-sistemas-resumo');
   if (res) res.innerHTML = '<b>' + lista.length + '</b> sistemas' + (semMun ? ' · <b style="color:var(--amber)">' + semMun + '</b> sem município vinculado' : '') +
     '. Um município pode ter vários sistemas, e um sistema pode atender vários municípios.';
-  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Sistema</th><th>Código</th><th>Agência</th><th style="text-align:right">Macros</th><th>Municípios atendidos</th><th title="Sazonal: a estimativa por histórico usa o mesmo mês do ano anterior">Sazonal</th><th></th></tr></thead><tbody>' +
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Sistema</th><th>Código</th><th>Agência</th><th style="text-align:right">Macros</th><th>Municípios atendidos</th><th title="Sazonal: a estimativa por histórico usa o mesmo mês do ano anterior">Sazonal</th><th title="IPD padrão do sistema (%), usado nos pontos virtuais: micromedido ÷ (1 − IPD)">IPD padrão (%)</th><th></th></tr></thead><tbody>' +
     lista.map(s => {
       const mun = (s.cidades || []).map(id => '<span class="badge purple" style="margin:1px">' + escHtml(macro_nomeCidade(id) || id) + '</span>').join(' ') || '<span style="color:var(--amber)">nenhum</span>';
       return '<tr><td><b>' + escHtml(s.nome) + '</b></td><td style="font-family:monospace;font-size:11px">' + escHtml(s.sid) + '</td><td>' + escHtml(s.agencia || '—') + '</td>' +
         '<td style="text-align:right">' + (cont[s.sid] || 0) + '</td><td>' + mun + '</td>' +
         '<td style="text-align:center"><input type="checkbox"' + (vol_sistemaSazonal(s.sid) ? ' checked' : '') + (macro_podeImportar() ? '' : ' disabled') + ' onchange="vol_alternarSazonal(\'' + escHtml(s._id) + '\',this.checked)" title="Sazonal (ex.: litoral no verão)"></td>' +
+        '<td><input type="number" step="0.1" min="0" max="99.9" value="' + (s.ipd ?? '') + '"' + (macro_podeEditarSistema(s) ? '' : ' disabled') + ' onchange="vol_salvarIpdSistema(\'' + escHtml(s._id) + '\',this.value)" style="width:72px;font-size:12px"></td>' +
         '<td>' + (macro_podeImportar() ? '<button class="btn sm" onclick="macro_abrirSistema(\'' + escHtml(s._id) + '\')"><i class="ti ti-pencil"></i> Municípios</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -13790,7 +13835,7 @@ function macro_sugestoesPonto(nome) {
   // O nome começa pelo município ("#Criciúma - ..."): macros desse município/sistema ganham bônus,
   // mas os outros continuam concorrendo (ex.: macro do sistema Forquilhinha instalado em Criciúma).
   M.macros.forEach(m => {
-    if (m.ausenteNaPlanilha) return;
+    if (m.ausenteNaPlanilha || m.virtual) return;
     const tm = new Set(macro_tokens([m.nome, m.tag, m.logradouro, m.dmcAtivos, (m.equipamentos || []).map(e => e.dn).join(' ')].join(' ')));
     let comum = 0, peso = 0;
     tk.forEach(t => { if (tm.has(t)) { comum++; peso += /\d/.test(t) ? 2 : 1; } });
@@ -13915,7 +13960,7 @@ function macro_opcoesMacroSelect(p, ocupado) {
       (tomado ? ' — já ligado: ' + (dono.length > 45 ? dono.slice(0, 45) + '…' : dono) : '');
     return '<option value="' + escHtml(m._id) + '"' + (tomado ? ' disabled' : '') + '>' + escHtml(txt) + '</option>';
   };
-  const filtrados = macro_ordenarPorMun(M.macros.filter(m => !sug.has(m._id) && !m.ausenteNaPlanilha && macro_filtroMunPassa(m, p.filtroMun)));
+  const filtrados = macro_ordenarPorMun(M.macros.filter(m => !sug.has(m._id) && !m.ausenteNaPlanilha && !m.virtual && macro_filtroMunPassa(m, p.filtroMun)));
   const escolhido = p.escolha && p.escolha !== '__ignorar' && !sug.has(p.escolha) && !filtrados.some(m => m._id === p.escolha) ? M.macros.find(m => m._id === p.escolha) : null;
   return '<option value="">— escolher macro —</option><option value="__ignorar">Ignorar este ponto</option>' +
     (escolhido ? '<optgroup label="Escolhido">' + opc(escolhido) + '</optgroup>' : '') +
@@ -14482,7 +14527,7 @@ function vol_fronteira(leit, T) {
 // congelado até alguém reabrir. Histórico antigo pode ser importado de planilha (origem 'importado').
 const VOL_MIN_HORAS_MEDIA_MES = 7 * 24;
 const VOL_SAZONAIS_PADRAO = ['laguna', 'garopaba', 'passo de torres'];
-const VOL_METODOS = { A: 'média do próprio mês', B3: 'média dos últimos 3 meses', BA: 'mesmo mês do ano anterior', C: 'manual', nenhum: 'sem estimativa' };
+const VOL_METODOS = { VIRT: 'micromedido ÷ (1 − IPD)', A: 'média do próprio mês', B3: 'média dos últimos 3 meses', BA: 'mesmo mês do ano anterior', C: 'manual', nenhum: 'sem estimativa' };
 
 function vol_mesMais(m, k) {
   const [a, b] = m.split('-').map(Number);
@@ -14528,7 +14573,7 @@ function vol_assinatura(mes) {
     if (!m) { partes.push(id + ':x'); return; }
     const c = m.cobertura || {};
     partes.push(id + ':' + ((c['V_' + mes] || {}).atualizadoEm || 0) + ':' + ((c['V_' + vol_proxMes(mes)] || {}).atualizadoEm || 0) +
-      ':' + (m.bidirecional ? 1 : 0) + ':' + (m.apelidos || []).map(a => a.grandeza + (a.unidade || '') + a.nome).join(';') + ':' + (m.campoAtualizadoEm || 0) + ':' + ((c['Q_' + mes] || {}).atualizadoEm || 0) + ':' + (vol_sistemaSazonal(m.sistemaId) ? 1 : 0));
+      ':' + (m.bidirecional ? 1 : 0) + ':' + (m.apelidos || []).map(a => a.grandeza + (a.unidade || '') + a.nome).join(';') + ':' + (m.campoAtualizadoEm || 0) + ':' + ((c['Q_' + mes] || {}).atualizadoEm || 0) + ':' + JSON.stringify((m.lancamentos || {})[mes] || '') + ':' + (vol_ipdSistema(m.sistemaId) ?? '') + ':' + (vol_sistemaSazonal(m.sistemaId) ? 1 : 0));
   });
   return vol_hash(partes.join('|'));
 }
@@ -14537,6 +14582,7 @@ function vol_assinatura(mes) {
 // lançadas no app), 'vazao' (só vazão no supervisório → volume pela integral da vazão) ou ''.
 function macro_apelidoQ(m) { return (m.apelidos || []).find(a => a.grandeza === 'Q') || null; }
 function macro_fonteVolume(m) {
+  if (m.virtual) return 'virtual';
   if (macro_temLeitura(m, 'V')) return 'supervisorio';
   if ((m.leiturasCampo || []).length) return 'campo';
   if (macro_apelidoQ(m)) return 'vazao';
@@ -14609,6 +14655,15 @@ async function vol_medirMacroMes(m, mes) {
   const fonte = macro_fonteVolume(m);
   const r = { macroId: m._id, pontoId: m.pontoId, nome: m.nome, municipio: macro_rotuloMun(m), sistema: m.sistemaNome || '', sistemaId: m.sistemaId || '',
     mes, fonte, horasMes: (T1 - T0) / 3600e3, ini: null, fim: null, medido: null, horasMed: 0, alertas: [] };
+  if (fonte === 'virtual') {
+    // Ponto virtual: micromedido ÷ (1 − IPD), todo estimado
+    const l = (m.lancamentos || {})[mes];
+    const ip = vol_ipdDoMes(m, mes);
+    r.virtual = { micromedido: l ? l.micromedido : null, ipd: ip ? ip.ipd : null, ipdOrigem: ip ? ip.origem : '' };
+    if (l && l.micromedido != null && ip && ip.ipd < 100) r.estimadoVirtual = l.micromedido / (1 - ip.ipd / 100);
+    else r.alertas.push(!l || l.micromedido == null ? 'sem micromedido lançado no mês' : 'sem IPD (padrão do sistema ou do mês)');
+    return r;
+  }
   if (!fonte) { r.alertas.push('sem leitura (supervisório, campo ou vazão) vinculada'); return r; }
   const LIM = VOL_ALERTA_DIF_DIAS * 86400e3;
   if (fonte === 'vazao') {
@@ -14707,8 +14762,9 @@ function vol_opcoesEstimativa(r, hist, sazonal) {
       if (taxa(ano) != null) op.BA = taxa(ano) * falta;
     }
   }
+  if (r.estimadoVirtual != null) op.VIRT = r.estimadoVirtual;
   r.opcoes = op;
-  r.metodoAuto = !r.precisaEstimar ? 'nenhum' : op.A != null ? 'A' : (sazonal && op.BA != null) ? 'BA' : op.B3 != null ? 'B3' : op.BA != null ? 'BA' : 'nenhum';
+  r.metodoAuto = !r.precisaEstimar ? 'nenhum' : op.VIRT != null ? 'VIRT' : op.A != null ? 'A' : (sazonal && op.BA != null) ? 'BA' : op.B3 != null ? 'B3' : op.BA != null ? 'BA' : 'nenhum';
   // Checagem: média diária do mês × média dos últimos meses (±30%)
   r.alertasHist = [];
   if (taxaB3 && r.medido != null && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) {
@@ -14869,6 +14925,7 @@ function vol_abrirAjuste(macroId) {
     '</div>' +
     (r.precisaEstimar || (S._volAjuste.metodo === 'C') ? '' : '<p style="font-size:11.5px;color:var(--text2);margin-bottom:6px">O mês foi medido inteiro (diferença ≤ 12 h) — só use "manual" se precisar corrigir.</p>') +
     linha('auto', 'Automático', null, 'hoje: ' + VOL_METODOS[r.metodoAuto || 'nenhum']) +
+    (r.fonte === 'virtual' ? linha('VIRT', 'Micromedido ÷ (1 − IPD)', op.VIRT, r.virtual && r.virtual.micromedido != null ? vol_fmtM3(r.virtual.micromedido) + ' m³ ÷ (1 − ' + String(r.virtual.ipd ?? '?').replace('.', ',') + '%) · IPD ' + (r.virtual.ipdOrigem || '') : 'sem micromedido lançado no mês') : '') +
     linha('A', (r.horasFalta || 0) < 0 ? 'Ajuste pró-rata ao mês' : 'Média do próprio mês', op.A, (r.horasFalta || 0) < 0 ? 'desconta a parte medida fora do mês, pela média do período' : 'só com 7 dias ou mais medidos') +
     linha('B3', 'Média dos últimos 3 meses fechados', op.B3, (r.mesesB3 || []).length ? 'meses: ' + r.mesesB3.map(vol_fmtMes).join(', ') : 'sem histórico') +
     linha('BA', 'Mesmo mês do ano anterior', op.BA, r.anoAnterior ? vol_fmtMes(r.anoAnterior.mes) : 'sem histórico') +
@@ -14998,7 +15055,7 @@ function vol_renderVolumes() {
   }
   if (!R.escopos.length) { el.innerHTML = erro + barra + '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhuma regra valia em ' + vol_fmtMes(mes) + '. Cadastre em <b>Regras de volume</b> e recalcule.</p>'; return; }
   V.abertos = V.abertos || {};
-  const fonteTxt = { supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'pela vazão' };
+  const fonteTxt = { supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'pela vazão', virtual: 'ponto virtual' };
   const parcial = t => t && t.semDado ? '<div style="font-size:10.5px;color:var(--red);font-weight:400">parcial: ' + t.semDado + ' sem dado</div>' : '';
   // Linhas dos macros de uma regra (escondidas até clicar na regra)
   const linhasMacros = (r, k) => (r.parcelas || []).map(p => {
@@ -15059,7 +15116,7 @@ function vol_exportarXLSX() {
     [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, t]) => res.push([vol_fmtMes(R.mes), st, e.nome, g, '', '', '', n(t.vol), n(t.med), n(t.est), t.semDado || '']));
   });
   const mac = [['Mês', 'Município', 'Macro', 'Sistema', 'Fonte', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Medido (m³)', 'Estimado (m³)', 'Método', 'Justificativa', 'Volume (m³)', 'Situação', 'Mesmo mês ano anterior (m³)', 'Alertas']];
-  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.municipio || '', x.nome, x.sistema || '', ({ supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'vazão integrada' })[x.fonte] || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? x.ini.v : '', x.ini ? x.ini.modo : '',
+  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.municipio || '', x.nome, x.sistema || '', ({ supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'vazão integrada', virtual: 'ponto virtual (micromedido ÷ (1 − IPD))' })[x.fonte] || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? x.ini.v : '', x.ini ? x.ini.modo : '',
     x.fim ? vol_fmtDataHora(x.fim.t) : '', x.fim ? x.fim.v : '', x.fim ? x.fim.modo : '', x.medido != null ? Math.round(x.horasMed / 24 * 100) / 100 : '',
     x.medido != null ? n(x.medido) : '', x.estimado ? n(x.estimado) : '', x.estimado ? (VOL_METODOS[x.metodo] || x.metodo) : '', x.justificativa || '',
     x.volume != null ? n(x.volume) : '', x.situacao || '', x.anoAnterior ? n(x.anoAnterior.volume) : '', [...(x.alertas || []), ...(x.alertasHist || []), ...(x.alertasEst || [])].join(' | ')]));
@@ -15211,7 +15268,7 @@ function campo_render() {
   if (fil) { const html = macro_opcoesFiltroMun(); if (fil.dataset.html !== html) { fil.innerHTML = html; fil.dataset.html = html; } fil.value = C.filtro || ''; }
   const sel = document.getElementById('campo-macro');
   if (sel) {
-    const ms = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha && (m._id === C.macroId || macro_filtroMunPassa(m, C.filtro))));
+    const ms = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha && !m.virtual && (m._id === C.macroId || macro_filtroMunPassa(m, C.filtro))));
     const html = '<option value="">— escolher macro —</option>' + ms.map(m => '<option value="' + escHtml(m._id) + '">' +
       escHtml(((m.leiturasCampo || []).length ? '★ ' : macro_temLeitura(m, 'V') ? '● ' : '○ ') + macro_rotuloMun(m) + ' — ' + m.nome) + '</option>').join('');
     if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
@@ -15279,7 +15336,7 @@ async function campo_remover(data) {
 }
 function campo_baixarModelo() {
   const M = macro_estado();
-  const ms = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha && !macro_temLeitura(m, 'V')));
+  const ms = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha && !m.virtual && !macro_temLeitura(m, 'V')));
   const linhas = [['Ponto ID', 'Município', 'Sistema', 'Macro', 'Data (dd/mm/aaaa)', 'Leitura (m³)']];
   ms.forEach(m => linhas.push([m.pontoId, macro_rotuloMun(m), m.sistemaNome || '', m.nome, '', '']));
   const ws = XLSX.utils.aoa_to_sheet(linhas);
@@ -15343,6 +15400,316 @@ function campo_handleArquivo(input) {
       toast(total + ' leituras de campo importadas.');
       campo_render();
     } catch (e) { console.error(e); alert('Não foi possível importar: ' + e.message); }
+  };
+  fr.readAsArrayBuffer(f);
+}
+
+
+// ================================================================
+// MACROMEDIÇÃO — Pontos virtuais, IPD por sistema e "Lançamentos do mês" (2026-11-26)
+// ================================================================
+// Ponto VIRTUAL: região sem macromedidor. Criado no GeoFon (não vem do Gestão de Ativos), entra nas
+// regras como um macro. Volume do mês = micromedido ÷ (1 − IPD), todo na coluna ESTIMADO.
+//   macros/{SETOR}_VIRT…  { virtual:true, nome, cidadeId, sistemaId, sistemaNome, agencia,
+//                          lancamentos: { 'AAAA-MM': { micromedido, ipd?, em, por } }, lancAtualizadoEm }
+// IPD padrão por sistema: sistemasAbast.ipd (%), vale até ser alterado; o lançamento do mês pode
+// trazer um IPD próprio (correção do mês).
+// "Lançamentos do mês": grade única com leituras de campo e pontos virtuais, filtrada pelo ESCOPO do
+// usuário (mesmo escopo do Editor de DMC: admin vê tudo; supervisor só os municípios dele). Quem pode
+// lançar, criar pontos virtuais e corrigir IPD = admin ou supervisor com o município no escopo.
+// Supervisor, quando a Macromedição for liberada ao setor, vê só esta seção.
+function macro_noEscopo(m) {
+  if (macro_podeImportar()) return true;
+  return !!(m && m.cidadeId && editorDMC_podeEditarCidade(m.cidadeId));
+}
+function macro_ehCampo(m) { return !m.virtual && (m.medicaoCampo || (m.leiturasCampo || []).length > 0); }
+function vol_ipdSistema(sid) {
+  const s = macro_estado().sistemas.find(x => x.sid === sid);
+  return s && s.ipd != null && s.ipd !== '' && isFinite(+s.ipd) ? +s.ipd : null;
+}
+function vol_ipdDoMes(m, mes) {
+  const l = (m.lancamentos || {})[mes];
+  if (l && l.ipd != null && l.ipd !== '' && isFinite(+l.ipd)) return { ipd: +l.ipd, origem: 'do mês' };
+  const p = vol_ipdSistema(m.sistemaId);
+  return p != null ? { ipd: p, origem: 'padrão do sistema' } : null;
+}
+function macro_podeEditarSistema(s) {
+  if (macro_podeImportar()) return true;
+  return (s.cidades || []).some(id => editorDMC_podeEditarCidade(id));
+}
+async function vol_salvarIpdSistema(id, valor) {
+  const s = macro_estado().sistemas.find(x => x._id === id);
+  if (!s || !macro_podeEditarSistema(s)) return;
+  const v = String(valor).trim() === '' ? null : macro_num(valor);
+  if (v != null && (v < 0 || v >= 100)) { alert('IPD deve estar entre 0 e 99,9%.'); macro_render(); return; }
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'sistemasAbast', s._id), { ipd: v, ipdEm: Date.now(), ipdPor: S.user?.email || '' }, { merge: true });
+    s.ipd = v;
+    toast('IPD padrão de ' + s.nome + (v == null ? ' removido.' : ': ' + String(v).replace('.', ',') + '%'));
+  } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
+}
+
+// ---------- Criar / editar ponto virtual
+function virt_abrir(id) {
+  const M = macro_estado();
+  const m = id ? M.macros.find(x => x._id === id) : null;
+  if (m && !macro_noEscopo(m)) return;
+  S._virt = m ? { _id: m._id, nome: m.nome, cidadeId: m.cidadeId || '', sistemaId: m.sistemaId || '', obs: m.obs || '' } : { _id: '', nome: '', cidadeId: '', sistemaId: '', obs: '' };
+  virt_render();
+  openModal('modal-ponto-virtual');
+}
+function virt_render() {
+  const V = S._virt, M = macro_estado();
+  if (!V) return;
+  document.getElementById('virt-titulo').textContent = V._id ? 'Editar ponto virtual' : 'Novo ponto virtual';
+  const cids = [...S.cidades].filter(c => macro_podeImportar() || editorDMC_podeEditarCidade(c.id)).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  const sis = [...M.sistemas].sort((a, b) => ((b.cidades || []).includes(V.cidadeId) - (a.cidades || []).includes(V.cidadeId)) || textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  document.getElementById('virt-corpo').innerHTML =
+    '<p style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:8px">Para regiões sem macromedidor. O volume do mês é <b>micromedido ÷ (1 − IPD)</b> e entra todo como <b>estimado</b>. Use o ponto nas regras como se fosse um macro.</p>' +
+    '<div class="field"><label>Nome</label><input type="text" value="' + escHtml(V.nome) + '" oninput="S._virt.nome=this.value" placeholder="ex.: Região Morro Estevão (sem macro)"></div>' +
+    '<div class="field"><label>Município</label><select onchange="S._virt.cidadeId=this.value;virt_render()"><option value="">— escolher —</option>' +
+      cids.map(c => '<option value="' + escHtml(c.id) + '"' + (c.id === V.cidadeId ? ' selected' : '') + '>' + escHtml(c.nome) + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label>Sistema (o IPD padrão vem dele)</label><select onchange="S._virt.sistemaId=this.value"><option value="">— escolher —</option>' +
+      sis.map(s => '<option value="' + escHtml(s.sid) + '"' + (s.sid === V.sistemaId ? ' selected' : '') + '>' + escHtml(s.nome + ((s.cidades || []).includes(V.cidadeId) ? ' ✓' : '') + (vol_ipdSistema(s.sid) != null ? ' — IPD ' + String(vol_ipdSistema(s.sid)).replace('.', ',') + '%' : '')) + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label>Observação</label><input type="text" value="' + escHtml(V.obs) + '" oninput="S._virt.obs=this.value"></div>';
+}
+async function virt_salvar() {
+  const V = S._virt, M = macro_estado();
+  if (!V) return;
+  if (!V.nome.trim() || !V.cidadeId || !V.sistemaId) { alert('Informe nome, município e sistema.'); return; }
+  if (!macro_podeImportar() && !editorDMC_podeEditarCidade(V.cidadeId)) { alert('Município fora do seu escopo.'); return; }
+  const s = M.sistemas.find(x => x.sid === V.sistemaId) || {};
+  const setor = setorAtual(), agora = Date.now();
+  const pontoId = V._id ? M.macros.find(x => x._id === V._id).pontoId : 'VIRT' + agora.toString(36).toUpperCase();
+  const id = V._id || (setor + '_' + pontoId);
+  const dados = { nome: V.nome.trim(), cidadeId: V.cidadeId, sistemaId: V.sistemaId, sistemaNome: s.nome || '', agencia: s.agencia || '', superintendencia: s.superintendencia || '',
+    obs: V.obs.trim(), virtual: true, situacao: 'Virtual', finalidade: 'Ponto virtual (sem macromedidor)', editadoEm: agora, editadoPor: S.user?.email || '' };
+  if (!V._id) Object.assign(dados, { setor, pontoId, criadoEm: agora, criadoPor: S.user?.email || '', apelidos: [], lancamentos: {}, bidirecional: false, equipamentos: [] });
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'macros', id), dados, { merge: true });
+    const i = M.macros.findIndex(x => x._id === id);
+    if (i >= 0) Object.assign(M.macros[i], dados); else M.macros.push({ _id: id, ...dados });
+    closeModal('modal-ponto-virtual');
+    toast('Ponto virtual salvo.');
+    macro_render();
+  } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
+}
+
+// ---------- Grade "Lançamentos do mês"
+function lanc_estado() {
+  const M = macro_estado();
+  if (!M.lanc) M.lanc = { mes: vol_mesAnteriorAoAtual(), filtro: '', rasc: {} };
+  return M.lanc;
+}
+// Leitura de campo que fecha o mês de referência = a mais próxima de 01/(mês+1) 08:00 (até 16 dias)
+function lanc_leituraFechamento(m, mes) {
+  const T = vol_alvoFechamento(vol_proxMes(mes));
+  let best = null;
+  (m.leiturasCampo || []).forEach(x => { const t = vol_tempoCampo(x.data); if (Math.abs(t - T) <= 16 * 86400e3 && (!best || Math.abs(t - T) < Math.abs(vol_tempoCampo(best.data) - T))) best = x; });
+  return best;
+}
+function lanc_alertasCampo(m, rasc) {
+  if (!rasc || !rasc.data || rasc.valor === '' || rasc.valor == null) return [];
+  const data = campo_parseData(rasc.data), valor = macro_num(rasc.valor);
+  if (!data || valor == null) return ['data ou leitura inválida'];
+  const lista = [...(m.leiturasCampo || []).filter(x => x.data !== data), { data, valor }];
+  const iv = campo_intervalos(m, lista);
+  const i = iv.findIndex(x => x.data === data);
+  return [...(iv[i] ? iv[i].alertas : []), ...(iv[i + 1] ? iv[i + 1].alertas.map(a => 'próxima: ' + a) : [])];
+}
+function lanc_render() {
+  const M = macro_estado(), L = lanc_estado();
+  const el = document.getElementById('lanc-conteudo');
+  if (!el) return;
+  const inp = document.getElementById('lanc-mes'); if (inp && inp.value !== L.mes) inp.value = L.mes;
+  if (!M.carregado) { el.innerHTML = ''; return; }
+  const fil = document.getElementById('lanc-filtro');
+  if (fil) {
+    const cids = new Set(M.macros.filter(m => (macro_ehCampo(m) || m.virtual) && macro_noEscopo(m)).map(m => m.cidadeId).filter(Boolean));
+    const html = '<option value="">Todos os municípios' + (macro_podeImportar() ? '' : ' do meu escopo') + '</option>' +
+      [...S.cidades].filter(c => cids.has(c.id)).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome))).map(c => '<option value="M:' + escHtml(c.id) + '">' + escHtml(c.nome) + '</option>').join('');
+    if (fil.dataset.html !== html) { fil.innerHTML = html; fil.dataset.html = html; }
+    fil.value = L.filtro || '';
+  }
+  const mes = L.mes, prox = vol_proxMes(mes);
+  const vis = m => macro_noEscopo(m) && macro_filtroMunPassa(m, L.filtro) && !m.ausenteNaPlanilha;
+  const campo = macro_ordenarPorMun(M.macros.filter(m => macro_ehCampo(m) && vis(m)));
+  const virt = macro_ordenarPorMun(M.macros.filter(m => m.virtual && vis(m)));
+  const pendC = campo.filter(m => !lanc_leituraFechamento(m, mes)).length;
+  const pendV = virt.filter(m => !((m.lancamentos || {})[mes] && (m.lancamentos[mes].micromedido != null))).length;
+  const nRasc = Object.values(L.rasc).filter(r => r && ((r.data && r.valor !== '' && r.valor != null) || (r.micromedido !== undefined && r.micromedido !== '') || (r.ipd !== undefined))).length;
+  const dataPadrao = prox + '-01';
+  let h = '<p style="font-size:12px;color:var(--text2);margin-bottom:8px">Mês de referência <b>' + vol_fmtMes(mes) + '</b>: a leitura de campo que fecha o mês é a do dia <b>01/' + prox.slice(5, 7) + '/' + prox.slice(0, 4) + '</b> (ou a mais próxima). ' +
+    '<b style="color:' + (pendC + pendV ? 'var(--amber)' : 'var(--green)') + '">' + (pendC + pendV) + ' pendente(s)</b>' + (pendC + pendV ? ' (' + pendC + ' leitura(s) de campo, ' + pendV + ' ponto(s) virtual(is))' : '') + '.</p>';
+  // Leituras de campo
+  h += '<div class="section-title" style="margin:6px 0">Leituras de campo (' + campo.length + ')</div>';
+  if (!campo.length) h += '<p style="font-size:12px;color:var(--text2)">Nenhum macro marcado como "medição por leitura de campo"' + (L.filtro ? ' neste filtro' : '') + '. Marque no Editar do macro.</p>';
+  else h += '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Macro</th><th>Leitura anterior</th><th>Leitura do fechamento</th><th style="width:140px">Nova: data</th><th style="width:150px">Nova: leitura (m³)</th><th>Conferência</th></tr></thead><tbody>' +
+    campo.map(m => {
+      const ls = [...(m.leiturasCampo || [])].sort((a, b) => a.data.localeCompare(b.data));
+      const fech = lanc_leituraFechamento(m, mes);
+      const ant = [...ls].reverse().find(x => !fech || x.data < fech.data);
+      const r = L.rasc[m._id] || {};
+      const al = lanc_alertasCampo(m, r);
+      const ok = r.data && r.valor !== '' && r.valor != null && !al.length;
+      return '<tr><td><span style="color:var(--text3)">' + escHtml(macro_rotuloMun(m)) + ' —</span> <b>' + escHtml(m.nome) + '</b></td>' +
+        '<td style="font-size:11.5px;white-space:nowrap">' + (ant ? ant.data.split('-').reverse().join('/') + ' · ' + Number(ant.valor).toLocaleString('pt-BR') : '—') + '</td>' +
+        '<td style="font-size:11.5px;white-space:nowrap">' + (fech ? '<span style="color:var(--green)"><i class="ti ti-check"></i> ' + fech.data.split('-').reverse().join('/') + ' · ' + Number(fech.valor).toLocaleString('pt-BR') + '</span>' : '<span style="color:var(--amber)">pendente</span>') + '</td>' +
+        '<td><input type="date" value="' + escHtml(r.data || (fech ? '' : dataPadrao)) + '" onchange="lanc_rasc(\'' + escHtml(m._id) + '\',\'data\',this.value)" style="font-size:12px;width:130px"></td>' +
+        '<td><input type="number" step="any" value="' + escHtml(r.valor ?? '') + '" oninput="lanc_rasc(\'' + escHtml(m._id) + '\',\'valor\',this.value,true,this.closest(\'tr\').querySelector(\'input[type=date]\').value)" style="font-size:12px;width:140px" placeholder="totalizador"></td>' +
+        '<td id="lanc-al-' + escHtml(m._id) + '" style="font-size:11px;color:var(--amber)">' + (al.length ? '<i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') : ok ? '<span style="color:var(--green)">ok</span>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  // Pontos virtuais
+  h += '<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px"><div class="section-title" style="margin:0">Pontos virtuais (' + virt.length + ')</div><span style="flex:1"></span>' +
+    '<button class="btn sm" onclick="virt_abrir()"><i class="ti ti-plus"></i> Ponto virtual</button></div>';
+  if (!virt.length) h += '<p style="font-size:12px;color:var(--text2)">Nenhum ponto virtual' + (L.filtro ? ' neste filtro' : '') + '.</p>';
+  else h += '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Ponto</th><th>Sistema</th><th style="text-align:right">Mês anterior (m³)</th><th style="width:160px">Micromedido ' + vol_fmtMes(mes) + ' (m³)</th><th style="width:120px">IPD (%)</th><th style="text-align:right">Volume estimado (m³)</th><th></th></tr></thead><tbody>' +
+    virt.map(m => {
+      const l = (m.lancamentos || {})[mes] || {};
+      const la = (m.lancamentos || {})[vol_mesMais(mes, -1)];
+      const r = L.rasc[m._id] || {};
+      const micro = r.micromedido !== undefined ? r.micromedido : (l.micromedido ?? '');
+      const ipdPad = vol_ipdSistema(m.sistemaId);
+      const ipd = r.ipd !== undefined ? r.ipd : (l.ipd ?? '');
+      const ipdUso = ipd !== '' && ipd != null ? macro_num(ipd) : ipdPad;
+      const mv = macro_num(micro);
+      const vol = mv != null && ipdUso != null && ipdUso < 100 ? mv / (1 - ipdUso / 100) : null;
+      const laVol = la && la.micromedido != null ? (() => { const ip = la.ipd != null && la.ipd !== '' ? +la.ipd : ipdPad; return ip != null ? la.micromedido / (1 - ip / 100) : null; })() : null;
+      return '<tr><td><span style="color:var(--text3)">' + escHtml(macro_rotuloMun(m)) + ' —</span> <b>' + escHtml(m.nome) + '</b> <span class="badge purple">virtual</span></td>' +
+        '<td style="font-size:11.5px">' + escHtml(m.sistemaNome || '') + '</td>' +
+        '<td style="text-align:right;font-size:11.5px">' + (laVol != null ? vol_fmtM3(laVol) : '—') + '</td>' +
+        '<td><input type="number" step="any" min="0" value="' + escHtml(micro) + '" oninput="lanc_rasc(\'' + escHtml(m._id) + '\',\'micromedido\',this.value,true)" style="font-size:12px;width:140px"></td>' +
+        '<td><input type="number" step="0.1" min="0" max="99.9" value="' + escHtml(ipd) + '" placeholder="' + (ipdPad != null ? String(ipdPad).replace('.', ',') + ' (padrão)' : 'sem padrão') + '" oninput="lanc_rasc(\'' + escHtml(m._id) + '\',\'ipd\',this.value,true)" style="font-size:12px;width:105px"></td>' +
+        '<td id="lanc-vv-' + escHtml(m._id) + '" style="text-align:right;font-weight:600">' + (vol != null ? vol_fmtM3(vol) : (mv != null && ipdUso == null ? '<span style="color:var(--amber);font-weight:400">sem IPD</span>' : '—')) + '</td>' +
+        '<td><button class="btn sm" onclick="virt_abrir(\'' + escHtml(m._id) + '\')" title="Editar ponto"><i class="ti ti-pencil"></i></button></td></tr>';
+    }).join('') + '</tbody></table></div>';
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-top:12px"><button class="btn primary" onclick="lanc_gravar()"' + (nRasc ? '' : ' disabled') + '><i class="ti ti-device-floppy"></i> Gravar lançamentos' + (nRasc ? ' (' + nRasc + ')' : '') + '</button>' +
+    (nRasc ? '<button class="btn" onclick="lanc_estado().rasc={};lanc_render()">Descartar</button>' : '') + '</div>';
+  el.innerHTML = h;
+}
+// Guarda o que foi digitado (sem gravar). leve = não redesenha a grade (para não perder o foco)
+function lanc_rasc(id, campo, valor, leve, dataTela) {
+  const L = lanc_estado();
+  L.rasc[id] = { ...(L.rasc[id] || {}), [campo]: valor };
+  if (campo === 'valor' && !L.rasc[id].data && dataTela) L.rasc[id].data = dataTela;
+  if (!leve) { lanc_render(); return; }
+  const M = macro_estado();
+  const m = M.macros.find(x => x._id === id);
+  if (!m) return;
+  if (m.virtual) {
+    const r = L.rasc[id], l = (m.lancamentos || {})[L.mes] || {};
+    const mv = macro_num(r.micromedido !== undefined ? r.micromedido : l.micromedido);
+    const ipdIn = r.ipd !== undefined ? r.ipd : (l.ipd ?? '');
+    const ipd = ipdIn !== '' && ipdIn != null ? macro_num(ipdIn) : vol_ipdSistema(m.sistemaId);
+    const c = document.getElementById('lanc-vv-' + id);
+    if (c) c.innerHTML = mv != null && ipd != null && ipd < 100 ? vol_fmtM3(mv / (1 - ipd / 100)) : (mv != null ? '<span style="color:var(--amber);font-weight:400">sem IPD</span>' : '—');
+  } else {
+    const al = lanc_alertasCampo(m, L.rasc[id]);
+    const c = document.getElementById('lanc-al-' + id);
+    if (c) c.innerHTML = al.length ? '<i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') : (L.rasc[id].data && L.rasc[id].valor ? '<span style="color:var(--green)">ok</span>' : '');
+  }
+  const b = document.querySelector('#lanc-conteudo .btn.primary');
+  if (b) { const n = Object.keys(L.rasc).length; b.disabled = !n; b.innerHTML = '<i class="ti ti-device-floppy"></i> Gravar lançamentos (' + n + ')'; }
+}
+async function lanc_gravar() {
+  const M = macro_estado(), L = lanc_estado();
+  const ops = [], avisos = [], erros = [];
+  const agora = Date.now(), quem = S.user?.email || '';
+  Object.entries(L.rasc).forEach(([id, r]) => {
+    const m = M.macros.find(x => x._id === id);
+    if (!m || !macro_noEscopo(m)) return;
+    if (m.virtual) {
+      const atual = (m.lancamentos || {})[L.mes] || {};
+      const micro = r.micromedido !== undefined ? (String(r.micromedido).trim() === '' ? null : macro_num(r.micromedido)) : atual.micromedido ?? null;
+      const ipd = r.ipd !== undefined ? (String(r.ipd).trim() === '' ? null : macro_num(r.ipd)) : (atual.ipd ?? null);
+      if (r.micromedido !== undefined && String(r.micromedido).trim() !== '' && micro == null) { erros.push(m.nome + ': micromedido inválido'); return; }
+      if (ipd != null && (ipd < 0 || ipd >= 100)) { erros.push(m.nome + ': IPD deve estar entre 0 e 99,9%'); return; }
+      const lanc = { ...(m.lancamentos || {}) };
+      if (micro == null && ipd == null) delete lanc[L.mes];
+      else lanc[L.mes] = { micromedido: micro, ipd, em: agora, por: quem };
+      ops.push({ m, dados: { lancamentos: lanc, lancAtualizadoEm: agora } });
+    } else {
+      if (!r.data && (r.valor === '' || r.valor == null)) return;
+      const data = campo_parseData(r.data), valor = macro_num(r.valor);
+      if (!data || valor == null) { erros.push(m.nome + ': informe data e leitura'); return; }
+      const al = lanc_alertasCampo(m, r);
+      if (al.length) avisos.push(macro_rotuloMun(m) + ' — ' + m.nome + ': ' + al.join('; '));
+      const lista = [...(m.leiturasCampo || []).filter(x => x.data !== data), { data, valor, em: agora, por: quem }].sort((a, b) => a.data.localeCompare(b.data));
+      ops.push({ m, dados: { leiturasCampo: lista, campoAtualizadoEm: agora, medicaoCampo: true } });
+    }
+  });
+  if (erros.length) { alert('Corrija antes de gravar:\n\n• ' + erros.join('\n• ')); return; }
+  if (!ops.length) return;
+  if (avisos.length && !confirm('Confira antes de gravar:\n\n• ' + avisos.join('\n• ') + '\n\nGravar mesmo assim?')) return;
+  try {
+    const { db, doc, writeBatch } = window.FB;
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = writeBatch(db);
+      ops.slice(i, i + 400).forEach(o => b.set(doc(db, 'macros', o.m._id), o.dados, { merge: true }));
+      await b.commit();
+    }
+    ops.forEach(o => Object.assign(o.m, o.dados));
+    L.rasc = {};
+    toast(ops.length + ' lançamento(s) gravado(s).');
+    lanc_render();
+  } catch (e) { alert(e && e.code === 'permission-denied' ? 'O banco recusou (permissão).' : 'Erro ao gravar: ' + (e.code || e.message)); }
+}
+// Planilha pré-preenchida (para mandar à agência) e importação dela
+function lanc_baixarPlanilha() {
+  const M = macro_estado(), L = lanc_estado();
+  const vis = m => macro_noEscopo(m) && macro_filtroMunPassa(m, L.filtro) && !m.ausenteNaPlanilha;
+  const linhas = [['Ponto ID', 'Tipo', 'Município', 'Sistema', 'Ponto', 'Última leitura - data', 'Última leitura (m³)', 'Data da leitura (dd/mm/aaaa)', 'Leitura (m³)', 'Micromedido ' + vol_fmtMes(L.mes) + ' (m³)', 'IPD (%)']];
+  macro_ordenarPorMun(M.macros.filter(m => macro_ehCampo(m) && vis(m))).forEach(m => {
+    const ult = [...(m.leiturasCampo || [])].sort((a, b) => a.data.localeCompare(b.data)).pop();
+    linhas.push([m.pontoId, 'leitura de campo', macro_rotuloMun(m), m.sistemaNome || '', m.nome, ult ? ult.data.split('-').reverse().join('/') : '', ult ? ult.valor : '', '', '', '', '']);
+  });
+  macro_ordenarPorMun(M.macros.filter(m => m.virtual && vis(m))).forEach(m => {
+    const l = (m.lancamentos || {})[L.mes] || {};
+    linhas.push([m.pontoId, 'ponto virtual', macro_rotuloMun(m), m.sistemaNome || '', m.nome, '', '', '', '', l.micromedido ?? '', l.ipd ?? (vol_ipdSistema(m.sistemaId) ?? '')]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(linhas);
+  ws['!cols'] = [{ wch: 13 }, { wch: 15 }, { wch: 16 }, { wch: 16 }, { wch: 36 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 8 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Lançamentos ' + L.mes);
+  XLSX.writeFile(wb, 'GeoFon_Lancamentos_' + setorAtual() + '_' + L.mes + '.xlsx');
+}
+function lanc_abrirImportacao() { document.getElementById('up-lanc').click(); }
+function lanc_handleArquivo(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  const fr = new FileReader();
+  fr.onload = ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null, raw: true });
+      const cab = (rows[0] || []).map(textoBusca);
+      const iP = cab.indexOf('ponto id'), iD = cab.findIndex(c => c.startsWith('data da leitura')), iL = cab.findIndex(c => c.startsWith('leitura (')),
+        iM = cab.findIndex(c => c.startsWith('micromedido')), iI = cab.findIndex(c => c.startsWith('ipd'));
+      if (iP < 0) throw new Error('Use a planilha baixada em "Planilha do mês" (coluna "Ponto ID").');
+      const M = macro_estado(), L = lanc_estado();
+      const porPonto = {}; M.macros.forEach(m => { porPonto[m.pontoId] = m; });
+      let n = 0, fora = 0;
+      rows.slice(1).forEach(r => {
+        const m = porPonto[macro_txt(r[iP])];
+        if (!m) return;
+        if (!macro_noEscopo(m)) { fora++; return; }
+        if (m.virtual) {
+          const mv = iM >= 0 ? r[iM] : null, ip = iI >= 0 ? r[iI] : null;
+          if (mv == null || mv === '') return;
+          const padrao = vol_ipdSistema(m.sistemaId);
+          L.rasc[m._id] = { micromedido: String(mv), ...(ip != null && ip !== '' && macro_num(ip) !== padrao ? { ipd: String(ip) } : {}) };
+          n++;
+        } else {
+          const d = iD >= 0 ? campo_parseData(r[iD]) : null, v = iL >= 0 ? r[iL] : null;
+          if (!d || v == null || v === '') return;
+          L.rasc[m._id] = { data: d, valor: String(v) };
+          n++;
+        }
+      });
+      toast(n + ' lançamento(s) carregados na grade — confira e clique em Gravar.' + (fora ? ' ' + fora + ' fora do seu escopo ignorados.' : ''));
+      lanc_render();
+    } catch (e) { alert('Não foi possível ler a planilha: ' + e.message); }
   };
   fr.readAsArrayBuffer(f);
 }

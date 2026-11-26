@@ -501,11 +501,14 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div id="macrosec-volumes" class="macro-sec config-section-panel" style="max-width:none;display:none">
         <div class="section-title" style="margin:0 0 6px">Volumes do mês</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-          <label style="font-size:12px">Mês <input type="month" id="vol-mes" onchange="vol_estado().mes=this.value;vol_estado().resultado=null;vol_renderVolumes()" style="font-size:12px;padding:4px"></label>
-          <button class="btn sm primary" onclick="vol_estado().mes=document.getElementById('vol-mes').value;vol_calcular()"><i class="ti ti-calculator"></i> Calcular</button>
+          <label style="font-size:12px">Mês <input type="month" id="vol-mes" onchange="vol_trocarMes(this.value)" style="font-size:12px;padding:4px"></label>
+          <button class="btn sm primary" id="vol-btn-calcular" onclick="vol_estado().mes=document.getElementById('vol-mes').value;vol_calcular()"><i class="ti ti-calculator"></i> Calcular</button>
           <select id="vol-escopo" onchange="vol_estado().escopo=this.value;vol_renderVolumes()" style="font-size:12px;padding:5px"></select>
           <span style="flex:1"></span>
           <button class="btn sm" onclick="vol_exportarXLSX()"><i class="ti ti-download"></i> Baixar planilha</button>
+          <button class="btn sm" onclick="vol_baixarModeloHistorico()" title="Planilha com os macros e os últimos 13 meses para preencher o histórico"><i class="ti ti-file-download"></i> Modelo de histórico</button>
+          <button class="btn sm" onclick="vol_abrirImportacaoHistorico()" title="Volumes mensais antigos (usados nas estimativas e na sazonalidade)"><i class="ti ti-history"></i> Importar histórico</button>
+          <input type="file" id="up-vol-historico" accept=".xlsx,.xls" style="display:none" onchange="vol_handleArquivoHistorico(this)">
         </div>
         <div id="vol-resultado"></div>
       </div>
@@ -1530,6 +1533,17 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- Modal: Escopo do Editor de DMC de um Supervisor (Fase 4) -->
+<div class="modal-overlay" id="modal-vol-ajuste">
+  <div class="modal" style="max-width:560px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:8px"><i class="ti ti-adjustments"></i> <span id="vol-aj-titulo"></span></h3>
+    <div id="vol-aj-corpo" style="max-height:65vh;overflow:auto"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn primary" id="btn-vol-aj-salvar" style="flex:1;justify-content:center" onclick="vol_salvarAjuste()"><i class="ti ti-device-floppy"></i> Aplicar</button>
+      <button class="btn" style="flex:1;justify-content:center;background:var(--bg2)" onclick="closeModal('modal-vol-ajuste')">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-vol-regra">
   <div class="modal" style="max-width:640px">
     <h3 id="vol-regra-titulo" style="font-size:15px;font-weight:600;margin-bottom:8px"></h3>
@@ -13046,7 +13060,7 @@ function macro_aplicarVisibilidade() {
 
 function macro_estado() {
   if (!S._macro) S._macro = { carregado: false, carregando: false, erro: '', macros: [], sistemas: [], secao: 'macros',
-    busca: '', fSistema: '', fFinalidade: '', fSituacao: '', fEspecial: '', ordem: { col: 'sistema', dir: 1 }, config: {}, mesLeituras: '' };
+    busca: '', fSistema: '', fFinalidade: '', fSituacao: '', fEspecial: '', ordem: { col: 'cidade', dir: 1 }, config: {}, mesLeituras: '' };
   return S._macro;
 }
 
@@ -13075,7 +13089,7 @@ async function macro_carregar(forcar) {
       console.warn('regrasVolume', e.code || e); M.regras = [];
       M.erroRegras = e && e.code === 'permission-denied' ? 'O banco recusou a leitura das regras (permissão). Falta publicar a regra da coleção "regrasVolume" no Firebase Console.' : 'Erro ao ler as regras: ' + (e.code || e.message);
     }
-    if (M.vol) { M.vol.resultado = null; M.vol.cache = {}; }
+    if (M.vol) { M.vol.resultado = null; M.vol.cache = {}; M.vol.docMes = ''; M.vol.doc = null; }
     M.carregado = true;
   } catch (e) {
     console.error('macro_carregar', e);
@@ -13462,8 +13476,8 @@ function macro_renderMacros() {
   };
   const MAX = 600;
   el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr>' +
-    th('sistema', 'Sistema') + th('nome', 'Macro (ponto)') + th('finalidade', 'Finalidade') + th('situacao', 'Situação') + th('dn', 'DN', ';text-align:right') +
-    '<th>Equipamento</th>' + th('cidade', 'Município (GeoFon)') + th('dmc', 'DMC') + '<th title="Fluxo nos dois sentidos — volume líquido">2 sent.</th><th></th>' +
+    th('cidade', 'Município') + th('sistema', 'Sistema') + th('nome', 'Macro (ponto)') + th('finalidade', 'Finalidade') + th('situacao', 'Situação') + th('dn', 'DN', ';text-align:right') +
+    '<th>Equipamento</th>' + th('dmc', 'DMC') + '<th title="Fluxo nos dois sentidos — volume líquido">2 sent.</th><th></th>' +
     '</tr></thead><tbody>' + filtradas.slice(0, MAX).map(({ m, dmc, cidade }) => {
       const eq = (m.equipamentos || []);
       const eqTxt = eq.length
@@ -13479,13 +13493,13 @@ function macro_renderMacros() {
       const sitCor = textoBusca(m.situacao) === 'operando' ? '' : ';color:var(--amber)';
       const mapa = m.coord ? ' <a href="https://www.google.com/maps?q=' + m.coord.lat + ',' + m.coord.lng + '" target="_blank" rel="noopener" title="Abrir no mapa" style="color:var(--text3)"><i class="ti ti-map-pin"></i></a>' : '';
       return '<tr' + (m.ausenteNaPlanilha ? ' style="opacity:.55" title="Este ponto não veio na última planilha importada"' : '') + '>' +
+        '<td style="white-space:nowrap;font-weight:600">' + (cidade ? escHtml(cidade.toLocaleUpperCase('pt-BR')) : '<span style="color:var(--amber);font-weight:400">sem município</span>') + '</td>' +
         '<td style="white-space:nowrap">' + escHtml(m.sistemaNome || m.sistemaId) + (m.agencia ? ' <span style="color:var(--text3);font-size:10.5px">' + escHtml(m.agencia) + '</span>' : '') + '</td>' +
         '<td><b>' + escHtml(m.nome) + '</b>' + mapa + '<div style="font-family:monospace;font-size:10.5px;color:var(--text3)">' + escHtml(m.pontoId) + (m.tag ? ' · ' + escHtml(m.tag) : '') + '</div></td>' +
         '<td>' + escHtml(m.finalidade || '—') + '</td>' +
         '<td style="white-space:nowrap' + sitCor + '">' + escHtml(m.situacao || '—') + '</td>' +
         '<td style="text-align:right">' + escHtml(m.dnRede || '—') + '</td>' +
         '<td style="font-size:11px">' + eqTxt + '</td>' +
-        '<td style="white-space:nowrap">' + (cidade ? escHtml(cidade) : '<span style="color:var(--amber)">sem município</span>') + '</td>' +
         '<td style="font-size:11px">' + dmcTxt + '</td>' +
         '<td style="text-align:center">' + (m.bidirecional ? '<i class="ti ti-arrows-left-right" style="color:var(--blue)" title="Fluxo nos dois sentidos (volume líquido)"></i>' : '') + '</td>' +
         '<td>' + (macro_podeEditarMacro(m) ? '<button class="btn sm" onclick="macro_abrirEditar(\'' + escHtml(m._id) + '\')"><i class="ti ti-pencil"></i></button>' : '') + '</td></tr>';
@@ -13564,11 +13578,12 @@ function macro_renderSistemas() {
   const res = document.getElementById('macro-sistemas-resumo');
   if (res) res.innerHTML = '<b>' + lista.length + '</b> sistemas' + (semMun ? ' · <b style="color:var(--amber)">' + semMun + '</b> sem município vinculado' : '') +
     '. Um município pode ter vários sistemas, e um sistema pode atender vários municípios.';
-  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Sistema</th><th>Código</th><th>Agência</th><th style="text-align:right">Macros</th><th>Municípios atendidos</th><th></th></tr></thead><tbody>' +
+  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Sistema</th><th>Código</th><th>Agência</th><th style="text-align:right">Macros</th><th>Municípios atendidos</th><th title="Sazonal: a estimativa por histórico usa o mesmo mês do ano anterior">Sazonal</th><th></th></tr></thead><tbody>' +
     lista.map(s => {
       const mun = (s.cidades || []).map(id => '<span class="badge purple" style="margin:1px">' + escHtml(macro_nomeCidade(id) || id) + '</span>').join(' ') || '<span style="color:var(--amber)">nenhum</span>';
       return '<tr><td><b>' + escHtml(s.nome) + '</b></td><td style="font-family:monospace;font-size:11px">' + escHtml(s.sid) + '</td><td>' + escHtml(s.agencia || '—') + '</td>' +
         '<td style="text-align:right">' + (cont[s.sid] || 0) + '</td><td>' + mun + '</td>' +
+        '<td style="text-align:center"><input type="checkbox"' + (vol_sistemaSazonal(s.sid) ? ' checked' : '') + (macro_podeImportar() ? '' : ' disabled') + ' onchange="vol_alternarSazonal(\'' + escHtml(s._id) + '\',this.checked)" title="Sazonal (ex.: litoral no verão)"></td>' +
         '<td>' + (macro_podeImportar() ? '<button class="btn sm" onclick="macro_abrirSistema(\'' + escHtml(s._id) + '\')"><i class="ti ti-pencil"></i> Municípios</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -13821,6 +13836,7 @@ async function macro_handleArquivoScada(input) {
       p.vinculoAnterior = v ? v.m._id : '';
       p.sugestoes = macro_sugestoesPonto(p.nome);
       p.escolha = v ? v.m._id : (ign.has(p.nome) ? '__ignorar' : '');
+      p.filtroMun = v && v.m.cidadeId ? 'M:' + v.m.cidadeId : macro_filtroDoNomePonto(p.nome);
       if (v && v.grandeza) p.grandeza = v.grandeza;
     });
     S._macroScada = { arquivo: f.name, linhas: r.linhas, invalidas: r.invalidas, lista };
@@ -13831,18 +13847,78 @@ async function macro_handleArquivoScada(input) {
     alert('Não foi possível ler o relatório: ' + e.message);
   }
 }
-function macro_opcoesMacroSelect(p) {
+// ---------- Listas de macros: município na frente, pré-filtro de município, marcação de leitura
+// Município do macro para listas (município do GeoFon; se ainda não tiver, o nome do sistema)
+function macro_rotuloMun(m) {
+  return (macro_nomeCidade(m.cidadeId) || m.sistemaNome || '—').toLocaleUpperCase('pt-BR');
+}
+function macro_ordenarPorMun(lista) {
+  return [...lista].sort((a, b) => textoBusca(macro_rotuloMun(a)).localeCompare(textoBusca(macro_rotuloMun(b))) || textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+}
+function macro_temLeitura(m, g) {
+  return (m.apelidos || []).some(a => a.grandeza === (g || 'V'));
+}
+// Pré-filtro: 'M:<cidadeId>' (macros do município) | 'S:<sid>' (macros do sistema) | '' (todos)
+function macro_filtroMunPassa(m, f) {
+  if (!f) return true;
+  const t = f.slice(0, 1), id = f.slice(2);
+  return t === 'M' ? m.cidadeId === id : t === 'S' ? m.sistemaId === id : true;
+}
+function macro_opcoesFiltroMun() {
   const M = macro_estado();
+  const cids = new Set(M.macros.map(m => m.cidadeId).filter(Boolean));
+  const mun = [...S.cidades].filter(c => cids.has(c.id)).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  const sis = [...M.sistemas].sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  return '<option value="">Todos os municípios</option>' +
+    '<optgroup label="Municípios">' + mun.map(c => '<option value="M:' + escHtml(c.id) + '">' + escHtml(c.nome) + '</option>').join('') + '</optgroup>' +
+    '<optgroup label="Sistemas">' + sis.map(s => '<option value="S:' + escHtml(s.sid) + '">Sistema ' + escHtml(s.nome) + '</option>').join('') + '</optgroup>';
+}
+// Converte um escopo de regra ('M:..'/'S:..'/'X:..') em pré-filtro
+function macro_filtroDeEscopo(k) {
+  return k && (k.startsWith('M:') || k.startsWith('S:')) ? k : '';
+}
+// Pré-filtro a partir do começo do nome do ponto do supervisório ("#Criciúma - ...")
+function macro_filtroDoNomePonto(nome) {
+  const mun = textoBusca(String(nome || '').replace(/^#/, '').split(' - ')[0]);
+  if (!mun) return '';
+  const c = S.cidades.find(x => textoBusca(x.nome) === mun);
+  if (c && macro_estado().macros.some(m => m.cidadeId === c.id)) return 'M:' + c.id;
+  const s = macro_estado().sistemas.find(x => textoBusca(x.nome) === mun);
+  return s ? 'S:' + s.sid : '';
+}
+function macro_opcoesMacroSelect(p, ocupado) {
+  const M = macro_estado();
+  const g = p.grandeza || 'V';
   const sug = new Set(p.sugestoes.map(s => s.m._id));
-  const nomeMacro = m => (m.nome || m.pontoId) + ' — ' + (m.sistemaNome || '') + (m.situacao && textoBusca(m.situacao) !== 'operando' ? ' (' + m.situacao + ')' : '');
-  const todos = [...M.macros].filter(m => !sug.has(m._id)).sort((a, b) => textoBusca(a.sistemaNome + ' ' + a.nome).localeCompare(textoBusca(b.sistemaNome + ' ' + b.nome)));
+  const opc = m => {
+    const dono = ocupado[m._id + '|' + g];
+    const tomado = dono && dono !== p.nome && m._id !== p.escolha;
+    const txt = macro_rotuloMun(m) + ' — ' + (m.nome || m.pontoId) + (m.situacao && textoBusca(m.situacao) !== 'operando' ? ' (' + m.situacao + ')' : '') +
+      (tomado ? ' — já ligado: ' + (dono.length > 45 ? dono.slice(0, 45) + '…' : dono) : '');
+    return '<option value="' + escHtml(m._id) + '"' + (tomado ? ' disabled' : '') + '>' + escHtml(txt) + '</option>';
+  };
+  const filtrados = macro_ordenarPorMun(M.macros.filter(m => !sug.has(m._id) && !m.ausenteNaPlanilha && macro_filtroMunPassa(m, p.filtroMun)));
+  const escolhido = p.escolha && p.escolha !== '__ignorar' && !sug.has(p.escolha) && !filtrados.some(m => m._id === p.escolha) ? M.macros.find(m => m._id === p.escolha) : null;
   return '<option value="">— escolher macro —</option><option value="__ignorar">Ignorar este ponto</option>' +
-    (p.sugestoes.length ? '<optgroup label="Mais parecidos">' + p.sugestoes.map(s => '<option value="' + escHtml(s.m._id) + '">' + escHtml(nomeMacro(s.m)) + '</option>').join('') + '</optgroup>' : '') +
-    '<optgroup label="Todos os macros">' + todos.map(m => '<option value="' + escHtml(m._id) + '">' + escHtml(nomeMacro(m)) + '</option>').join('') + '</optgroup>';
+    (escolhido ? '<optgroup label="Escolhido">' + opc(escolhido) + '</optgroup>' : '') +
+    (p.sugestoes.length ? '<optgroup label="Mais parecidos">' + p.sugestoes.map(s => opc(s.m)).join('') + '</optgroup>' : '') +
+    '<optgroup label="' + escHtml(p.filtroMun ? 'Macros do filtro' : 'Todos os macros') + '">' + filtrados.map(opc).join('') + '</optgroup>';
+}
+// Quem já está ligado a cada macro (por grandeza): vínculos salvos de pontos que NÃO estão neste
+// arquivo + o que está escolhido agora na tela
+function macro_ocupacaoScada(X) {
+  const M = macro_estado();
+  const nomes = new Set(X.lista.map(p => p.nome));
+  const ocupado = {};
+  M.macros.forEach(m => (m.apelidos || []).forEach(a => { if (!nomes.has(a.nome)) ocupado[m._id + '|' + a.grandeza] = a.nome; }));
+  X.lista.forEach(q => { if (q.escolha && q.escolha !== '__ignorar' && q.grandeza) ocupado[q.escolha + '|' + q.grandeza] = q.nome; });
+  return ocupado;
 }
 function macro_renderImportScada() {
   const X = S._macroScada;
   if (!X) return;
+  const ocupado = macro_ocupacaoScada(X);
+  const opcFiltro = macro_opcoesFiltroMun();
   const nV = X.lista.filter(p => p.escolha && p.escolha !== '__ignorar' && p.grandeza).length;
   const nPend = X.lista.filter(p => !p.escolha || (p.escolha !== '__ignorar' && !p.grandeza)).length;
   const nLeit = X.lista.filter(p => p.escolha && p.escolha !== '__ignorar' && p.grandeza).reduce((a, p) => a + p.n, 0);
@@ -13863,15 +13939,24 @@ function macro_renderImportScada() {
         '<td style="font-size:11px;white-space:nowrap">' + escHtml(macro_fmtChaveTempo(p.ini)) + '<br>' + escHtml(macro_fmtChaveTempo(p.fim)) + '</td>' +
         '<td><select onchange="S._macroScada.lista[' + i + '].grandeza=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px">' +
           '<option value=""' + (!p.grandeza ? ' selected' : '') + '>?</option><option value="V"' + (p.grandeza === 'V' ? ' selected' : '') + '>Volume (m³)</option><option value="Q"' + (p.grandeza === 'Q' ? ' selected' : '') + '>Vazão</option></select></td>' +
-        '<td><select id="macro-scada-sel-' + i + '" onchange="S._macroScada.lista[' + i + '].escolha=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px;max-width:330px">' + macro_opcoesMacroSelect(p) + '</select>' + novo + sug + '</td></tr>';
+        '<td><select id="macro-scada-fil-' + i + '" onchange="S._macroScada.lista[' + i + '].filtroMun=this.value;macro_renderImportScada()" style="font-size:11px;padding:2px;max-width:330px;margin-bottom:3px;display:block" title="Pré-filtro: mostra só os macros deste município/sistema (as sugestões aparecem sempre)">' + opcFiltro + '</select>' +
+          '<select id="macro-scada-sel-' + i + '" onchange="S._macroScada.lista[' + i + '].escolha=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px;max-width:330px">' + macro_opcoesMacroSelect(p, ocupado) + '</select>' + novo + sug + '</td></tr>';
     }).join('') + '</tbody></table>';
-  X.lista.forEach((p, i) => { const s = document.getElementById('macro-scada-sel-' + i); if (s) s.value = p.escolha || ''; });
+  X.lista.forEach((p, i) => {
+    const s = document.getElementById('macro-scada-sel-' + i); if (s) s.value = p.escolha || '';
+    const f = document.getElementById('macro-scada-fil-' + i); if (f) f.value = p.filtroMun || '';
+  });
   document.getElementById('btn-macro-scada-gravar').disabled = !nV;
 }
 function macro_aceitarSugestoesScada() {
   const X = S._macroScada;
   if (!X) return;
-  X.lista.forEach(p => { if (!p.escolha && p.sugestoes[0]) p.escolha = p.sugestoes[0].m._id; });
+  X.lista.forEach(p => {
+    if (p.escolha || !p.sugestoes.length) return;
+    const ocupado = macro_ocupacaoScada(X);
+    const livre = p.sugestoes.find(s => !ocupado[s.m._id + '|' + (p.grandeza || 'V')]);
+    if (livre) p.escolha = livre.m._id;
+  });
   macro_renderImportScada();
 }
 
@@ -14205,12 +14290,11 @@ function vol_renderModalRegra() {
   document.getElementById('vol-regra-titulo').innerHTML = (prod ? '<i class="ti ti-droplet"></i> Regra de produção' : '<i class="ti ti-arrows-exchange"></i> Transferência') +
     (S._volRegraVersaoDe ? ' — nova versão' : R._id ? '' : ' — nova');
   const busca = textoBusca(R._buscaMacro || '');
-  const macrosOrd = [...M.macros].filter(m => !m.ausenteNaPlanilha || R.parcelas.some(p => p.macroId === m._id))
-    .sort((a, b) => textoBusca(a.sistemaNome + ' ' + a.nome).localeCompare(textoBusca(b.sistemaNome + ' ' + b.nome)));
-  const temV = m => (m.apelidos || []).some(a => a.grandeza === 'V');
+  if (R._filtroMun === undefined) R._filtroMun = macro_filtroDeEscopo(R.escopo) || macro_filtroDeEscopo(R.origem) || macro_filtroDeEscopo(R.destino) || '';
+  const macrosOrd = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha || R.parcelas.some(p => p.macroId === m._id)));
   const opcMacro = sel => '<option value="">— escolher macro —</option>' + macrosOrd
-    .filter(m => m._id === sel || !busca || textoBusca([m.nome, m.sistemaNome, m.tag, m.pontoId, macro_nomeCidade(m.cidadeId)].join(' ')).includes(busca))
-    .map(m => '<option value="' + escHtml(m._id) + '"' + (m._id === sel ? ' selected' : '') + '>' + escHtml(m.nome + ' — ' + (m.sistemaNome || '') + (temV(m) ? '' : ' (sem leitura de volume vinculada)')) + '</option>').join('');
+    .filter(m => m._id === sel || (macro_filtroMunPassa(m, R._filtroMun) && (!busca || textoBusca([m.nome, m.sistemaNome, m.tag, m.pontoId, macro_nomeCidade(m.cidadeId)].join(' ')).includes(busca))))
+    .map(m => '<option value="' + escHtml(m._id) + '"' + (m._id === sel ? ' selected' : '') + '>' + escHtml((macro_temLeitura(m, 'V') ? '● ' : '○ ') + macro_rotuloMun(m) + ' — ' + m.nome) + '</option>').join('');
   const campoEscopo = (campo, rotulo, externo) => {
     const v = R[campo] || '';
     return '<div class="field"><label>' + rotulo + '</label><select id="vol-regra-' + campo + '" onchange="vol_mudarEscopo(\'' + campo + '\',this.value)">' + vol_opcoesEscopo(v, externo) + '</select></div>';
@@ -14223,7 +14307,8 @@ function vol_renderModalRegra() {
         '<option value="ambos">Exportado da origem E importado do destino (mesma medição)</option>' +
         '<option value="origem">Só exportado da origem (o destino mede com outro macro)</option>' +
         '<option value="destino">Só importado do destino (a origem mede com outro macro)</option></select></div>') +
-    '<div style="font-size:12px;font-weight:600;margin:6px 0 4px">Parcelas (macros somados ou subtraídos)</div>' +
+    '<div style="font-size:12px;font-weight:600;margin:6px 0 4px">Parcelas (macros somados ou subtraídos) <span style="font-weight:400;color:var(--text3)">● tem leitura de volume do supervisório · ○ ainda não</span></div>' +
+    '<select id="vol-regra-filtroMun" onchange="S._volRegra._filtroMun=this.value;S._volRegra._filtroManual=true;vol_renderModalRegra()" style="width:100%;margin-bottom:5px;font-size:12px" title="Pré-filtro da lista de macros">' + macro_opcoesFiltroMun() + '</select>' +
     '<input type="search" placeholder="Filtrar a lista de macros..." value="' + escHtml(R._buscaMacro || '') + '" oninput="S._volRegra._buscaMacro=this.value;vol_renderModalRegra();setTimeout(()=>{const i=document.querySelector(\'#vol-regra-corpo input[type=search]\');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},0)" style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">' +
     R.parcelas.map((p, i) => '<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center">' +
       '<select onchange="S._volRegra.parcelas[' + i + '].sinal=+this.value" style="width:56px;font-weight:700"><option value="1"' + (p.sinal >= 0 ? ' selected' : '') + '>+</option><option value="-1"' + (p.sinal < 0 ? ' selected' : '') + '>−</option></select>' +
@@ -14237,6 +14322,7 @@ function vol_renderModalRegra() {
     '<div class="field"><label>Observação</label><input type="text" value="' + escHtml(R.obs || '') + '" oninput="S._volRegra.obs=this.value"></div>';
   if (!prod) document.getElementById('vol-regra-contaEm').value = R.contaEm || 'ambos';
   ['escopo', 'origem', 'destino'].forEach(c => { const s = document.getElementById('vol-regra-' + c); if (s) s.value = R[c] || ''; });
+  const fm = document.getElementById('vol-regra-filtroMun'); if (fm) fm.value = R._filtroMun || '';
   document.getElementById('btn-vol-regra-excluir').style.display = R._id ? '' : 'none';
 }
 function vol_mudarEscopo(campo, v) {
@@ -14247,6 +14333,8 @@ function vol_mudarEscopo(campo, v) {
     return;
   }
   S._volRegra[campo] = v;
+  // o pré-filtro de macros acompanha o município/sistema escolhido (até o usuário mexer nele)
+  if (!S._volRegra._filtroManual && macro_filtroDeEscopo(v) && (campo !== 'destino' || !macro_filtroDeEscopo(S._volRegra.origem))) { S._volRegra._filtroMun = v; vol_renderModalRegra(); }
 }
 async function vol_salvarRegra() {
   const R = S._volRegra, M = macro_estado();
@@ -14357,65 +14445,250 @@ function vol_fronteira(leit, T) {
   const c = !a ? b : !b ? a : (T - a.t <= b.t - T ? a : b);
   return c ? { t: c.t, v: c.v, modo: 'mais próxima' } : null;
 }
-async function vol_volumeMacroMes(m, mes) {
+// ---------- Medido + estimado, sazonalidade, prévia guardada e "Fechar mês" (ajustes de 2026-11-26)
+// Por macro, no mês: MEDIDO = totalizador entre as viradas (01/MM 08:00). Quando a virada não tem
+// leitura a até 12 h, usa a primeira/última leitura do mês e o período medido fica menor que o mês.
+// Faltando mais de 12 h, ESTIMA o restante (decisões do Lourenço):
+//   A  = média do próprio mês (medido ÷ horas medidas × horas faltantes) — só com ≥ 7 dias medidos
+//   B3 = média dos últimos 3 meses fechados × horas faltantes
+//   BA = mesmo mês do ano anterior (média diária) × horas faltantes — padrão nos sistemas SAZONAIS
+//   C  = manual (volume + justificativa)
+// Automático: A; senão BA (sazonal) ou B3; senão BA; senão sem estimativa ("sem dado").
+// Totais sempre aparecem (somam o que existe), separando medido e estimado, e marcam "parcial"
+// quando algum macro ficou sem dado.
+// Prévia/fechamento: volumesMensais/{SETOR}__F_{AAAA-MM} (tipo 'fechamento') guarda o cálculo, as
+// regras usadas e os ajustes; ao FECHAR, grava também volumesMensais/{SETOR}_{PontoID}_{AAAA-MM}
+// (tipo 'macro') = histórico mensal de cada macro (usado nas estimativas B3/BA). Mês fechado fica
+// congelado até alguém reabrir. Histórico antigo pode ser importado de planilha (origem 'importado').
+const VOL_MIN_HORAS_MEDIA_MES = 7 * 24;
+const VOL_SAZONAIS_PADRAO = ['laguna', 'garopaba', 'passo de torres'];
+const VOL_METODOS = { A: 'média do próprio mês', B3: 'média dos últimos 3 meses', BA: 'mesmo mês do ano anterior', C: 'manual', nenhum: 'sem estimativa' };
+
+function vol_mesMais(m, k) {
+  const [a, b] = m.split('-').map(Number);
+  const d = new Date(a, b - 1 + k, 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+function vol_tempoChave(k) {
+  const [dia, s] = String(k).split(' ');
+  const [a, mo, d] = dia.split('-').map(Number);
+  return new Date(a, mo - 1, d).getTime() + (+s) * 1000;
+}
+function vol_sistemaSazonal(sid) {
+  const s = macro_estado().sistemas.find(x => x.sid === sid);
+  if (!s) return false;
+  if (typeof s.sazonal === 'boolean') return s.sazonal;
+  const n = textoBusca(s.nome);
+  return VOL_SAZONAIS_PADRAO.some(x => n.includes(x));
+}
+async function vol_alternarSazonal(id, on) {
+  const s = macro_estado().sistemas.find(x => x._id === id);
+  if (!s) return;
+  try {
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'sistemasAbast', s._id), { sazonal: !!on, editadoEm: Date.now(), editadoPor: S.user?.email || '' }, { merge: true });
+    s.sazonal = !!on;
+    toast('Sistema ' + s.nome + (on ? ' marcado como sazonal.' : ' sem sazonalidade.'));
+  } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
+  macro_render();
+}
+function vol_idDocMes(mes) { return setorAtual() + '__F_' + mes; }
+function vol_hash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+// "Impressão digital" do que entra no cálculo do mês: se mudar depois, a prévia fica desatualizada
+function vol_assinatura(mes) {
+  const M = macro_estado();
+  const regras = M.regras.filter(r => vol_regraVigente(r, mes));
+  const partes = regras.map(r => r._id + ':' + (r.atualizadoEm || 0)).sort();
+  const ids = [...new Set(regras.flatMap(r => (r.parcelas || []).map(p => p.macroId)))].sort();
+  ids.forEach(id => {
+    const m = M.macros.find(x => x._id === id);
+    if (!m) { partes.push(id + ':x'); return; }
+    const c = m.cobertura || {};
+    partes.push(id + ':' + ((c['V_' + mes] || {}).atualizadoEm || 0) + ':' + ((c['V_' + vol_proxMes(mes)] || {}).atualizadoEm || 0) +
+      ':' + (m.bidirecional ? 1 : 0) + ':' + (m.apelidos || []).filter(a => a.grandeza === 'V').map(a => a.nome).join(';') + ':' + (vol_sistemaSazonal(m.sistemaId) ? 1 : 0));
+  });
+  return vol_hash(partes.join('|'));
+}
+
+async function vol_medirMacroMes(m, mes) {
   const T0 = vol_alvoFechamento(mes), T1 = vol_alvoFechamento(vol_proxMes(mes));
-  const r = { macroId: m._id, nome: m.nome, sistema: m.sistemaNome, mes, alertas: [], ini: null, fim: null, volume: null, dias: null };
-  if (!(m.apelidos || []).some(a => a.grandeza === 'V')) { r.alertas.push('sem ponto de volume do supervisório vinculado'); return r; }
+  const r = { macroId: m._id, pontoId: m.pontoId, nome: m.nome, municipio: macro_rotuloMun(m), sistema: m.sistemaNome || '', sistemaId: m.sistemaId || '',
+    mes, horasMes: (T1 - T0) / 3600e3, ini: null, fim: null, medido: null, horasMed: 0, alertas: [] };
+  if (!macro_temLeitura(m, 'V')) { r.alertas.push('sem ponto de volume do supervisório vinculado'); return r; }
   const leit = await vol_leiturasPerto(m, [T0, T1]);
-  r.ini = vol_fronteira(leit, T0);
-  r.fim = vol_fronteira(leit, T1);
-  if (!r.ini) r.alertas.push('sem leitura perto de ' + vol_fmtDataHora(T0) + ' (±' + VOL_JANELA_DIAS + ' dias)');
-  if (!r.fim) r.alertas.push('sem leitura perto de ' + vol_fmtDataHora(T1) + ' (±' + VOL_JANELA_DIAS + ' dias)');
-  if (r.ini && r.fim && r.fim.t <= r.ini.t) { r.alertas.push('leituras de início e fim coincidem'); r.ini = r.fim = null; }
-  if (r.ini && r.fim) {
-    r.volume = r.fim.v - r.ini.v;
-    r.dias = (r.fim.t - r.ini.t) / 86400e3;
-    const dm = vol_diasNoMes(mes);
-    if (Math.abs(r.dias - dm) > VOL_ALERTA_DIF_DIAS) r.alertas.push('período medido de ' + r.dias.toFixed(1).replace('.', ',') + ' dias (mês tem ' + dm + ')');
-    if (r.volume < 0 && !m.bidirecional) r.alertas.push('volume negativo — possível troca/zeramento do totalizador');
+  const LIM = VOL_ALERTA_DIF_DIAS * 86400e3;
+  let a = vol_fronteira(leit, T0); if (a && Math.abs(a.t - T0) > LIM) a = null;
+  let b = vol_fronteira(leit, T1); if (b && Math.abs(b.t - T1) > LIM) b = null;
+  const cob = (m.cobertura || {})['V_' + mes];
+  // Sem leitura a até 12 h da virada: usa a primeira/última leitura DO MÊS (a mais cedo/mais tarde entre
+  // as leituras perto da virada e o resumo de cobertura do mês)
+  if (!a) {
+    const cands = [];
+    const x = leit.find(l => l.t >= T0 && l.t < T1 && l.t <= T0 + VOL_JANELA_DIAS * 86400e3);
+    if (x) cands.push({ t: x.t, v: x.v, modo: 'primeira leitura' });
+    if (cob && cob.ini) { const t = vol_tempoChave(cob.ini); if (t >= T0 && t < T1) cands.push({ t, v: cob.primeiro, modo: 'primeira leitura do mês' }); }
+    if (cands.length) a = cands.sort((p, q) => p.t - q.t)[0];
   }
-  const c = (m.cobertura || {})['V_' + mes];
-  if (c) {
-    const semDado = vol_diasNoMes(mes) - Object.values(c.dias || {}).filter(n => n > 0).length;
-    if (semDado > 0) r.alertas.push(semDado + ' dia(s) do mês sem leitura (conferir; lacunas são tratadas na Fase 5)');
+  if (!b) {
+    const cands = [];
+    for (let i = leit.length - 1; i >= 0; i--) if (leit[i].t <= T1 && leit[i].t > T0 && leit[i].t >= T1 - VOL_JANELA_DIAS * 86400e3) { cands.push({ t: leit[i].t, v: leit[i].v, modo: 'última leitura' }); break; }
+    if (cob && cob.fim) { const t = vol_tempoChave(cob.fim); if (t <= T1 && t > T0) cands.push({ t, v: cob.ultimo, modo: 'última leitura do mês' }); }
+    if (cands.length) b = cands.sort((p, q) => q.t - p.t)[0];
+  }
+  if (a && b && b.t > a.t) {
+    r.ini = a; r.fim = b; r.medido = b.v - a.v; r.horasMed = (b.t - a.t) / 3600e3;
+    if (r.medido < 0 && !m.bidirecional) r.alertas.push('volume negativo — possível troca/zeramento do totalizador');
+  } else r.alertas.push('sem leituras de volume neste mês');
+  if (cob) {
+    const semDado = vol_diasNoMes(mes) - Object.values(cob.dias || {}).filter(n => n > 0).length;
+    if (semDado > 0) r.alertas.push(semDado + ' dia(s) do mês sem leitura');
   }
   return r;
+}
+// Opções de estimativa (depende do histórico); não decide o método
+function vol_opcoesEstimativa(r, hist, sazonal) {
+  const falta = Math.max(0, r.horasMes - r.horasMed);
+  const h = hist[r.pontoId] || {};
+  const taxa = x => x && x.horasMes > 0 && x.volume != null && isFinite(x.volume) ? x.volume / x.horasMes : null;
+  const ano = h[vol_mesMais(r.mes, -12)];
+  r.anoAnterior = ano && ano.volume != null ? { mes: ano.mes, volume: ano.volume } : null;
+  r.sazonal = !!sazonal;
+  r.horasFalta = falta;
+  r.precisaEstimar = falta > VOL_ALERTA_DIF_DIAS * 24;
+  const op = {};
+  if (r.precisaEstimar) {
+    if (r.medido != null && r.medido >= 0 && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) op.A = r.medido / r.horasMed * falta;
+    const ult = [1, 2, 3].map(k => h[vol_mesMais(r.mes, -k)]).filter(x => taxa(x) != null);
+    if (ult.length) op.B3 = ult.reduce((s, x) => s + x.volume, 0) / ult.reduce((s, x) => s + x.horasMes, 0) * falta;
+    if (taxa(ano) != null) op.BA = taxa(ano) * falta;
+    r.mesesB3 = ult.map(x => x.mes);
+  } else r.mesesB3 = [];
+  r.opcoes = op;
+  r.metodoAuto = !r.precisaEstimar ? 'nenhum' : op.A != null ? 'A' : (sazonal && op.BA != null) ? 'BA' : op.B3 != null ? 'B3' : op.BA != null ? 'BA' : 'nenhum';
+}
+// Aplica o método (automático ou o ajuste escolhido) e calcula o volume do macro
+function vol_aplicarAjuste(r, ajuste) {
+  const pedido = ajuste && ajuste.metodo && ajuste.metodo !== 'auto' ? ajuste.metodo : null;
+  let met = pedido || r.metodoAuto || 'nenhum', est = null;
+  if (met === 'C') est = ajuste && ajuste.valor !== '' && isFinite(+ajuste.valor) ? +ajuste.valor : null;
+  else if (met !== 'nenhum') est = r.opcoes && r.opcoes[met] != null ? r.opcoes[met] : null;
+  if (pedido && pedido !== 'C' && pedido !== 'nenhum' && est == null) { met = r.metodoAuto || 'nenhum'; est = met !== 'nenhum' && r.opcoes ? (r.opcoes[met] ?? null) : null; }
+  r.metodo = est == null ? 'nenhum' : met;
+  r.ajustado = !!pedido;
+  r.estimado = est;
+  r.justificativa = met === 'C' && ajuste ? (ajuste.justificativa || '') : '';
+  r.volume = r.medido == null && est == null ? null : (r.medido || 0) + (est || 0);
+  r.situacao = r.volume == null ? 'sem dado' : est ? (r.medido != null ? 'medido + estimado' : 'estimado') : 'medido';
+  r.alertasEst = [];
+  if (r.precisaEstimar && est == null && met !== 'nenhum') r.alertasEst.push('faltam ' + (r.horasFalta / 24).toFixed(1).replace('.', ',') + ' dias sem estimativa');
+  if (r.precisaEstimar && est == null && met === 'nenhum') r.alertasEst.push('faltam ' + (r.horasFalta / 24).toFixed(1).replace('.', ',') + ' dias — sem histórico para estimar');
+}
+// Histórico mensal (volumes fechados/importados) dos meses usados nas estimativas
+async function vol_carregarHistorico(mes) {
+  const meses = [1, 2, 3, 12].map(k => vol_mesMais(mes, -k));
+  const { db, collection, query, where, getDocs } = window.FB;
+  const snap = await getDocs(query(collection(db, 'volumesMensais'), where('setor', '==', setorAtual()), where('tipo', '==', 'macro'), where('mes', 'in', meses)));
+  const hist = {};
+  snap.docs.forEach(d => { const x = d.data(); (hist[x.pontoId] = hist[x.pontoId] || {})[x.mes] = x; });
+  return hist;
+}
+// Monta os quadros por sistema/município a partir das regras e dos volumes por macro
+function vol_montarEscopos(regras, macros) {
+  const linhaDe = r => {
+    let vol = 0, med = 0, est = 0, sem = 0;
+    (r.parcelas || []).forEach(p => {
+      const x = macros[p.macroId];
+      if (!x || x.volume == null) { sem++; return; }
+      vol += p.sinal * x.volume; med += p.sinal * (x.medido || 0); est += p.sinal * (x.estimado || 0);
+    });
+    return { regra: r, vol, med, est, semDado: sem };
+  };
+  const escopos = {};
+  const pega = k => escopos[k] = escopos[k] || { k, nome: vol_nomeEscopo(k), producao: [], importado: [], exportado: [] };
+  regras.forEach(r => {
+    const l = linhaDe(r);
+    if (r.tipo === 'producao') pega(r.escopo).producao.push(l);
+    else {
+      if (r.contaEm !== 'destino' && r.origem && !r.origem.startsWith('X:')) pega(r.origem).exportado.push(l);
+      if (r.contaEm !== 'origem' && r.destino && !r.destino.startsWith('X:')) pega(r.destino).importado.push(l);
+    }
+  });
+  const tot = ls => ls.reduce((a, l) => ({ vol: a.vol + l.vol, med: a.med + l.med, est: a.est + l.est, semDado: a.semDado + l.semDado }), { vol: 0, med: 0, est: 0, semDado: 0 });
+  Object.values(escopos).forEach(e => {
+    e.P = tot(e.producao); e.I = tot(e.importado); e.E = tot(e.exportado);
+    e.D = { vol: e.P.vol + e.I.vol - e.E.vol, med: e.P.med + e.I.med - e.E.med, est: e.P.est + e.I.est - e.E.est, semDado: e.P.semDado + e.I.semDado + e.E.semDado,
+      // no disponibilizado, o exportado estimado entra subtraindo: mostra quanto de estimativa está envolvido (em módulo)
+      estEnvolvido: Math.abs(e.P.est) + Math.abs(e.I.est) + Math.abs(e.E.est) };
+  });
+  return Object.values(escopos).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+}
+function vol_resultadoDeDoc(d) {
+  return { mes: d.mes, regras: d.regras || [], macros: d.macros || {}, escopos: vol_montarEscopos(d.regras || [], d.macros || {}) };
+}
+function vol_limpo(x) { return JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'number' && !isFinite(v)) ? null : v)); }
+
+// ---------- Carregar / calcular / guardar a prévia do mês
+async function vol_trocarMes(mes) {
+  const V = vol_estado();
+  V.mes = mes || vol_mesAnteriorAoAtual();
+  V.resultado = null; V.doc = null; V.docMes = '';
+  await vol_carregarMes();
+}
+async function vol_carregarMes() {
+  const V = vol_estado();
+  const mes = V.mes || vol_mesAnteriorAoAtual();
+  V.mes = mes;
+  V.carregandoDoc = true; V.erroDoc = ''; vol_renderVolumes();
+  try {
+    const snap = await window.FB.getDoc(window.FB.doc(window.FB.db, 'volumesMensais', vol_idDocMes(mes)));
+    V.doc = snap.exists() ? snap.data() : null;
+    V.resultado = V.doc ? vol_resultadoDeDoc(V.doc) : null;
+  } catch (e) {
+    console.warn('vol_carregarMes', e);
+    V.doc = null; V.resultado = null;
+    V.erroDoc = e && e.code === 'permission-denied' ? 'Falta publicar a regra da coleção "volumesMensais" no Firebase Console — sem ela o cálculo funciona, mas não fica guardado.' : 'Erro ao ler a prévia: ' + (e.code || e.message);
+  } finally {
+    V.docMes = mes; V.carregandoDoc = false; vol_renderVolumes();
+  }
 }
 async function vol_calcular() {
   const M = macro_estado(), V = vol_estado();
   const mes = V.mes || vol_mesAnteriorAoAtual();
   V.mes = mes;
-  const regras = M.regras.filter(r => vol_regraVigente(r, mes));
-  if (!regras.length) { V.resultado = { mes, escopos: [], macros: {} }; vol_renderVolumes(); return; }
+  if (V.doc && V.doc.status === 'fechado' && V.docMes === mes) { toast('Mês fechado — reabra para recalcular.'); return; }
+  const regras = M.regras.filter(r => vol_regraVigente(r, mes)).map(r => ({ _id: r._id, tipo: r.tipo, nome: r.nome, escopo: r.escopo || '', origem: r.origem || '', destino: r.destino || '', contaEm: r.contaEm || '', parcelas: r.parcelas || [], vigIni: r.vigIni || '', vigFim: r.vigFim || '' }));
   V.calculando = true; vol_renderVolumes();
   try {
-    const ids = [...new Set(regras.flatMap(r => (r.parcelas || []).map(p => p.macroId)))];
-    const porMacro = {};
+    let hist = {};
+    try { hist = await vol_carregarHistorico(mes); } catch (e) { console.warn('histórico', e.code || e); }
+    const ajustes = (V.doc && V.docMes === mes && V.doc.ajustes) || {};
+    const ids = [...new Set(regras.flatMap(r => r.parcelas.map(p => p.macroId)))];
+    const macros = {};
     for (const id of ids) {
       const m = M.macros.find(x => x._id === id);
-      porMacro[id] = m ? await vol_volumeMacroMes(m, mes) : { macroId: id, nome: '(macro não encontrado)', alertas: ['macro não existe mais no cadastro'], volume: null };
+      let r;
+      if (m) r = await vol_medirMacroMes(m, mes);
+      else r = { macroId: id, pontoId: '', nome: '(macro não encontrado)', municipio: '', sistema: '', mes, horasMes: 0, medido: null, horasMed: 0, alertas: ['macro não existe mais no cadastro'] };
+      vol_opcoesEstimativa(r, hist, m ? vol_sistemaSazonal(m.sistemaId) : false);
+      vol_aplicarAjuste(r, ajustes[id]);
+      macros[id] = r;
     }
-    const valorRegra = r => {
-      let soma = 0, ok = true;
-      (r.parcelas || []).forEach(p => { const x = porMacro[p.macroId]; if (!x || x.volume == null) ok = false; else soma += p.sinal * x.volume; });
-      return ok ? soma : null;
-    };
-    const escopos = {};
-    const pega = k => escopos[k] = escopos[k] || { k, nome: vol_nomeEscopo(k), producao: [], importado: [], exportado: [] };
-    regras.forEach(r => {
-      const linha = { regra: r, volume: valorRegra(r) };
-      if (r.tipo === 'producao') pega(r.escopo).producao.push(linha);
-      else {
-        if (r.contaEm !== 'destino' && r.origem && !r.origem.startsWith('X:')) pega(r.origem).exportado.push(linha);
-        if (r.contaEm !== 'origem' && r.destino && !r.destino.startsWith('X:')) pega(r.destino).importado.push(linha);
-      }
-    });
-    const tot = l => l.some(x => x.volume == null) ? null : l.reduce((a, x) => a + x.volume, 0);
-    Object.values(escopos).forEach(e => {
-      e.P = tot(e.producao); e.I = tot(e.importado); e.E = tot(e.exportado);
-      e.D = e.P == null || e.I == null || e.E == null ? null : e.P + e.I - e.E;
-    });
-    V.resultado = { mes, escopos: Object.values(escopos).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome))), macros: porMacro, calculadoEm: Date.now() };
+    const agora = Date.now();
+    const doc = vol_limpo({ setor: setorAtual(), tipo: 'fechamento', mes, status: 'previa', regras, macros, ajustes,
+      assinatura: vol_assinatura(mes), calculadoEm: agora, calculadoPor: S.user?.email || '', calculadoNome: S.user?.nome || '',
+      fechadoEm: null, fechadoPor: '', reabertoEm: (V.doc && V.doc.reabertoEm) || null, reabertoPor: (V.doc && V.doc.reabertoPor) || '' });
+    V.doc = doc; V.docMes = mes;
+    V.resultado = vol_resultadoDeDoc(doc);
+    try {
+      await window.FB.setDoc(window.FB.doc(window.FB.db, 'volumesMensais', vol_idDocMes(mes)), doc);
+      V.erroDoc = '';
+    } catch (e) {
+      console.warn('salvar prévia', e);
+      V.erroDoc = e && e.code === 'permission-denied' ? 'Calculado, mas não foi possível guardar a prévia: falta publicar a regra da coleção "volumesMensais" no Firebase Console.' : 'Calculado, mas não foi possível guardar a prévia: ' + (e.code || e.message);
+    }
   } catch (e) {
     console.error('vol_calcular', e);
     alert(e && e.code === 'permission-denied' ? 'O banco recusou a leitura das leituras (permissão).' : 'Erro ao calcular: ' + (e.code || e.message));
@@ -14425,30 +14698,158 @@ async function vol_calcular() {
   }
 }
 
+// ---------- Ajustar a estimativa de um macro
+function vol_abrirAjuste(macroId) {
+  const V = vol_estado();
+  const r = V.doc && V.doc.macros && V.doc.macros[macroId];
+  if (!r) return;
+  const fechado = V.doc.status === 'fechado';
+  const aj = (V.doc.ajustes || {})[macroId] || { metodo: 'auto' };
+  S._volAjuste = { macroId, metodo: aj.metodo || 'auto', valor: aj.valor ?? '', justificativa: aj.justificativa || '' };
+  const op = r.opcoes || {};
+  const dias = h => (h / 24).toFixed(1).replace('.', ',');
+  const linha = (k, rot, val, extra) => '<label style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer' + (val == null && k !== 'C' && k !== 'nenhum' && k !== 'auto' ? ';opacity:.45' : '') + '">' +
+    '<input type="radio" name="vol-aj-met" value="' + k + '"' + (S._volAjuste.metodo === k ? ' checked' : '') + (fechado || (val == null && !['C', 'nenhum', 'auto'].includes(k)) ? ' disabled' : '') + ' onchange="S._volAjuste.metodo=this.value">' +
+    '<span style="flex:1"><b>' + rot + '</b>' + (extra ? '<br><span style="font-size:11px;color:var(--text2)">' + extra + '</span>' : '') + '</span>' +
+    '<span style="white-space:nowrap;font-weight:600">' + (val != null ? vol_fmtM3(val) + ' m³' : (k === 'C' || k === 'nenhum' || k === 'auto') ? '' : 'indisponível') + '</span></label>';
+  document.getElementById('vol-aj-titulo').textContent = r.municipio + ' — ' + r.nome;
+  document.getElementById('vol-aj-corpo').innerHTML =
+    '<div style="font-size:12px;line-height:1.7;background:var(--bg2);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px">' +
+      '<b>Medido:</b> ' + (r.medido != null ? vol_fmtM3(r.medido) + ' m³ em ' + dias(r.horasMed) + ' dias (' + vol_fmtDataHora(r.ini.t) + ' → ' + vol_fmtDataHora(r.fim.t) + ')' : 'nada') + '<br>' +
+      '<b>Sem medição:</b> ' + dias(r.horasFalta || 0) + ' dias de ' + dias(r.horasMes) + (r.sazonal ? ' · <span class="badge media">sistema sazonal</span>' : '') + '<br>' +
+      (r.anoAnterior ? '<b>Mesmo mês do ano anterior (' + vol_fmtMes(r.anoAnterior.mes) + '):</b> ' + vol_fmtM3(r.anoAnterior.volume) + ' m³<br>' : '') +
+      ((r.alertas || []).length ? '<span style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> ' + r.alertas.map(escHtml).join(' · ') + '</span>' : '') +
+    '</div>' +
+    (r.precisaEstimar || (S._volAjuste.metodo === 'C') ? '' : '<p style="font-size:11.5px;color:var(--text2);margin-bottom:6px">O mês foi medido inteiro (diferença ≤ 12 h) — só use "manual" se precisar corrigir.</p>') +
+    linha('auto', 'Automático', null, 'hoje: ' + VOL_METODOS[r.metodoAuto || 'nenhum']) +
+    linha('A', 'Média do próprio mês', op.A, 'só com 7 dias ou mais medidos') +
+    linha('B3', 'Média dos últimos 3 meses fechados', op.B3, (r.mesesB3 || []).length ? 'meses: ' + r.mesesB3.map(vol_fmtMes).join(', ') : 'sem histórico') +
+    linha('BA', 'Mesmo mês do ano anterior', op.BA, r.anoAnterior ? vol_fmtMes(r.anoAnterior.mes) : 'sem histórico') +
+    linha('C', 'Manual', null, '<input type="number" step="1" min="0" placeholder="volume estimado (m³) para o período sem medição" value="' + escHtml(S._volAjuste.valor) + '" oninput="S._volAjuste.valor=this.value;S._volAjuste.metodo=\'C\';document.querySelector(\'input[name=vol-aj-met][value=C]\').checked=true" style="width:100%;margin-top:3px;font-size:12px"' + (fechado ? ' disabled' : '') + '>' +
+      '<input type="text" placeholder="justificativa" value="' + escHtml(S._volAjuste.justificativa) + '" oninput="S._volAjuste.justificativa=this.value" style="width:100%;margin-top:3px;font-size:12px"' + (fechado ? ' disabled' : '') + '>') +
+    linha('nenhum', 'Sem estimativa', null, 'o macro entra só com o medido (ou "sem dado")');
+  document.getElementById('btn-vol-aj-salvar').style.display = fechado ? 'none' : '';
+  openModal('modal-vol-ajuste');
+}
+async function vol_salvarAjuste() {
+  const V = vol_estado(), A = S._volAjuste;
+  if (!A || !V.doc) return;
+  if (A.metodo === 'C' && (A.valor === '' || !isFinite(+A.valor))) { alert('Informe o volume manual.'); return; }
+  if (A.metodo === 'C' && !String(A.justificativa || '').trim()) { alert('Escreva uma justificativa para o valor manual.'); return; }
+  const r = V.doc.macros[A.macroId];
+  const aj = A.metodo === 'auto' ? null : { metodo: A.metodo, valor: A.metodo === 'C' ? +A.valor : '', justificativa: A.metodo === 'C' ? A.justificativa.trim() : '', em: Date.now(), por: S.user?.email || '' };
+  V.doc.ajustes = { ...(V.doc.ajustes || {}) };
+  if (aj) V.doc.ajustes[A.macroId] = aj; else delete V.doc.ajustes[A.macroId];
+  vol_aplicarAjuste(r, aj);
+  V.resultado = vol_resultadoDeDoc(V.doc);
+  closeModal('modal-vol-ajuste');
+  vol_renderVolumes();
+  // grava o doc inteiro (com merge, um ajuste apagado continuaria no banco)
+  try { await window.FB.setDoc(window.FB.doc(window.FB.db, 'volumesMensais', vol_idDocMes(V.doc.mes)), vol_limpo(V.doc)); }
+  catch (e) { V.erroDoc = 'Ajuste aplicado na tela, mas não foi possível guardar: ' + (e.code || e.message); vol_renderVolumes(); }
+}
+
+// ---------- Fechar / reabrir o mês
+async function vol_fecharMes() {
+  const V = vol_estado();
+  const d = V.doc;
+  if (!d || d.status === 'fechado') return;
+  if (d.assinatura !== vol_assinatura(d.mes)) { alert('As leituras ou as regras mudaram depois do cálculo. Clique em Recalcular antes de fechar o mês.'); return; }
+  const semDado = Object.values(d.macros).filter(x => x.volume == null).length;
+  const comEst = Object.values(d.macros).filter(x => x.estimado).length;
+  if (!confirm('Fechar ' + vol_fmtMes(d.mes) + '?\n\n' + Object.keys(d.macros).length + ' macros' + (comEst ? ' · ' + comEst + ' com estimativa' : '') + (semDado ? '\n' + semDado + ' macro(s) SEM DADO — os totais ficam parciais' : '') +
+    '\n\nO volume de cada macro vai para o histórico e o mês fica congelado (dá para reabrir depois).')) return;
+  const { db, doc, writeBatch } = window.FB;
+  const setor = setorAtual(), agora = Date.now(), quem = S.user?.email || '';
+  try {
+    const ops = Object.values(d.macros).filter(x => x.pontoId).map(x => ({ ref: doc(db, 'volumesMensais', setor + '_' + x.pontoId + '_' + d.mes),
+      dados: vol_limpo({ setor, tipo: 'macro', origem: 'fechamento', pontoId: x.pontoId, macroId: x.macroId, nome: x.nome, municipio: x.municipio, mes: d.mes,
+        volume: x.volume, medido: x.medido, estimado: x.estimado, metodo: x.metodo, horasMes: x.horasMes, horasMed: x.horasMed,
+        ini: x.ini, fim: x.fim, alertas: [...(x.alertas || []), ...(x.alertasEst || [])], justificativa: x.justificativa || '', fechadoEm: agora, fechadoPor: quem }) }));
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = writeBatch(db);
+      ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.dados));
+      await b.commit();
+    }
+    const novo = { ...d, status: 'fechado', fechadoEm: agora, fechadoPor: quem, fechadoNome: S.user?.nome || '' };
+    await window.FB.setDoc(doc(db, 'volumesMensais', vol_idDocMes(d.mes)), vol_limpo(novo));
+    V.doc = novo; V.resultado = vol_resultadoDeDoc(novo);
+    toast(vol_fmtMes(d.mes) + ' fechado.');
+  } catch (e) {
+    alert(e && e.code === 'permission-denied' ? 'O banco recusou (permissão). Falta publicar a regra da coleção "volumesMensais".' : 'Erro ao fechar: ' + (e.code || e.message));
+  }
+  vol_renderVolumes();
+}
+async function vol_reabrirMes() {
+  const V = vol_estado();
+  const d = V.doc;
+  if (!d || d.status !== 'fechado') return;
+  if (!confirm('Reabrir ' + vol_fmtMes(d.mes) + '?\n\nO mês volta a ser prévia e pode ser recalculado. O histórico gravado continua até o próximo fechamento.')) return;
+  try {
+    const novo = { ...d, status: 'previa', reabertoEm: Date.now(), reabertoPor: S.user?.email || '' };
+    await window.FB.setDoc(window.FB.doc(window.FB.db, 'volumesMensais', vol_idDocMes(d.mes)), vol_limpo(novo));
+    V.doc = novo; V.resultado = vol_resultadoDeDoc(novo);
+  } catch (e) { alert('Erro ao reabrir: ' + (e.code || e.message)); }
+  vol_renderVolumes();
+}
+
 // ---------- Tela: volumes do mês
+function vol_fmtParte(t) {
+  if (!t) return '—';
+  const pct = t.vol ? Math.abs(t.est / t.vol * 100) : 0;
+  if (t.estEnvolvido != null) {
+    return '<b>' + vol_fmtM3(t.vol) + ' m³</b>' +
+      (Math.round(t.estEnvolvido) ? '<div style="font-size:10.5px;color:var(--amber);font-weight:400;white-space:nowrap">envolve ' + vol_fmtM3(t.estEnvolvido) + ' m³ estimados (' + (t.vol ? Math.abs(t.estEnvolvido / t.vol * 100) : 0).toFixed(1).replace('.', ',') + '%)</div>' : '') +
+      (t.semDado ? '<div style="font-size:10.5px;color:var(--red);font-weight:400;white-space:nowrap">parcial: ' + t.semDado + ' macro(s) sem dado</div>' : '');
+  }
+  return '<b>' + vol_fmtM3(t.vol) + ' m³</b>' +
+    (Math.round(t.est) ? '<div style="font-size:10.5px;color:var(--amber);font-weight:400;white-space:nowrap">medido ' + vol_fmtM3(t.med) + ' · estimado ' + vol_fmtM3(t.est) + ' (' + pct.toFixed(1).replace('.', ',') + '%)</div>' : '') +
+    (t.semDado ? '<div style="font-size:10.5px;color:var(--red);font-weight:400;white-space:nowrap">parcial: ' + t.semDado + ' macro(s) sem dado</div>' : '');
+}
 function vol_renderVolumes() {
   const M = macro_estado(), V = vol_estado();
   const el = document.getElementById('vol-resultado');
   if (!el) return;
+  const mes = V.mes || vol_mesAnteriorAoAtual();
   const inp = document.getElementById('vol-mes');
-  if (inp && !inp.value) inp.value = V.mes || vol_mesAnteriorAoAtual();
+  if (inp && inp.value !== mes) inp.value = mes;
+  if (M.carregado && V.docMes !== mes && !V.carregandoDoc) { vol_carregarMes(); return; }
+  const d = V.doc && V.docMes === mes ? V.doc : null;
+  const fechado = d && d.status === 'fechado';
+  const btnCalc = document.getElementById('vol-btn-calcular');
+  if (btnCalc) { btnCalc.style.display = fechado ? 'none' : ''; btnCalc.innerHTML = '<i class="ti ti-calculator"></i> ' + (d ? 'Recalcular' : 'Calcular'); }
   const fil = document.getElementById('vol-escopo');
+  if (V.carregandoDoc) { el.innerHTML = '<p style="font-size:12px;color:var(--text2)"><i class="ti ti-loader"></i> Carregando ' + vol_fmtMes(mes) + '...</p>'; return; }
   if (V.calculando) { el.innerHTML = '<p style="font-size:12px;color:var(--text2)"><i class="ti ti-loader"></i> Calculando...</p>'; return; }
-  const R = V.resultado;
-  if (!R) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Escolha o mês e clique em <b>Calcular</b>. O mês vai do dia 1º às 08:00 ao dia 1º do mês seguinte às 08:00.</p>'; return; }
+  const erro = V.erroDoc ? '<p style="font-size:12px;color:var(--amber);margin-bottom:6px"><i class="ti ti-alert-triangle"></i> ' + escHtml(V.erroDoc) + '</p>' : '';
+  const R = V.resultado && V.resultado.mes === mes ? V.resultado : null;
+  if (!R) { el.innerHTML = erro + '<p style="font-size:12px;color:var(--text2);padding:10px 0">' + vol_fmtMes(mes) + ' ainda não foi calculado. Clique em <b>Calcular</b>. O mês vai do dia 1º às 08:00 ao dia 1º do mês seguinte às 08:00.</p>'; return; }
+  // Barra de situação
+  const desatualizado = d && !fechado && d.assinatura !== vol_assinatura(mes);
+  let barra = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 10px;border-radius:var(--radius);margin-bottom:8px;font-size:12px;background:' + (fechado ? 'var(--green-l, rgba(16,185,129,.12))' : 'var(--bg2)') + '">';
+  if (fechado) barra += '<i class="ti ti-lock" style="color:var(--green)"></i> <b>Mês fechado</b> em ' + vol_fmtDataHora(d.fechadoEm) + ' por ' + escHtml(d.fechadoNome || d.fechadoPor || '') + '<span style="flex:1"></span>' +
+    (macro_podeImportar() ? '<button class="btn sm" onclick="vol_reabrirMes()"><i class="ti ti-lock-open"></i> Reabrir</button>' : '');
+  else if (d) barra += '<i class="ti ti-file-text"></i> Prévia calculada em ' + vol_fmtDataHora(d.calculadoEm) + ' por ' + escHtml(d.calculadoNome || d.calculadoPor || '') +
+    (desatualizado ? ' · <b style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> leituras ou regras mudaram depois — Recalcular</b>' : '') +
+    (d.reabertoEm ? ' · <span style="color:var(--text3)">reaberto em ' + vol_fmtDataHora(d.reabertoEm) + '</span>' : '') + '<span style="flex:1"></span>' +
+    (macro_podeImportar() ? '<button class="btn sm primary" onclick="vol_fecharMes()"' + (desatualizado ? ' disabled title="Recalcule antes"' : '') + '><i class="ti ti-lock"></i> Fechar mês</button>' : '');
+  else barra += 'Calculado agora (não guardado)';
+  barra += '</div>';
   if (fil) {
     const html = '<option value="">Todos</option>' + R.escopos.map(e => '<option value="' + escHtml(e.k) + '">' + escHtml(e.nome) + '</option>').join('');
     if (fil.dataset.html !== html) { fil.innerHTML = html; fil.dataset.html = html; }
     fil.value = V.escopo || '';
   }
-  if (!R.escopos.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhuma regra vale em ' + vol_fmtMes(R.mes) + '. Cadastre em <b>Regras de volume</b>.</p>'; return; }
+  if (!R.escopos.length) { el.innerHTML = erro + barra + '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhuma regra valia em ' + vol_fmtMes(mes) + '. Cadastre em <b>Regras de volume</b> e recalcule.</p>'; return; }
   const linhaMacros = r => (r.parcelas || []).map(p => {
     const x = R.macros[p.macroId] || {};
-    const al = (x.alertas || []);
-    return '<div style="font-size:11px;color:var(--text2);padding-left:14px;display:flex;gap:6px;flex-wrap:wrap">' +
-      '<span style="min-width:12px;font-weight:700">' + (p.sinal < 0 ? '−' : '+') + '</span><span style="flex:1;min-width:160px">' + escHtml(x.nome || '') + '</span>' +
-      '<span style="white-space:nowrap" title="' + escHtml(x.ini ? 'início: leitura ' + x.ini.modo + (x.ini.modo === 'interpolada' ? ' entre ' + vol_fmtDataHora(x.ini.de) + ' e ' + vol_fmtDataHora(x.ini.ate) : '') : '') + '">' + (x.ini ? vol_fmtDataHora(x.ini.t) : '—') + ' → ' + (x.fim ? vol_fmtDataHora(x.fim.t) : '—') + '</span>' +
-      '<span style="white-space:nowrap;min-width:70px;text-align:right">' + (x.dias != null ? x.dias.toFixed(1).replace('.', ',') + ' d' : '') + '</span>' +
+    const al = [...(x.alertas || []), ...(x.alertasEst || [])];
+    const corSit = x.situacao === 'sem dado' ? 'var(--red)' : x.estimado ? 'var(--amber)' : 'var(--text2)';
+    return '<div style="font-size:11px;color:var(--text2);padding:2px 0 2px 14px;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;cursor:pointer" onclick="vol_abrirAjuste(\'' + escHtml(p.macroId) + '\')" title="Clique para ver/ajustar a estimativa">' +
+      '<span style="min-width:12px;font-weight:700">' + (p.sinal < 0 ? '−' : '+') + '</span><span style="flex:1;min-width:180px"><span style="color:var(--text3)">' + escHtml(x.municipio || '') + ' —</span> ' + escHtml(x.nome || '') + '</span>' +
+      '<span style="white-space:nowrap">' + (x.ini ? vol_fmtDataHora(x.ini.t) : '—') + ' → ' + (x.fim ? vol_fmtDataHora(x.fim.t) : '—') + '</span>' +
+      '<span style="white-space:nowrap;min-width:110px;text-align:right">' + (x.medido != null ? 'medido ' + (x.horasMed / 24).toFixed(1).replace('.', ',') + ' d' : '') + '</span>' +
+      '<span style="white-space:nowrap;min-width:150px;text-align:right;color:' + corSit + '">' + (x.estimado ? '+ est. ' + vol_fmtM3(x.estimado) + ' (' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ', ajustado' : '') + ')' : x.situacao === 'sem dado' ? 'sem dado' : '') + '</span>' +
       '<span style="white-space:nowrap;min-width:95px;text-align:right;font-weight:600">' + vol_fmtM3(x.volume) + ' m³</span>' +
       (al.length ? '<span style="flex-basis:100%;color:var(--amber);padding-left:18px"><i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') + '</span>' : '') + '</div>';
   }).join('');
@@ -14457,38 +14858,136 @@ function vol_renderVolumes() {
     return '<tr><td style="font-weight:600;color:' + cor + ';vertical-align:top">' + titulo + '</td><td>' + linhas.map(l => {
       const r = l.regra;
       const lado = r.tipo === 'transferencia' ? (rotulo === 'E' ? 'para ' + vol_nomeEscopo(r.destino, true) : 'de ' + vol_nomeEscopo(r.origem, true)) + ' — ' : '';
-      return '<details style="margin-bottom:3px"><summary style="cursor:pointer;font-size:12px;display:flex;gap:8px"><span style="flex:1">' + escHtml(lado + r.nome) + '</span><b style="white-space:nowrap">' + vol_fmtM3(l.volume) + ' m³</b></summary>' + linhaMacros(r) + '</details>';
-    }).join('') + '</td><td style="text-align:right;font-weight:700;vertical-align:top;white-space:nowrap">' + vol_fmtM3(total) + '</td></tr>';
+      return '<details style="margin-bottom:3px"><summary style="cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:flex-start"><span style="flex:1">' + escHtml(lado + r.nome) + '</span><span style="text-align:right">' + vol_fmtParte(l) + '</span></summary>' + linhaMacros(r) + '</details>';
+    }).join('') + '</td><td style="text-align:right;vertical-align:top">' + vol_fmtParte(total) + '</td></tr>';
   };
   const escopos = R.escopos.filter(e => !V.escopo || e.k === V.escopo);
-  const nAlertas = Object.values(R.macros).filter(x => (x.alertas || []).length).length;
-  el.innerHTML = '<p style="font-size:12px;color:var(--text2);margin-bottom:8px">' + vol_fmtMes(R.mes) + ': 01/' + R.mes.slice(5) + ' 08:00 → 01/' + vol_proxMes(R.mes).slice(5) + ' 08:00 (' + vol_diasNoMes(R.mes) + ' dias). ' +
-    Object.keys(R.macros).length + ' macros calculados' + (nAlertas ? ' · <b style="color:var(--amber)">' + nAlertas + ' com alerta</b>' : '') + '. Clique numa linha para ver os macros.</p>' +
+  const lista = Object.values(R.macros);
+  const nEst = lista.filter(x => x.estimado).length, nSem = lista.filter(x => x.volume == null).length;
+  el.innerHTML = erro + barra + '<p style="font-size:12px;color:var(--text2);margin-bottom:8px">' + vol_fmtMes(mes) + ': 01/' + mes.slice(5) + ' 08:00 → 01/' + vol_proxMes(mes).slice(5) + ' 08:00 (' + vol_diasNoMes(mes) + ' dias). ' +
+    lista.length + ' macros' + (nEst ? ' · <b style="color:var(--amber)">' + nEst + ' com estimativa</b>' : '') + (nSem ? ' · <b style="color:var(--red)">' + nSem + ' sem dado</b>' : '') +
+    '. Clique numa linha para ver os macros; clique num macro para ver ou ajustar a estimativa.</p>' +
     escopos.map(e => '<div style="border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px">' +
       '<div style="font-weight:700;font-size:13.5px;margin-bottom:6px">' + escHtml(e.nome) + '</div>' +
-      '<table class="data-table" style="margin:0"><colgroup><col style="width:130px"><col><col style="width:120px"></colgroup><tbody>' +
+      '<table class="data-table" style="margin:0"><colgroup><col style="width:120px"><col><col style="width:200px"></colgroup><tbody>' +
       bloco('Produzido', e.producao, e.P, 'var(--blue)', 'P') +
       bloco('Importado', e.importado, e.I, 'var(--green)', 'I') +
       bloco('Exportado', e.exportado, e.E, 'var(--red)', 'E') +
-      '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado</td><td style="text-align:right;font-weight:800;white-space:nowrap">' + vol_fmtM3(e.D) + ' m³</td></tr>' +
-      '</tbody></table>' + (e.D == null ? '<div style="font-size:11px;color:var(--amber);margin-top:4px"><i class="ti ti-alert-triangle"></i> Algum macro ficou sem volume — total incompleto.</div>' : '') + '</div>').join('');
+      '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado</td><td style="text-align:right">' + vol_fmtParte(e.D) + '</td></tr>' +
+      '</tbody></table></div>').join('');
 }
 function vol_exportarXLSX() {
-  const R = vol_estado().resultado;
+  const V = vol_estado(), R = V.resultado;
   if (!R || !R.escopos.length) { toast('Calcule um mês primeiro.'); return; }
-  const res = [['Mês', 'Sistema / Município', 'Grandeza', 'Regra', 'Origem', 'Destino', 'Volume (m³)']];
+  const st = V.doc && V.doc.status === 'fechado' ? 'fechado' : 'prévia';
+  const res = [['Mês', 'Situação', 'Sistema / Município', 'Grandeza', 'Regra', 'Origem', 'Destino', 'Volume (m³)', 'Medido (m³)', 'Estimado (m³)', 'Macros sem dado']];
+  const n = v => Math.round(v);
   R.escopos.forEach(e => {
-    const add = (g, l, rot) => l.forEach(x => res.push([vol_fmtMes(R.mes), e.nome, g, x.regra.nome, x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.origem) : '', x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.destino) : '', x.volume == null ? '' : Math.round(x.volume)]));
+    const add = (g, ls) => ls.forEach(x => res.push([vol_fmtMes(R.mes), st, e.nome, g, x.regra.nome, x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.origem) : '', x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.destino) : '', n(x.vol), n(x.med), n(x.est), x.semDado || '']));
     add('Produzido', e.producao); add('Importado', e.importado); add('Exportado', e.exportado);
-    [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, v]) => res.push([vol_fmtMes(R.mes), e.nome, g, '', '', '', v == null ? '' : Math.round(v)]));
+    [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, t]) => res.push([vol_fmtMes(R.mes), st, e.nome, g, '', '', '', n(t.vol), n(t.med), n(t.est), t.semDado || '']));
   });
-  const mac = [['Mês', 'Macro', 'Sistema', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Volume (m³)', 'Alertas']];
-  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.nome, x.sistema || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? Math.round(x.ini.v * 1000) / 1000 : '', x.ini ? x.ini.modo : '',
-    x.fim ? vol_fmtDataHora(x.fim.t) : '', x.fim ? Math.round(x.fim.v * 1000) / 1000 : '', x.fim ? x.fim.modo : '', x.dias != null ? Math.round(x.dias * 100) / 100 : '', x.volume == null ? '' : Math.round(x.volume), (x.alertas || []).join(' | ')]));
+  const mac = [['Mês', 'Município', 'Macro', 'Sistema', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Medido (m³)', 'Estimado (m³)', 'Método', 'Justificativa', 'Volume (m³)', 'Situação', 'Mesmo mês ano anterior (m³)', 'Alertas']];
+  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.municipio || '', x.nome, x.sistema || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? x.ini.v : '', x.ini ? x.ini.modo : '',
+    x.fim ? vol_fmtDataHora(x.fim.t) : '', x.fim ? x.fim.v : '', x.fim ? x.fim.modo : '', x.medido != null ? Math.round(x.horasMed / 24 * 100) / 100 : '',
+    x.medido != null ? n(x.medido) : '', x.estimado ? n(x.estimado) : '', x.estimado ? (VOL_METODOS[x.metodo] || x.metodo) : '', x.justificativa || '',
+    x.volume != null ? n(x.volume) : '', x.situacao || '', x.anoAnterior ? n(x.anoAnterior.volume) : '', [...(x.alertas || []), ...(x.alertasEst || [])].join(' | ')]));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(res), 'Volumes');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mac), 'Macros');
   XLSX.writeFile(wb, 'GeoFon_Volumes_' + setorAtual() + '_' + R.mes + '.xlsx');
+}
+
+// ---------- Histórico: modelo e importação de volumes mensais antigos (planilha)
+function vol_macrosDoHistorico() {
+  const M = macro_estado();
+  const usados = new Set(M.regras.flatMap(r => (r.parcelas || []).map(p => p.macroId)));
+  return macro_ordenarPorMun(M.macros.filter(m => usados.has(m._id) || macro_temLeitura(m, 'V')));
+}
+function vol_baixarModeloHistorico() {
+  const macros = vol_macrosDoHistorico();
+  if (!macros.length) { toast('Cadastre as regras (ou vincule leituras) antes.'); return; }
+  const atual = vol_mesAnteriorAoAtual();
+  const meses = []; for (let k = 13; k >= 1; k--) meses.push(vol_mesMais(atual, -k));
+  const linhas = [['Ponto ID', 'Município', 'Sistema', 'Macro', ...meses]];
+  macros.forEach(m => linhas.push([m.pontoId, macro_rotuloMun(m), m.sistemaNome || '', m.nome, ...meses.map(() => '')]));
+  const ws = XLSX.utils.aoa_to_sheet(linhas);
+  ws['!cols'] = [{ wch: 11 }, { wch: 18 }, { wch: 18 }, { wch: 40 }, ...meses.map(() => ({ wch: 11 }))];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Historico');
+  XLSX.writeFile(wb, 'GeoFon_Modelo_Historico_Volumes_' + setorAtual() + '.xlsx');
+}
+function vol_abrirImportacaoHistorico() {
+  if (!macro_podeImportar()) { toast('Só o administrador importa o histórico.'); return; }
+  document.getElementById('up-vol-historico').click();
+}
+function vol_mesDoCabecalho(h) {
+  if (h instanceof Date) return h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0');
+  const s = String(h || '').trim();
+  let m = s.match(/^(\d{4})[-\/](\d{1,2})$/); if (m) return m[1] + '-' + m[2].padStart(2, '0');
+  m = s.match(/^(\d{1,2})[-\/](\d{4})$/); if (m) return m[2] + '-' + m[1].padStart(2, '0');
+  return null;
+}
+function vol_handleArquivoHistorico(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  const fr = new FileReader();
+  fr.onload = async ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+      const cab = linhas[0] || [];
+      const iPonto = cab.findIndex(c => textoBusca(c) === 'ponto id');
+      if (iPonto < 0) throw new Error('A planilha precisa da coluna "Ponto ID" (use o modelo).');
+      const colMes = cab.map((c, i) => ({ i, mes: vol_mesDoCabecalho(c) })).filter(x => x.mes);
+      if (!colMes.length) throw new Error('Não achei colunas de mês (ex.: 2025-12) no cabeçalho.');
+      const M = macro_estado();
+      const porPonto = {}; M.macros.forEach(m => { porPonto[m.pontoId] = m; });
+      const itens = []; const naoAchados = new Set();
+      linhas.slice(1).forEach(l => {
+        const pid = macro_txt(l[iPonto]);
+        if (!pid) return;
+        const m = porPonto[pid];
+        colMes.forEach(c => {
+          const v = macro_num(l[c.i]);
+          if (v == null) return;
+          if (!m) { naoAchados.add(pid); return; }
+          itens.push({ m, mes: c.mes, volume: v });
+        });
+      });
+      if (!itens.length) throw new Error('Nenhum volume preenchido para macros do cadastro.');
+      // Não sobrescreve meses já fechados no app
+      const { db, collection, query, where, getDocs, doc, writeBatch } = window.FB;
+      const meses = [...new Set(itens.map(x => x.mes))];
+      const fechados = new Set();
+      for (let i = 0; i < meses.length; i += 10) {
+        const snap = await getDocs(query(collection(db, 'volumesMensais'), where('setor', '==', setorAtual()), where('tipo', '==', 'macro'), where('mes', 'in', meses.slice(i, i + 10))));
+        snap.docs.forEach(d => { const x = d.data(); if (x.origem === 'fechamento') fechados.add(x.pontoId + '_' + x.mes); });
+      }
+      const gravar = itens.filter(x => !fechados.has(x.m.pontoId + '_' + x.mes));
+      if (!confirm('Importar histórico de "' + f.name + '"?\n\n' + gravar.length + ' volumes mensais (' + new Set(gravar.map(x => x.m._id)).size + ' macros, ' + meses.length + ' meses)' +
+        (itens.length - gravar.length ? '\n' + (itens.length - gravar.length) + ' ignorados (mês já fechado no app)' : '') +
+        (naoAchados.size ? '\n' + naoAchados.size + ' Ponto ID não encontrados no cadastro' : ''))) return;
+      const setor = setorAtual(), agora = Date.now();
+      for (let i = 0; i < gravar.length; i += 400) {
+        const b = writeBatch(db);
+        gravar.slice(i, i + 400).forEach(x => {
+          const horasMes = (vol_alvoFechamento(vol_proxMes(x.mes)) - vol_alvoFechamento(x.mes)) / 3600e3;
+          b.set(doc(db, 'volumesMensais', setor + '_' + x.m.pontoId + '_' + x.mes), { setor, tipo: 'macro', origem: 'importado', pontoId: x.m.pontoId, macroId: x.m._id,
+            nome: x.m.nome, municipio: macro_rotuloMun(x.m), mes: x.mes, volume: x.volume, medido: x.volume, estimado: 0, metodo: 'importado',
+            horasMes, horasMed: horasMes, arquivo: f.name, importadoEm: agora, importadoPor: S.user?.email || '' });
+        });
+        await b.commit();
+      }
+      toast(gravar.length + ' volumes mensais importados para o histórico.');
+    } catch (e) {
+      console.error(e);
+      alert(e && e.code === 'permission-denied' ? 'O banco recusou (permissão). Falta publicar a regra da coleção "volumesMensais".' : 'Não foi possível importar: ' + e.message);
+    }
+  };
+  fr.readAsArrayBuffer(f);
 }
 
 // ================================================================

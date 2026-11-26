@@ -433,6 +433,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="config-nav-item" data-macro-section="leituras" onclick="mostrarSecaoMacro('leituras')">
         <i class="ti ti-chart-dots"></i> <span>Leituras do supervisório</span>
       </div>
+      <div class="config-nav-item" data-macro-section="campo" onclick="mostrarSecaoMacro('campo')">
+        <i class="ti ti-clipboard-list"></i> <span>Leituras de campo</span>
+      </div>
       <div class="config-nav-item" data-macro-section="regras" onclick="mostrarSecaoMacro('regras')">
         <i class="ti ti-math-function"></i> <span>Regras de volume</span>
       </div>
@@ -480,6 +483,19 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <label style="font-size:12px">Mês <select id="macro-leit-mes" onchange="macro_estado().mesLeituras=this.value;macro_renderLeituras()" style="font-size:12px;padding:4px"></select></label>
         </div>
         <div id="macro-leituras-tabela"></div>
+      </div>
+
+      <div id="macrosec-campo" class="macro-sec config-section-panel" style="max-width:none;display:none">
+        <div class="section-title" style="margin:0 0 6px">Leituras de campo</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <select id="campo-filtro" onchange="campo_estado().filtro=this.value;campo_render()" style="font-size:12px;padding:5px"></select>
+          <select id="campo-macro" onchange="campo_estado().macroId=this.value;campo_render()" style="font-size:12px;padding:5px;min-width:320px;max-width:520px"></select>
+          <span style="flex:1"></span>
+          <button class="btn sm" onclick="campo_baixarModelo()" title="Planilha com os macros sem totalizador no supervisório"><i class="ti ti-file-download"></i> Modelo de planilha</button>
+          <button class="btn sm" onclick="campo_abrirImportacao()"><i class="ti ti-file-upload"></i> Importar planilha</button>
+          <input type="file" id="up-campo" accept=".xlsx,.xls,.csv" style="display:none" onchange="campo_handleArquivo(this)">
+        </div>
+        <div id="campo-conteudo"></div>
       </div>
 
       <div id="macrosec-regras" class="macro-sec config-section-panel" style="max-width:none;display:none">
@@ -13399,6 +13415,7 @@ function macro_render() {
   if (M.secao === 'sistemas') macro_renderSistemas();
   else if (M.secao === 'leituras') macro_renderLeituras();
   else if (M.secao === 'regras') vol_renderRegras();
+  else if (M.secao === 'campo') campo_render();
   else if (M.secao === 'volumes') vol_renderVolumes();
   else macro_renderMacros();
 }
@@ -13791,7 +13808,7 @@ function macro_vinculoAtual(nome) {
   const M = macro_estado();
   for (const m of M.macros) {
     const a = (m.apelidos || []).find(x => x.nome === nome);
-    if (a) return { m, grandeza: a.grandeza };
+    if (a) return { m, grandeza: a.grandeza, unidade: a.unidade };
   }
   return null;
 }
@@ -13837,6 +13854,7 @@ async function macro_handleArquivoScada(input) {
       p.sugestoes = macro_sugestoesPonto(p.nome);
       p.escolha = v ? v.m._id : (ign.has(p.nome) ? '__ignorar' : '');
       p.filtroMun = v && v.m.cidadeId ? 'M:' + v.m.cidadeId : macro_filtroDoNomePonto(p.nome);
+      p.unidade = (v && v.unidade) || macro_unidadeDoNome(p.nome);
       if (v && v.grandeza) p.grandeza = v.grandeza;
     });
     S._macroScada = { arquivo: f.name, linhas: r.linhas, invalidas: r.invalidas, lista };
@@ -13937,8 +13955,9 @@ function macro_renderImportScada() {
       return '<tr style="vertical-align:top' + cor + '"><td style="font-size:11.5px;max-width:330px">' + escHtml(p.nome) + '</td>' +
         '<td style="text-align:right">' + p.n.toLocaleString('pt-BR') + '</td>' +
         '<td style="font-size:11px;white-space:nowrap">' + escHtml(macro_fmtChaveTempo(p.ini)) + '<br>' + escHtml(macro_fmtChaveTempo(p.fim)) + '</td>' +
-        '<td><select onchange="S._macroScada.lista[' + i + '].grandeza=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px">' +
-          '<option value=""' + (!p.grandeza ? ' selected' : '') + '>?</option><option value="V"' + (p.grandeza === 'V' ? ' selected' : '') + '>Volume (m³)</option><option value="Q"' + (p.grandeza === 'Q' ? ' selected' : '') + '>Vazão</option></select></td>' +
+        '<td><select onchange="const g=this.value.split(\'|\');S._macroScada.lista[' + i + '].grandeza=g[0];if(g[1])S._macroScada.lista[' + i + '].unidade=g[1];macro_renderImportScada()" style="font-size:11.5px;padding:3px">' +
+          '<option value=""' + (!p.grandeza ? ' selected' : '') + '>?</option><option value="V"' + (p.grandeza === 'V' ? ' selected' : '') + '>Volume (m³)</option>' +
+          '<option value="Q|L/s"' + (p.grandeza === 'Q' && p.unidade !== 'm³/h' ? ' selected' : '') + '>Vazão (L/s)</option><option value="Q|m³/h"' + (p.grandeza === 'Q' && p.unidade === 'm³/h' ? ' selected' : '') + '>Vazão (m³/h)</option></select></td>' +
         '<td><select id="macro-scada-fil-' + i + '" onchange="S._macroScada.lista[' + i + '].filtroMun=this.value;macro_renderImportScada()" style="font-size:11px;padding:2px;max-width:330px;margin-bottom:3px;display:block" title="Pré-filtro: mostra só os macros deste município/sistema (as sugestões aparecem sempre)">' + opcFiltro + '</select>' +
           '<select id="macro-scada-sel-' + i + '" onchange="S._macroScada.lista[' + i + '].escolha=this.value;macro_renderImportScada()" style="font-size:11.5px;padding:3px;max-width:330px">' + macro_opcoesMacroSelect(p, ocupado) + '</select>' + novo + sug + '</td></tr>';
     }).join('') + '</tbody></table>';
@@ -13994,11 +14013,12 @@ async function macro_gravarImportScada() {
       M.macros.forEach(m => {
         const tinha = (m.apelidos || []).some(a => a.nome === p.nome);
         const deveTer = p.escolha === m._id && p.grandeza;
-        if (tinha && (!deveTer || (m.apelidos.find(a => a.nome === p.nome).grandeza !== p.grandeza))) {
+        const atualA = tinha ? m.apelidos.find(a => a.nome === p.nome) : null;
+        if (tinha && (!deveTer || atualA.grandeza !== p.grandeza || (p.grandeza === 'Q' && (atualA.unidade || 'L/s') !== (p.unidade || 'L/s')))) {
           m.apelidos = m.apelidos.filter(a => a.nome !== p.nome); alterados.set(m._id, m);
         }
         if (deveTer && !(m.apelidos || []).some(a => a.nome === p.nome)) {
-          m.apelidos = [...(m.apelidos || []), { nome: p.nome, grandeza: p.grandeza }]; alterados.set(m._id, m);
+          m.apelidos = [...(m.apelidos || []), p.grandeza === 'Q' ? { nome: p.nome, grandeza: 'Q', unidade: p.unidade || 'L/s' } : { nome: p.nome, grandeza: p.grandeza }]; alterados.set(m._id, m);
         }
       });
     });
@@ -14294,7 +14314,7 @@ function vol_renderModalRegra() {
   const macrosOrd = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha || R.parcelas.some(p => p.macroId === m._id)));
   const opcMacro = sel => '<option value="">— escolher macro —</option>' + macrosOrd
     .filter(m => m._id === sel || (macro_filtroMunPassa(m, R._filtroMun) && (!busca || textoBusca([m.nome, m.sistemaNome, m.tag, m.pontoId, macro_nomeCidade(m.cidadeId)].join(' ')).includes(busca))))
-    .map(m => '<option value="' + escHtml(m._id) + '"' + (m._id === sel ? ' selected' : '') + '>' + escHtml((macro_temLeitura(m, 'V') ? '● ' : '○ ') + macro_rotuloMun(m) + ' — ' + m.nome) + '</option>').join('');
+    .map(m => '<option value="' + escHtml(m._id) + '"' + (m._id === sel ? ' selected' : '') + '>' + escHtml((macro_fonteVolume(m) ? '● ' : '○ ') + macro_rotuloMun(m) + ' — ' + m.nome) + '</option>').join('');
   const campoEscopo = (campo, rotulo, externo) => {
     const v = R[campo] || '';
     return '<div class="field"><label>' + rotulo + '</label><select id="vol-regra-' + campo + '" onchange="vol_mudarEscopo(\'' + campo + '\',this.value)">' + vol_opcoesEscopo(v, externo) + '</select></div>';
@@ -14307,7 +14327,7 @@ function vol_renderModalRegra() {
         '<option value="ambos">Exportado da origem E importado do destino (mesma medição)</option>' +
         '<option value="origem">Só exportado da origem (o destino mede com outro macro)</option>' +
         '<option value="destino">Só importado do destino (a origem mede com outro macro)</option></select></div>') +
-    '<div style="font-size:12px;font-weight:600;margin:6px 0 4px">Parcelas (macros somados ou subtraídos) <span style="font-weight:400;color:var(--text3)">● tem leitura de volume do supervisório · ○ ainda não</span></div>' +
+    '<div style="font-size:12px;font-weight:600;margin:6px 0 4px">Parcelas (macros somados ou subtraídos) <span style="font-weight:400;color:var(--text3)">● tem leitura (supervisório, campo ou vazão) · ○ ainda não</span></div>' +
     '<select id="vol-regra-filtroMun" onchange="S._volRegra._filtroMun=this.value;S._volRegra._filtroManual=true;vol_renderModalRegra()" style="width:100%;margin-bottom:5px;font-size:12px" title="Pré-filtro da lista de macros">' + macro_opcoesFiltroMun() + '</select>' +
     '<input type="search" placeholder="Filtrar a lista de macros..." value="' + escHtml(R._buscaMacro || '') + '" oninput="S._volRegra._buscaMacro=this.value;vol_renderModalRegra();setTimeout(()=>{const i=document.querySelector(\'#vol-regra-corpo input[type=search]\');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},0)" style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">' +
     R.parcelas.map((p, i) => '<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center">' +
@@ -14508,66 +14528,193 @@ function vol_assinatura(mes) {
     if (!m) { partes.push(id + ':x'); return; }
     const c = m.cobertura || {};
     partes.push(id + ':' + ((c['V_' + mes] || {}).atualizadoEm || 0) + ':' + ((c['V_' + vol_proxMes(mes)] || {}).atualizadoEm || 0) +
-      ':' + (m.bidirecional ? 1 : 0) + ':' + (m.apelidos || []).filter(a => a.grandeza === 'V').map(a => a.nome).join(';') + ':' + (vol_sistemaSazonal(m.sistemaId) ? 1 : 0));
+      ':' + (m.bidirecional ? 1 : 0) + ':' + (m.apelidos || []).map(a => a.grandeza + (a.unidade || '') + a.nome).join(';') + ':' + (m.campoAtualizadoEm || 0) + ':' + ((c['Q_' + mes] || {}).atualizadoEm || 0) + ':' + (vol_sistemaSazonal(m.sistemaId) ? 1 : 0));
   });
   return vol_hash(partes.join('|'));
 }
 
+// Fonte do volume de um macro: 'supervisorio' (totalizador no ScadaBR), 'campo' (leituras de campo
+// lançadas no app), 'vazao' (só vazão no supervisório → volume pela integral da vazão) ou ''.
+function macro_apelidoQ(m) { return (m.apelidos || []).find(a => a.grandeza === 'Q') || null; }
+function macro_fonteVolume(m) {
+  if (macro_temLeitura(m, 'V')) return 'supervisorio';
+  if ((m.leiturasCampo || []).length) return 'campo';
+  if (macro_apelidoQ(m)) return 'vazao';
+  return '';
+}
+function macro_unidadeDoNome(nome) {
+  return /m\s*[3³]\s*\/\s*h/i.test(String(nome || '')) ? 'm³/h' : 'L/s';
+}
+function macro_fatorM3h(unidade) { return unidade === 'm³/h' ? 1 : 3.6; }   // L/s → m³/h
+function macro_vazaoMaxM3h(m) {
+  const vs = (m.equipamentos || []).map(e => +e.vazaoMax).filter(v => isFinite(v) && v > 0);
+  return vs.length ? Math.max(...vs) : null;
+}
+function vol_fmtLs(m3h) { return m3h == null || !isFinite(m3h) ? '—' : (m3h / 3.6).toFixed(1).replace('.', ',') + ' L/s'; }
+function vol_tempoCampo(data) { const [a, mo, d] = data.split('-').map(Number); return new Date(a, mo - 1, d, VOL_HORA_FECHAMENTO, 0, 0).getTime(); }
+
+// Leituras de vazão (Q) de um macro entre dois instantes (cache por ponto/dia)
+async function vol_leiturasQ(m, T0, T1) {
+  const V = vol_estado();
+  V.cacheQ = V.cacheQ || {};
+  const cache = V.cacheQ[m.pontoId] = V.cacheQ[m.pontoId] || {};
+  const dias = [];
+  for (let d = new Date(T0 - 86400e3); d.getTime() <= T1; d.setDate(d.getDate() + 1)) {
+    dias.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'));
+  }
+  const faltam = dias.filter(d => !(d in cache));
+  const { db, collection, query, where, getDocs } = window.FB;
+  for (let i = 0; i < faltam.length; i += 10) {
+    const lote = faltam.slice(i, i + 10);
+    const snap = await getDocs(query(collection(db, 'leiturasMacro'), where('setor', '==', setorAtual()), where('pontoId', '==', m.pontoId),
+      where('grandeza', '==', 'Q'), where('dia', 'in', lote)));
+    lote.forEach(d => { cache[d] = null; });
+    snap.docs.forEach(doc => { const x = doc.data(); cache[x.dia] = { s: x.s || [], v: x.v || [] }; });
+  }
+  const out = [];
+  dias.forEach(d => {
+    const x = cache[d];
+    if (!x) return;
+    const [a, mo, dd] = d.split('-').map(Number);
+    const base = new Date(a, mo - 1, dd).getTime();
+    x.s.forEach((s, i) => out.push({ t: base + s * 1000, v: x.v[i] }));
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+// Volume (m³) pela integral da vazão (trapézios) entre T0 e T1. Não liga pontos através de falhas:
+// intervalo maior que 1 h ou 3× o intervalo típico do ponto fica como "sem medição".
+function vol_integrarVazao(pts, T0, T1, fator) {
+  if (pts.length < 2) return { vol: 0, horas: 0, ini: null, fim: null };
+  const dts = [];
+  for (let i = 1; i < pts.length; i++) dts.push(pts[i].t - pts[i - 1].t);
+  const med = [...dts].sort((a, b) => a - b)[Math.floor(dts.length / 2)];
+  const lim = Math.max(3600e3, 3 * med);
+  let vol = 0, ms = 0, ini = null, fim = null;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    if (b.t - a.t > lim) continue;
+    const s = Math.max(a.t, T0), e = Math.min(b.t, T1);
+    if (e <= s) continue;
+    const va = a.v + (b.v - a.v) * (s - a.t) / (b.t - a.t), vb = a.v + (b.v - a.v) * (e - a.t) / (b.t - a.t);
+    vol += (va + vb) / 2 * fator * (e - s) / 3600e3;
+    ms += e - s;
+    if (ini == null || s < ini) ini = s;
+    if (fim == null || e > fim) fim = e;
+  }
+  return { vol, horas: ms / 3600e3, ini, fim };
+}
+
 async function vol_medirMacroMes(m, mes) {
   const T0 = vol_alvoFechamento(mes), T1 = vol_alvoFechamento(vol_proxMes(mes));
+  const fonte = macro_fonteVolume(m);
   const r = { macroId: m._id, pontoId: m.pontoId, nome: m.nome, municipio: macro_rotuloMun(m), sistema: m.sistemaNome || '', sistemaId: m.sistemaId || '',
-    mes, horasMes: (T1 - T0) / 3600e3, ini: null, fim: null, medido: null, horasMed: 0, alertas: [] };
-  if (!macro_temLeitura(m, 'V')) { r.alertas.push('sem ponto de volume do supervisório vinculado'); return r; }
-  const leit = await vol_leiturasPerto(m, [T0, T1]);
+    mes, fonte, horasMes: (T1 - T0) / 3600e3, ini: null, fim: null, medido: null, horasMed: 0, alertas: [] };
+  if (!fonte) { r.alertas.push('sem leitura (supervisório, campo ou vazão) vinculada'); return r; }
   const LIM = VOL_ALERTA_DIF_DIAS * 86400e3;
-  let a = vol_fronteira(leit, T0); if (a && Math.abs(a.t - T0) > LIM) a = null;
-  let b = vol_fronteira(leit, T1); if (b && Math.abs(b.t - T1) > LIM) b = null;
-  const cob = (m.cobertura || {})['V_' + mes];
-  // Sem leitura a até 12 h da virada: usa a primeira/última leitura DO MÊS (a mais cedo/mais tarde entre
-  // as leituras perto da virada e o resumo de cobertura do mês)
-  if (!a) {
-    const cands = [];
-    const x = leit.find(l => l.t >= T0 && l.t < T1 && l.t <= T0 + VOL_JANELA_DIAS * 86400e3);
-    if (x) cands.push({ t: x.t, v: x.v, modo: 'primeira leitura' });
-    if (cob && cob.ini) { const t = vol_tempoChave(cob.ini); if (t >= T0 && t < T1) cands.push({ t, v: cob.primeiro, modo: 'primeira leitura do mês' }); }
-    if (cands.length) a = cands.sort((p, q) => p.t - q.t)[0];
+  if (fonte === 'vazao') {
+    // Volume pela vazão
+    const ap = macro_apelidoQ(m);
+    const pts = await vol_leiturasQ(m, T0, T1);
+    const it = vol_integrarVazao(pts, T0, T1, macro_fatorM3h(ap.unidade));
+    if (it.horas > 0) {
+      r.medido = it.vol; r.horasMed = it.horas;
+      r.ini = { t: it.ini, v: null, modo: 'vazão integrada (' + (ap.unidade || 'L/s') + ')' };
+      r.fim = { t: it.fim, v: null, modo: 'vazão integrada (' + (ap.unidade || 'L/s') + ')' };
+    } else r.alertas.push('sem leituras de vazão neste mês');
+  } else if (fonte === 'campo') {
+    // Leituras de campo (sem hora → 08:00): a mais próxima de cada virada (até 16 dias), virada compartilhada
+    // entre meses; a diferença é o macromedido e o que faltar (ou sobrar) do mês vai para a estimativa
+    const lc = (m.leiturasCampo || []).map(x => ({ t: vol_tempoCampo(x.data), v: +x.valor })).sort((a, b) => a.t - b.t);
+    const perto = T => { let best = null; lc.forEach(x => { if (Math.abs(x.t - T) <= 16 * 86400e3 && (!best || Math.abs(x.t - T) < Math.abs(best.t - T))) best = x; }); return best; };
+    const a = perto(T0), b = perto(T1);
+    if (a && b && b.t > a.t) {
+      r.ini = { t: a.t, v: a.v, modo: a.t === T0 ? 'leitura de campo (exata)' : 'leitura de campo' };
+      r.fim = { t: b.t, v: b.v, modo: b.t === T1 ? 'leitura de campo (exata)' : 'leitura de campo' };
+      r.medido = b.v - a.v; r.horasMed = (b.t - a.t) / 3600e3;
+      if (r.medido < 0 && !m.bidirecional) r.alertas.push('leitura menor que a anterior — conferir (erro de digitação ou troca de medidor)');
+    } else r.alertas.push(!a && !b ? 'sem leituras de campo perto do início e do fim do mês' : !a ? 'sem leitura de campo perto de ' + vol_fmtDataHora(T0) : 'sem leitura de campo perto de ' + vol_fmtDataHora(T1));
+  } else {
+    // Totalizador do supervisório
+    const leit = await vol_leiturasPerto(m, [T0, T1]);
+    let a = vol_fronteira(leit, T0); if (a && Math.abs(a.t - T0) > LIM) a = null;
+    let b = vol_fronteira(leit, T1); if (b && Math.abs(b.t - T1) > LIM) b = null;
+    const cob = (m.cobertura || {})['V_' + mes];
+    // Sem leitura a até 12 h da virada: usa a primeira/última leitura DO MÊS
+    if (!a) {
+      const cands = [];
+      const x = leit.find(l => l.t >= T0 && l.t < T1 && l.t <= T0 + VOL_JANELA_DIAS * 86400e3);
+      if (x) cands.push({ t: x.t, v: x.v, modo: 'primeira leitura' });
+      if (cob && cob.ini) { const t = vol_tempoChave(cob.ini); if (t >= T0 && t < T1) cands.push({ t, v: cob.primeiro, modo: 'primeira leitura do mês' }); }
+      if (cands.length) a = cands.sort((p, q) => p.t - q.t)[0];
+    }
+    if (!b) {
+      const cands = [];
+      for (let i = leit.length - 1; i >= 0; i--) if (leit[i].t <= T1 && leit[i].t > T0 && leit[i].t >= T1 - VOL_JANELA_DIAS * 86400e3) { cands.push({ t: leit[i].t, v: leit[i].v, modo: 'última leitura' }); break; }
+      if (cob && cob.fim) { const t = vol_tempoChave(cob.fim); if (t <= T1 && t > T0) cands.push({ t, v: cob.ultimo, modo: 'última leitura do mês' }); }
+      if (cands.length) b = cands.sort((p, q) => q.t - p.t)[0];
+    }
+    if (a && b && b.t > a.t) {
+      r.ini = a; r.fim = b; r.medido = b.v - a.v; r.horasMed = (b.t - a.t) / 3600e3;
+      if (r.medido < 0 && !m.bidirecional) r.alertas.push('volume negativo — possível troca/zeramento do totalizador');
+    } else r.alertas.push('sem leituras de volume neste mês');
+    if (cob) {
+      const semDado = vol_diasNoMes(mes) - Object.values(cob.dias || {}).filter(n => n > 0).length;
+      if (semDado > 0) r.alertas.push(semDado + ' dia(s) do mês sem leitura');
+    }
+    // Checagem: totalizador × vazão (quando o macro tem os dois no supervisório)
+    const apQ = macro_apelidoQ(m);
+    if (apQ && r.medido != null && r.medido > 0) {
+      try {
+        const pts = await vol_leiturasQ(m, r.ini.t, r.fim.t);
+        const it = vol_integrarVazao(pts, r.ini.t, r.fim.t, macro_fatorM3h(apQ.unidade));
+        if (it.horas >= 0.9 * r.horasMed) {
+          const dif = (it.vol - r.medido) / r.medido;
+          r.checagemVazao = { volumeVazao: it.vol, dif };
+          if (Math.abs(dif) > 0.05) r.alertas.push('totalizador × vazão: diferença de ' + (dif * 100).toFixed(1).replace('.', ',') + '% (vazão dá ' + vol_fmtM3(it.vol) + ' m³)');
+        }
+      } catch (e) { console.warn('checagem vazão', e); }
+    }
   }
-  if (!b) {
-    const cands = [];
-    for (let i = leit.length - 1; i >= 0; i--) if (leit[i].t <= T1 && leit[i].t > T0 && leit[i].t >= T1 - VOL_JANELA_DIAS * 86400e3) { cands.push({ t: leit[i].t, v: leit[i].v, modo: 'última leitura' }); break; }
-    if (cob && cob.fim) { const t = vol_tempoChave(cob.fim); if (t <= T1 && t > T0) cands.push({ t, v: cob.ultimo, modo: 'última leitura do mês' }); }
-    if (cands.length) b = cands.sort((p, q) => q.t - p.t)[0];
-  }
-  if (a && b && b.t > a.t) {
-    r.ini = a; r.fim = b; r.medido = b.v - a.v; r.horasMed = (b.t - a.t) / 3600e3;
-    if (r.medido < 0 && !m.bidirecional) r.alertas.push('volume negativo — possível troca/zeramento do totalizador');
-  } else r.alertas.push('sem leituras de volume neste mês');
-  if (cob) {
-    const semDado = vol_diasNoMes(mes) - Object.values(cob.dias || {}).filter(n => n > 0).length;
-    if (semDado > 0) r.alertas.push(semDado + ' dia(s) do mês sem leitura');
+  // Checagem: vazão média do período acima da vazão máxima do medidor
+  const qmax = macro_vazaoMaxM3h(m);
+  if (qmax && r.medido != null && r.horasMed > 0 && r.medido / r.horasMed > qmax) {
+    r.alertas.push('vazão média ' + vol_fmtLs(r.medido / r.horasMed) + ' acima da vazão máxima do medidor (' + vol_fmtLs(qmax) + ')');
   }
   return r;
 }
-// Opções de estimativa (depende do histórico); não decide o método
+// Opções de estimativa (depende do histórico); não decide o método.
+// horasFalta < 0 acontece com leitura de campo cobrindo mais que o mês (ex.: 28/09 → 03/11): aí a
+// "estimativa" é um ajuste negativo pró-rata, para o mês ficar com a quantidade de dias dele.
 function vol_opcoesEstimativa(r, hist, sazonal) {
-  const falta = Math.max(0, r.horasMes - r.horasMed);
+  const falta = r.horasMes - r.horasMed;
   const h = hist[r.pontoId] || {};
   const taxa = x => x && x.horasMes > 0 && x.volume != null && isFinite(x.volume) ? x.volume / x.horasMes : null;
   const ano = h[vol_mesMais(r.mes, -12)];
   r.anoAnterior = ano && ano.volume != null ? { mes: ano.mes, volume: ano.volume } : null;
   r.sazonal = !!sazonal;
   r.horasFalta = falta;
-  r.precisaEstimar = falta > VOL_ALERTA_DIF_DIAS * 24;
+  r.precisaEstimar = Math.abs(falta) > VOL_ALERTA_DIF_DIAS * 24;
   const op = {};
+  const ult = [1, 2, 3].map(k => h[vol_mesMais(r.mes, -k)]).filter(x => taxa(x) != null);
+  const taxaB3 = ult.length ? ult.reduce((s, x) => s + x.volume, 0) / ult.reduce((s, x) => s + x.horasMes, 0) : null;
+  r.mesesB3 = ult.map(x => x.mes);
   if (r.precisaEstimar) {
-    if (r.medido != null && r.medido >= 0 && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) op.A = r.medido / r.horasMed * falta;
-    const ult = [1, 2, 3].map(k => h[vol_mesMais(r.mes, -k)]).filter(x => taxa(x) != null);
-    if (ult.length) op.B3 = ult.reduce((s, x) => s + x.volume, 0) / ult.reduce((s, x) => s + x.horasMes, 0) * falta;
-    if (taxa(ano) != null) op.BA = taxa(ano) * falta;
-    r.mesesB3 = ult.map(x => x.mes);
-  } else r.mesesB3 = [];
+    if (falta < 0) {
+      if (r.medido != null && r.horasMed > 0) op.A = r.medido / r.horasMed * falta;
+    } else {
+      if (r.medido != null && r.medido >= 0 && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) op.A = r.medido / r.horasMed * falta;
+      if (taxaB3 != null) op.B3 = taxaB3 * falta;
+      if (taxa(ano) != null) op.BA = taxa(ano) * falta;
+    }
+  }
   r.opcoes = op;
   r.metodoAuto = !r.precisaEstimar ? 'nenhum' : op.A != null ? 'A' : (sazonal && op.BA != null) ? 'BA' : op.B3 != null ? 'B3' : op.BA != null ? 'BA' : 'nenhum';
+  // Checagem: média diária do mês × média dos últimos meses (±30%)
+  r.alertasHist = [];
+  if (taxaB3 && r.medido != null && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) {
+    const dif = (r.medido / r.horasMed - taxaB3) / taxaB3;
+    if (Math.abs(dif) > 0.30) r.alertasHist.push('média diária ' + (dif > 0 ? '+' : '') + (dif * 100).toFixed(0) + '% em relação aos últimos meses');
+  }
 }
 // Aplica o método (automático ou o ajuste escolhido) e calcula o volume do macro
 function vol_aplicarAjuste(r, ajuste) {
@@ -14716,13 +14863,13 @@ function vol_abrirAjuste(macroId) {
   document.getElementById('vol-aj-corpo').innerHTML =
     '<div style="font-size:12px;line-height:1.7;background:var(--bg2);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px">' +
       '<b>Medido:</b> ' + (r.medido != null ? vol_fmtM3(r.medido) + ' m³ em ' + dias(r.horasMed) + ' dias (' + vol_fmtDataHora(r.ini.t) + ' → ' + vol_fmtDataHora(r.fim.t) + ')' : 'nada') + '<br>' +
-      '<b>Sem medição:</b> ' + dias(r.horasFalta || 0) + ' dias de ' + dias(r.horasMes) + (r.sazonal ? ' · <span class="badge media">sistema sazonal</span>' : '') + '<br>' +
+      ((r.horasFalta || 0) < 0 ? '<b>Medido além do mês:</b> ' + dias(-r.horasFalta) + ' dias (ajuste pró-rata para ' + dias(r.horasMes) + ' dias)' : '<b>Sem medição:</b> ' + dias(r.horasFalta || 0) + ' dias de ' + dias(r.horasMes)) + (r.sazonal ? ' · <span class="badge media">sistema sazonal</span>' : '') + '<br>' +
       (r.anoAnterior ? '<b>Mesmo mês do ano anterior (' + vol_fmtMes(r.anoAnterior.mes) + '):</b> ' + vol_fmtM3(r.anoAnterior.volume) + ' m³<br>' : '') +
-      ((r.alertas || []).length ? '<span style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> ' + r.alertas.map(escHtml).join(' · ') + '</span>' : '') +
+      ([...(r.alertas || []), ...(r.alertasHist || [])].length ? '<span style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> ' + [...(r.alertas || []), ...(r.alertasHist || [])].map(escHtml).join(' · ') + '</span>' : '') +
     '</div>' +
     (r.precisaEstimar || (S._volAjuste.metodo === 'C') ? '' : '<p style="font-size:11.5px;color:var(--text2);margin-bottom:6px">O mês foi medido inteiro (diferença ≤ 12 h) — só use "manual" se precisar corrigir.</p>') +
     linha('auto', 'Automático', null, 'hoje: ' + VOL_METODOS[r.metodoAuto || 'nenhum']) +
-    linha('A', 'Média do próprio mês', op.A, 'só com 7 dias ou mais medidos') +
+    linha('A', (r.horasFalta || 0) < 0 ? 'Ajuste pró-rata ao mês' : 'Média do próprio mês', op.A, (r.horasFalta || 0) < 0 ? 'desconta a parte medida fora do mês, pela média do período' : 'só com 7 dias ou mais medidos') +
     linha('B3', 'Média dos últimos 3 meses fechados', op.B3, (r.mesesB3 || []).length ? 'meses: ' + r.mesesB3.map(vol_fmtMes).join(', ') : 'sem histórico') +
     linha('BA', 'Mesmo mês do ano anterior', op.BA, r.anoAnterior ? vol_fmtMes(r.anoAnterior.mes) : 'sem histórico') +
     linha('C', 'Manual', null, '<input type="number" step="1" min="0" placeholder="volume estimado (m³) para o período sem medição" value="' + escHtml(S._volAjuste.valor) + '" oninput="S._volAjuste.valor=this.value;S._volAjuste.metodo=\'C\';document.querySelector(\'input[name=vol-aj-met][value=C]\').checked=true" style="width:100%;margin-top:3px;font-size:12px"' + (fechado ? ' disabled' : '') + '>' +
@@ -14765,7 +14912,7 @@ async function vol_fecharMes() {
     const ops = Object.values(d.macros).filter(x => x.pontoId).map(x => ({ ref: doc(db, 'volumesMensais', setor + '_' + x.pontoId + '_' + d.mes),
       dados: vol_limpo({ setor, tipo: 'macro', origem: 'fechamento', pontoId: x.pontoId, macroId: x.macroId, nome: x.nome, municipio: x.municipio, mes: d.mes,
         volume: x.volume, medido: x.medido, estimado: x.estimado, metodo: x.metodo, horasMes: x.horasMes, horasMed: x.horasMed,
-        ini: x.ini, fim: x.fim, alertas: [...(x.alertas || []), ...(x.alertasEst || [])], justificativa: x.justificativa || '', fechadoEm: agora, fechadoPor: quem }) }));
+        ini: x.ini, fim: x.fim, alertas: [...(x.alertas || []), ...(x.alertasHist || []), ...(x.alertasEst || [])], justificativa: x.justificativa || '', fechadoEm: agora, fechadoPor: quem }) }));
     for (let i = 0; i < ops.length; i += 400) {
       const b = writeBatch(db);
       ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.dados));
@@ -14806,6 +14953,16 @@ function vol_fmtParte(t) {
     (Math.round(t.est) ? '<div style="font-size:10.5px;color:var(--amber);font-weight:400;white-space:nowrap">medido ' + vol_fmtM3(t.med) + ' · estimado ' + vol_fmtM3(t.est) + ' (' + pct.toFixed(1).replace('.', ',') + '%)</div>' : '') +
     (t.semDado ? '<div style="font-size:10.5px;color:var(--red);font-weight:400;white-space:nowrap">parcial: ' + t.semDado + ' macro(s) sem dado</div>' : '');
 }
+function vol_toggleDet(k) {
+  const V = vol_estado();
+  V.abertos = V.abertos || {};
+  V.abertos[k] = !V.abertos[k];
+  document.querySelectorAll('[data-det="' + k + '"]').forEach(tr => { tr.style.display = V.abertos[k] ? '' : 'none'; });
+  const ic = document.getElementById('vol-ic-' + k); if (ic) ic.className = 'ti ti-chevron-' + (V.abertos[k] ? 'down' : 'right');
+}
+function vol_celNum(v, extra) {
+  return '<td style="text-align:right;white-space:nowrap' + (extra || '') + '">' + (v == null ? '—' : vol_fmtM3(v)) + '</td>';
+}
 function vol_renderVolumes() {
   const M = macro_estado(), V = vol_estado();
   const el = document.getElementById('vol-resultado');
@@ -14824,7 +14981,6 @@ function vol_renderVolumes() {
   const erro = V.erroDoc ? '<p style="font-size:12px;color:var(--amber);margin-bottom:6px"><i class="ti ti-alert-triangle"></i> ' + escHtml(V.erroDoc) + '</p>' : '';
   const R = V.resultado && V.resultado.mes === mes ? V.resultado : null;
   if (!R) { el.innerHTML = erro + '<p style="font-size:12px;color:var(--text2);padding:10px 0">' + vol_fmtMes(mes) + ' ainda não foi calculado. Clique em <b>Calcular</b>. O mês vai do dia 1º às 08:00 ao dia 1º do mês seguinte às 08:00.</p>'; return; }
-  // Barra de situação
   const desatualizado = d && !fechado && d.assinatura !== vol_assinatura(mes);
   let barra = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 10px;border-radius:var(--radius);margin-bottom:8px;font-size:12px;background:' + (fechado ? 'var(--green-l, rgba(16,185,129,.12))' : 'var(--bg2)') + '">';
   if (fechado) barra += '<i class="ti ti-lock" style="color:var(--green)"></i> <b>Mês fechado</b> em ' + vol_fmtDataHora(d.fechadoEm) + ' por ' + escHtml(d.fechadoNome || d.fechadoPor || '') + '<span style="flex:1"></span>' +
@@ -14841,25 +14997,38 @@ function vol_renderVolumes() {
     fil.value = V.escopo || '';
   }
   if (!R.escopos.length) { el.innerHTML = erro + barra + '<p style="font-size:12px;color:var(--text2);padding:10px 0">Nenhuma regra valia em ' + vol_fmtMes(mes) + '. Cadastre em <b>Regras de volume</b> e recalcule.</p>'; return; }
-  const linhaMacros = r => (r.parcelas || []).map(p => {
+  V.abertos = V.abertos || {};
+  const fonteTxt = { supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'pela vazão' };
+  const parcial = t => t && t.semDado ? '<div style="font-size:10.5px;color:var(--red);font-weight:400">parcial: ' + t.semDado + ' sem dado</div>' : '';
+  // Linhas dos macros de uma regra (escondidas até clicar na regra)
+  const linhasMacros = (r, k) => (r.parcelas || []).map(p => {
     const x = R.macros[p.macroId] || {};
-    const al = [...(x.alertas || []), ...(x.alertasEst || [])];
-    const corSit = x.situacao === 'sem dado' ? 'var(--red)' : x.estimado ? 'var(--amber)' : 'var(--text2)';
-    return '<div style="font-size:11px;color:var(--text2);padding:2px 0 2px 14px;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;cursor:pointer" onclick="vol_abrirAjuste(\'' + escHtml(p.macroId) + '\')" title="Clique para ver/ajustar a estimativa">' +
-      '<span style="min-width:12px;font-weight:700">' + (p.sinal < 0 ? '−' : '+') + '</span><span style="flex:1;min-width:180px"><span style="color:var(--text3)">' + escHtml(x.municipio || '') + ' —</span> ' + escHtml(x.nome || '') + '</span>' +
-      '<span style="white-space:nowrap">' + (x.ini ? vol_fmtDataHora(x.ini.t) : '—') + ' → ' + (x.fim ? vol_fmtDataHora(x.fim.t) : '—') + '</span>' +
-      '<span style="white-space:nowrap;min-width:110px;text-align:right">' + (x.medido != null ? 'medido ' + (x.horasMed / 24).toFixed(1).replace('.', ',') + ' d' : '') + '</span>' +
-      '<span style="white-space:nowrap;min-width:150px;text-align:right;color:' + corSit + '">' + (x.estimado ? '+ est. ' + vol_fmtM3(x.estimado) + ' (' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ', ajustado' : '') + ')' : x.situacao === 'sem dado' ? 'sem dado' : '') + '</span>' +
-      '<span style="white-space:nowrap;min-width:95px;text-align:right;font-weight:600">' + vol_fmtM3(x.volume) + ' m³</span>' +
-      (al.length ? '<span style="flex-basis:100%;color:var(--amber);padding-left:18px"><i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') + '</span>' : '') + '</div>';
+    const al = [...(x.alertas || []), ...(x.alertasHist || []), ...(x.alertasEst || [])];
+    const sg = p.sinal < 0 ? -1 : 1;
+    const per = x.ini && x.fim ? vol_fmtDataHora(x.ini.t) + ' → ' + vol_fmtDataHora(x.fim.t) + ' · ' + (x.horasMed / 24).toFixed(1).replace('.', ',') + ' d' : '';
+    const est = x.estimado ? '<span title="' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ' (ajustado)' : '') + '">' + vol_fmtM3(sg * x.estimado) + '</span>' : '';
+    return '<tr data-det="' + k + '" style="display:' + (V.abertos[k] ? '' : 'none') + ';font-size:11px;color:var(--text2);cursor:pointer;background:var(--bg)" onclick="vol_abrirAjuste(\'' + escHtml(p.macroId) + '\')" title="Clique para ver/ajustar a estimativa">' +
+      '<td></td><td style="padding-left:22px"><b style="color:var(--text)">' + (sg < 0 ? '− ' : '+ ') + '</b><span style="color:var(--text3)">' + escHtml(x.municipio || '') + ' —</span> ' + escHtml(x.nome || '') +
+        '<div style="color:var(--text3)">' + escHtml(fonteTxt[x.fonte] || '') + (per ? ' · ' + per : '') + (x.estimado ? ' · est.: ' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ' (ajustado)' : '') : '') + '</div>' +
+        (al.length ? '<div style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') + '</div>' : '') + '</td>' +
+      vol_celNum(x.medido != null ? sg * x.medido : null) +
+      '<td style="text-align:right;white-space:nowrap;color:var(--amber)">' + (est || (x.situacao === 'sem dado' ? '' : '—')) + '</td>' +
+      '<td style="text-align:right;white-space:nowrap;font-weight:600' + (x.situacao === 'sem dado' ? ';color:var(--red)' : '') + '">' + (x.volume != null ? vol_fmtM3(sg * x.volume) : 'sem dado') + '</td></tr>';
   }).join('');
-  const bloco = (titulo, linhas, total, cor, rotulo) => {
-    if (!linhas.length) return '<tr><td style="font-weight:600;color:' + cor + '">' + titulo + '</td><td style="color:var(--text3);font-size:11.5px">nenhuma regra</td><td style="text-align:right">0</td></tr>';
-    return '<tr><td style="font-weight:600;color:' + cor + ';vertical-align:top">' + titulo + '</td><td>' + linhas.map(l => {
+  const grupo = (titulo, linhas, total, cor, rotulo, ek) => {
+    if (!linhas.length) return '<tr><td style="font-weight:600;color:' + cor + '">' + titulo + '</td><td style="color:var(--text3);font-size:11.5px">nenhuma regra</td><td style="text-align:right">0</td><td style="text-align:right">0</td><td style="text-align:right;font-weight:700">0</td></tr>';
+    let h = '';
+    linhas.forEach((l, i) => {
       const r = l.regra;
+      const k = vol_hash(ek + '|' + rotulo + '|' + r._id);
       const lado = r.tipo === 'transferencia' ? (rotulo === 'E' ? 'para ' + vol_nomeEscopo(r.destino, true) : 'de ' + vol_nomeEscopo(r.origem, true)) + ' — ' : '';
-      return '<details style="margin-bottom:3px"><summary style="cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:flex-start"><span style="flex:1">' + escHtml(lado + r.nome) + '</span><span style="text-align:right">' + vol_fmtParte(l) + '</span></summary>' + linhaMacros(r) + '</details>';
-    }).join('') + '</td><td style="text-align:right;vertical-align:top">' + vol_fmtParte(total) + '</td></tr>';
+      h += '<tr style="cursor:pointer" onclick="vol_toggleDet(\'' + k + '\')"><td style="font-weight:600;color:' + cor + '">' + (i === 0 ? titulo : '') + '</td>' +
+        '<td style="font-size:12px"><i id="vol-ic-' + k + '" class="ti ti-chevron-' + (V.abertos[k] ? 'down' : 'right') + '" style="color:var(--text3)"></i> ' + escHtml(lado + r.nome) + parcial(l) + '</td>' +
+        vol_celNum(l.med) + vol_celNum(Math.round(l.est) ? l.est : null, ';color:var(--amber)') + vol_celNum(l.vol, ';font-weight:600') + '</tr>' + linhasMacros(r, k);
+    });
+    h += '<tr style="border-top:1px solid var(--border)"><td></td><td style="font-size:11.5px;font-weight:700;color:' + cor + '">Total ' + titulo.toLowerCase() + parcial(total) + '</td>' +
+      vol_celNum(total.med, ';font-weight:700') + vol_celNum(Math.round(total.est) ? total.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(total.vol, ';font-weight:800') + '</tr>';
+    return h;
   };
   const escopos = R.escopos.filter(e => !V.escopo || e.k === V.escopo);
   const lista = Object.values(R.macros);
@@ -14869,11 +15038,13 @@ function vol_renderVolumes() {
     '. Clique numa linha para ver os macros; clique num macro para ver ou ajustar a estimativa.</p>' +
     escopos.map(e => '<div style="border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px">' +
       '<div style="font-weight:700;font-size:13.5px;margin-bottom:6px">' + escHtml(e.nome) + '</div>' +
-      '<table class="data-table" style="margin:0"><colgroup><col style="width:120px"><col><col style="width:200px"></colgroup><tbody>' +
-      bloco('Produzido', e.producao, e.P, 'var(--blue)', 'P') +
-      bloco('Importado', e.importado, e.I, 'var(--green)', 'I') +
-      bloco('Exportado', e.exportado, e.E, 'var(--red)', 'E') +
-      '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado</td><td style="text-align:right">' + vol_fmtParte(e.D) + '</td></tr>' +
+      '<table class="data-table" style="margin:0"><colgroup><col style="width:110px"><col><col style="width:125px"><col style="width:125px"><col style="width:135px"></colgroup>' +
+      '<thead><tr><th></th><th></th><th style="text-align:right">Macromedido (m³)</th><th style="text-align:right">Estimado (m³)</th><th style="text-align:right">Total (m³)</th></tr></thead><tbody>' +
+      grupo('Produzido', e.producao, e.P, 'var(--blue)', 'P', e.k) +
+      grupo('Importado', e.importado, e.I, 'var(--green)', 'I', e.k) +
+      grupo('Exportado', e.exportado, e.E, 'var(--red)', 'E', e.k) +
+      '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado' + parcial(e.D) + '</td>' +
+        vol_celNum(e.D.med, ';font-weight:700') + vol_celNum(Math.round(e.D.est) ? e.D.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(e.D.vol, ';font-weight:800') + '</tr>' +
       '</tbody></table></div>').join('');
 }
 function vol_exportarXLSX() {
@@ -14887,11 +15058,11 @@ function vol_exportarXLSX() {
     add('Produzido', e.producao); add('Importado', e.importado); add('Exportado', e.exportado);
     [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, t]) => res.push([vol_fmtMes(R.mes), st, e.nome, g, '', '', '', n(t.vol), n(t.med), n(t.est), t.semDado || '']));
   });
-  const mac = [['Mês', 'Município', 'Macro', 'Sistema', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Medido (m³)', 'Estimado (m³)', 'Método', 'Justificativa', 'Volume (m³)', 'Situação', 'Mesmo mês ano anterior (m³)', 'Alertas']];
-  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.municipio || '', x.nome, x.sistema || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? x.ini.v : '', x.ini ? x.ini.modo : '',
+  const mac = [['Mês', 'Município', 'Macro', 'Sistema', 'Fonte', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Medido (m³)', 'Estimado (m³)', 'Método', 'Justificativa', 'Volume (m³)', 'Situação', 'Mesmo mês ano anterior (m³)', 'Alertas']];
+  Object.values(R.macros).forEach(x => mac.push([vol_fmtMes(R.mes), x.municipio || '', x.nome, x.sistema || '', ({ supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'vazão integrada' })[x.fonte] || '', x.ini ? vol_fmtDataHora(x.ini.t) : '', x.ini ? x.ini.v : '', x.ini ? x.ini.modo : '',
     x.fim ? vol_fmtDataHora(x.fim.t) : '', x.fim ? x.fim.v : '', x.fim ? x.fim.modo : '', x.medido != null ? Math.round(x.horasMed / 24 * 100) / 100 : '',
     x.medido != null ? n(x.medido) : '', x.estimado ? n(x.estimado) : '', x.estimado ? (VOL_METODOS[x.metodo] || x.metodo) : '', x.justificativa || '',
-    x.volume != null ? n(x.volume) : '', x.situacao || '', x.anoAnterior ? n(x.anoAnterior.volume) : '', [...(x.alertas || []), ...(x.alertasEst || [])].join(' | ')]));
+    x.volume != null ? n(x.volume) : '', x.situacao || '', x.anoAnterior ? n(x.anoAnterior.volume) : '', [...(x.alertas || []), ...(x.alertasHist || []), ...(x.alertasEst || [])].join(' | ')]));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(res), 'Volumes');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mac), 'Macros');
@@ -14902,7 +15073,7 @@ function vol_exportarXLSX() {
 function vol_macrosDoHistorico() {
   const M = macro_estado();
   const usados = new Set(M.regras.flatMap(r => (r.parcelas || []).map(p => p.macroId)));
-  return macro_ordenarPorMun(M.macros.filter(m => usados.has(m._id) || macro_temLeitura(m, 'V')));
+  return macro_ordenarPorMun(M.macros.filter(m => usados.has(m._id) || macro_fonteVolume(m)));
 }
 function vol_baixarModeloHistorico() {
   const macros = vol_macrosDoHistorico();
@@ -14986,6 +15157,192 @@ function vol_handleArquivoHistorico(input) {
       console.error(e);
       alert(e && e.code === 'permission-denied' ? 'O banco recusou (permissão). Falta publicar a regra da coleção "volumesMensais".' : 'Não foi possível importar: ' + e.message);
     }
+  };
+  fr.readAsArrayBuffer(f);
+}
+
+// ---------- Leituras de campo (macros sem telemetria): data + leitura do totalizador (m³)
+// Guardadas no próprio macro: macros/{id}.leiturasCampo = [{ data:'AAAA-MM-DD', valor, em, por }].
+// Sem hora → consideradas às 08:00 (hora do fechamento). Entram no cálculo do mês como fonte 'campo'.
+function campo_estado() {
+  const M = macro_estado();
+  if (!M.campo) M.campo = { filtro: '', macroId: '' };
+  return M.campo;
+}
+function campo_parseData(v) {
+  if (v instanceof Date && !isNaN(v)) return v.getFullYear() + '-' + String(v.getMonth() + 1).padStart(2, '0') + '-' + String(v.getDate()).padStart(2, '0');
+  const s = String(v || '').trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 86400e3)); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'); }
+  return null;
+}
+// Intervalos entre leituras com volume, vazão média e alertas (usado na tabela e na checagem ao lançar)
+function campo_intervalos(m, lista) {
+  const ls = [...(lista || m.leiturasCampo || [])].sort((a, b) => a.data.localeCompare(b.data));
+  const qmax = macro_vazaoMaxM3h(m);
+  const out = [];
+  ls.forEach((x, i) => {
+    const r = { ...x, idx: i, dias: null, volume: null, q: null, alertas: [] };
+    if (i > 0) {
+      const ant = ls[i - 1];
+      r.dias = (vol_tempoCampo(x.data) - vol_tempoCampo(ant.data)) / 86400e3;
+      r.volume = x.valor - ant.valor;
+      r.q = r.dias > 0 ? r.volume / (r.dias * 24) : null;
+      if (r.volume < 0 && !m.bidirecional) r.alertas.push('leitura menor que a anterior');
+      if (qmax && r.q != null && r.q > qmax) r.alertas.push('vazão média ' + vol_fmtLs(r.q) + ' acima da máxima do medidor (' + vol_fmtLs(qmax) + ')');
+      const prev = out.slice(-3).filter(p => p.q != null && p.q > 0);
+      if (prev.length && r.q != null) {
+        const media = prev.reduce((s, p) => s + p.q, 0) / prev.length;
+        const dif = (r.q - media) / media;
+        if (Math.abs(dif) > 0.30) r.alertas.push('média diária ' + (dif > 0 ? '+' : '') + (dif * 100).toFixed(0) + '% em relação às leituras anteriores');
+      }
+    }
+    out.push(r);
+  });
+  return out;
+}
+function campo_render() {
+  const M = macro_estado(), C = campo_estado();
+  const el = document.getElementById('campo-conteudo');
+  if (!el) return;
+  if (!M.carregado) { el.innerHTML = ''; return; }
+  const fil = document.getElementById('campo-filtro');
+  if (fil) { const html = macro_opcoesFiltroMun(); if (fil.dataset.html !== html) { fil.innerHTML = html; fil.dataset.html = html; } fil.value = C.filtro || ''; }
+  const sel = document.getElementById('campo-macro');
+  if (sel) {
+    const ms = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha && (m._id === C.macroId || macro_filtroMunPassa(m, C.filtro))));
+    const html = '<option value="">— escolher macro —</option>' + ms.map(m => '<option value="' + escHtml(m._id) + '">' +
+      escHtml(((m.leiturasCampo || []).length ? '★ ' : macro_temLeitura(m, 'V') ? '● ' : '○ ') + macro_rotuloMun(m) + ' — ' + m.nome) + '</option>').join('');
+    if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
+    sel.value = C.macroId || '';
+  }
+  const comCampo = M.macros.filter(m => (m.leiturasCampo || []).length);
+  const res = '<p style="font-size:11.5px;color:var(--text2);margin-bottom:8px">' + comCampo.length + ' macro(s) com leituras de campo. ★ tem leitura de campo · ● tem totalizador no supervisório · ○ nenhum. A leitura sem hora vale às 08:00 do dia.</p>';
+  const m = M.macros.find(x => x._id === C.macroId);
+  if (!m) { el.innerHTML = res + '<p style="font-size:12px;color:var(--text2)">Escolha um macro para ver e lançar as leituras.</p>'; return; }
+  const pode = macro_podeEditarMacro(m);
+  const qmax = macro_vazaoMaxM3h(m);
+  const iv = campo_intervalos(m);
+  el.innerHTML = res +
+    '<div style="font-size:12px;background:var(--bg2);border-radius:var(--radius);padding:7px 10px;margin-bottom:8px">' +
+      '<b>' + escHtml(macro_rotuloMun(m) + ' — ' + m.nome) + '</b> <span style="color:var(--text3);font-family:monospace">' + escHtml(m.pontoId) + '</span><br>' +
+      'Vazão máxima do medidor: ' + (qmax ? vol_fmtLs(qmax) + ' (' + vol_fmtM3(qmax) + ' m³/h)' : '<span style="color:var(--text3)">não informada no Gestão de Ativos</span>') +
+      (macro_temLeitura(m, 'V') ? '<br><span style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> Este macro já tem totalizador no supervisório — o cálculo usa o supervisório.</span>' : '') +
+    '</div>' +
+    (pode ? '<div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">' +
+      '<label style="font-size:12px">Data<br><input type="date" id="campo-data" style="font-size:12px;padding:4px"></label>' +
+      '<label style="font-size:12px">Leitura do totalizador (m³)<br><input type="number" step="any" id="campo-valor" style="font-size:12px;padding:4px;width:170px"></label>' +
+      '<button class="btn sm primary" onclick="campo_adicionar()"><i class="ti ti-plus"></i> Lançar</button></div>' : '') +
+    (iv.length ? '<table class="data-table"><thead><tr><th>Data</th><th style="text-align:right">Leitura (m³)</th><th style="text-align:right">Dias</th><th style="text-align:right">Volume no intervalo (m³)</th><th style="text-align:right">Vazão média</th><th>Alertas</th><th></th></tr></thead><tbody>' +
+      [...iv].reverse().map(r => '<tr><td>' + r.data.split('-').reverse().join('/') + '</td><td style="text-align:right">' + Number(r.valor).toLocaleString('pt-BR') + '</td>' +
+        '<td style="text-align:right">' + (r.dias != null ? r.dias.toFixed(0) : '') + '</td><td style="text-align:right">' + (r.volume != null ? vol_fmtM3(r.volume) : '') + '</td>' +
+        '<td style="text-align:right">' + (r.q != null ? vol_fmtLs(r.q) : '') + '</td>' +
+        '<td style="font-size:11px;color:var(--amber)">' + r.alertas.map(escHtml).join(' · ') + '</td>' +
+        '<td>' + (pode ? '<button class="btn sm" title="Excluir" onclick="campo_remover(\'' + r.data + '\')"><i class="ti ti-trash"></i></button>' : '') + '</td></tr>').join('') + '</tbody></table>'
+      : '<p style="font-size:12px;color:var(--text2)">Nenhuma leitura de campo lançada.</p>');
+}
+async function campo_salvarLista(m, lista) {
+  lista = [...lista].sort((a, b) => a.data.localeCompare(b.data));
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'macros', m._id), { leiturasCampo: lista, campoAtualizadoEm: Date.now() }, { merge: true });
+  m.leiturasCampo = lista; m.campoAtualizadoEm = Date.now();
+}
+async function campo_adicionar() {
+  const M = macro_estado(), C = campo_estado();
+  const m = M.macros.find(x => x._id === C.macroId);
+  if (!m || !macro_podeEditarMacro(m)) return;
+  const data = campo_parseData(document.getElementById('campo-data').value);
+  const valor = macro_num(document.getElementById('campo-valor').value);
+  if (!data) { alert('Informe a data.'); return; }
+  if (valor == null) { alert('Informe a leitura do totalizador (m³).'); return; }
+  const lista = (m.leiturasCampo || []).filter(x => x.data !== data);
+  const substitui = (m.leiturasCampo || []).some(x => x.data === data);
+  lista.push({ data, valor, em: Date.now(), por: S.user?.email || '' });
+  const iv = campo_intervalos(m, lista);
+  const i = iv.findIndex(x => x.data === data);
+  const avisos = [...(iv[i] ? iv[i].alertas : []), ...(iv[i + 1] ? iv[i + 1].alertas.map(a => 'próxima leitura: ' + a) : [])];
+  if ((substitui && !confirm('Já existe leitura em ' + data.split('-').reverse().join('/') + '. Substituir?')) ||
+      (avisos.length && !confirm('Confira antes de salvar:\n\n• ' + avisos.join('\n• ') + '\n\nSalvar mesmo assim?'))) return;
+  try {
+    await campo_salvarLista(m, lista);
+    document.getElementById('campo-valor').value = '';
+    toast('Leitura lançada.');
+    campo_render();
+  } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
+}
+async function campo_remover(data) {
+  const M = macro_estado(), C = campo_estado();
+  const m = M.macros.find(x => x._id === C.macroId);
+  if (!m || !confirm('Excluir a leitura de ' + data.split('-').reverse().join('/') + '?')) return;
+  try { await campo_salvarLista(m, (m.leiturasCampo || []).filter(x => x.data !== data)); campo_render(); }
+  catch (e) { alert('Erro ao excluir: ' + (e.code || e.message)); }
+}
+function campo_baixarModelo() {
+  const M = macro_estado();
+  const ms = macro_ordenarPorMun(M.macros.filter(m => !m.ausenteNaPlanilha && !macro_temLeitura(m, 'V')));
+  const linhas = [['Ponto ID', 'Município', 'Sistema', 'Macro', 'Data (dd/mm/aaaa)', 'Leitura (m³)']];
+  ms.forEach(m => linhas.push([m.pontoId, macro_rotuloMun(m), m.sistemaNome || '', m.nome, '', '']));
+  const ws = XLSX.utils.aoa_to_sheet(linhas);
+  ws['!cols'] = [{ wch: 11 }, { wch: 18 }, { wch: 18 }, { wch: 40 }, { wch: 16 }, { wch: 14 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Leituras de campo');
+  XLSX.writeFile(wb, 'GeoFon_Modelo_Leituras_Campo_' + setorAtual() + '.xlsx');
+}
+function campo_abrirImportacao() {
+  if (!macro_podeImportar()) { toast('Só o administrador importa planilhas.'); return; }
+  document.getElementById('up-campo').click();
+}
+function campo_handleArquivo(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  const fr = new FileReader();
+  fr.onload = async ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null, raw: true });
+      const cab = (rows[0] || []).map(textoBusca);
+      const iP = cab.findIndex(c => c === 'ponto id'), iD = cab.findIndex(c => c.startsWith('data')), iL = cab.findIndex(c => c.startsWith('leitura'));
+      if (iP < 0 || iD < 0 || iL < 0) throw new Error('A planilha precisa das colunas "Ponto ID", "Data" e "Leitura" (use o modelo).');
+      const M = macro_estado();
+      const porPonto = {}; M.macros.forEach(m => { porPonto[m.pontoId] = m; });
+      const novas = new Map(); let invalidas = 0; const naoAchados = new Set();
+      rows.slice(1).forEach(r => {
+        const pid = macro_txt(r[iP]); if (!pid) return;
+        const data = campo_parseData(r[iD]), valor = macro_num(r[iL]);
+        if (!data && valor == null) return;
+        if (!data || valor == null) { invalidas++; return; }
+        const m = porPonto[pid]; if (!m) { naoAchados.add(pid); return; }
+        if (!novas.has(m._id)) novas.set(m._id, []);
+        novas.get(m._id).push({ data, valor });
+      });
+      if (!novas.size) throw new Error('Nenhuma leitura válida encontrada.');
+      const total = [...novas.values()].reduce((s, l) => s + l.length, 0);
+      const avisos = [];
+      novas.forEach((l, id) => {
+        const m = M.macros.find(x => x._id === id);
+        const datas = new Set(l.map(x => x.data));
+        const lista = [...(m.leiturasCampo || []).filter(x => !datas.has(x.data)), ...l];
+        campo_intervalos(m, lista).forEach(r => { if (datas.has(r.data) && r.alertas.length) avisos.push(macro_rotuloMun(m) + ' — ' + m.nome + ' (' + r.data.split('-').reverse().join('/') + '): ' + r.alertas.join('; ')); });
+      });
+      if (!confirm('Importar ' + total + ' leituras de campo de ' + novas.size + ' macros?' + (invalidas ? '\n' + invalidas + ' linha(s) com data ou leitura inválida ignoradas' : '') +
+        (naoAchados.size ? '\n' + naoAchados.size + ' Ponto ID não encontrados' : '') + (avisos.length ? '\n\nAlertas (' + avisos.length + '):\n• ' + avisos.slice(0, 12).join('\n• ') + (avisos.length > 12 ? '\n…' : '') : ''))) return;
+      const { db, doc, writeBatch } = window.FB;
+      const ids = [...novas.keys()];
+      for (let i = 0; i < ids.length; i += 400) {
+        const b = writeBatch(db);
+        ids.slice(i, i + 400).forEach(id => {
+          const m = M.macros.find(x => x._id === id);
+          const l = novas.get(id); const datas = new Set(l.map(x => x.data));
+          const lista = [...(m.leiturasCampo || []).filter(x => !datas.has(x.data)), ...l.map(x => ({ ...x, em: Date.now(), por: S.user?.email || '', arquivo: f.name }))].sort((a, b) => a.data.localeCompare(b.data));
+          b.set(doc(db, 'macros', id), { leiturasCampo: lista, campoAtualizadoEm: Date.now() }, { merge: true });
+          m.leiturasCampo = lista; m.campoAtualizadoEm = Date.now();
+        });
+        await b.commit();
+      }
+      toast(total + ' leituras de campo importadas.');
+      campo_render();
+    } catch (e) { console.error(e); alert('Não foi possível importar: ' + e.message); }
   };
   fr.readAsArrayBuffer(f);
 }

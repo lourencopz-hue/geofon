@@ -14654,7 +14654,7 @@ async function vol_medirMacroMes(m, mes) {
   const T0 = vol_alvoFechamento(mes), T1 = vol_alvoFechamento(vol_proxMes(mes));
   const fonte = macro_fonteVolume(m);
   const r = { macroId: m._id, pontoId: m.pontoId, nome: m.nome, municipio: macro_rotuloMun(m), sistema: m.sistemaNome || '', sistemaId: m.sistemaId || '',
-    mes, fonte, horasMes: (T1 - T0) / 3600e3, ini: null, fim: null, medido: null, horasMed: 0, alertas: [] };
+    mes, fonte, bidirecional: !!m.bidirecional, horasMes: (T1 - T0) / 3600e3, ini: null, fim: null, medido: null, horasMed: 0, alertas: [] };
   if (fonte === 'virtual') {
     // Ponto virtual: micromedido ÷ (1 − IPD), todo estimado
     const l = (m.lancamentos || {})[mes];
@@ -14687,6 +14687,13 @@ async function vol_medirMacroMes(m, mes) {
       r.fim = { t: b.t, v: b.v, modo: b.t === T1 ? 'leitura de campo (exata)' : 'leitura de campo' };
       r.medido = b.v - a.v; r.horasMed = (b.t - a.t) / 3600e3;
       if (r.medido < 0 && !m.bidirecional) r.alertas.push('leitura menor que a anterior — conferir (erro de digitação ou troca de medidor)');
+      // Leituras cobrindo mais que o mês (ex.: 28/09 → 03/11): ajuste pró-rata ao período do mês,
+      // e continua MACROMEDIDO (decisão do Lourenço: o volume foi medido, é só ajuste de período)
+      if ((r.horasMed - r.horasMes) * 3600e3 > LIM) {
+        r.proRata = { medidoLido: r.medido, diasLidos: r.horasMed / 24 };
+        r.medido = r.medido * r.horasMes / r.horasMed;
+        r.horasMed = r.horasMes;
+      }
     } else r.alertas.push(!a && !b ? 'sem leituras de campo perto do início e do fim do mês' : !a ? 'sem leitura de campo perto de ' + vol_fmtDataHora(T0) : 'sem leitura de campo perto de ' + vol_fmtDataHora(T1));
   } else {
     // Totalizador do supervisório
@@ -14757,7 +14764,7 @@ function vol_opcoesEstimativa(r, hist, sazonal) {
     if (falta < 0) {
       if (r.medido != null && r.horasMed > 0) op.A = r.medido / r.horasMed * falta;
     } else {
-      if (r.medido != null && r.medido >= 0 && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) op.A = r.medido / r.horasMed * falta;
+      if (r.medido != null && (r.medido >= 0 || r.bidirecional) && r.horasMed >= VOL_MIN_HORAS_MEDIA_MES) op.A = r.medido / r.horasMed * falta;
       if (taxaB3 != null) op.B3 = taxaB3 * falta;
       if (taxa(ano) != null) op.BA = taxa(ano) * falta;
     }
@@ -14799,32 +14806,48 @@ async function vol_carregarHistorico(mes) {
   return hist;
 }
 // Monta os quadros por sistema/município a partir das regras e dos volumes por macro
+// Divide um total entre macromedido e estimado sem deixar coluna negativa: a parte estimada é
+// proporcional ao volume estimado envolvido (em módulo) — o sinal das parcelas é só sentido.
+function vol_dividir(T, absAll, absEst) {
+  const est = absAll > 0 ? T * absEst / absAll : 0;
+  return { med: T - est, est };
+}
+// Monta os quadros por sistema/município a partir das regras e dos volumes por macro.
+// Transferência com total negativo no mês (líquido invertido) MUDA DE LADO no mês (decisão do
+// Lourenço, opção B): vira importado da origem e exportado do destino, com valor positivo.
 function vol_montarEscopos(regras, macros) {
   const linhaDe = r => {
-    let vol = 0, med = 0, est = 0, sem = 0;
+    let vol = 0, absAll = 0, absEst = 0, sem = 0;
     (r.parcelas || []).forEach(p => {
       const x = macros[p.macroId];
       if (!x || x.volume == null) { sem++; return; }
-      vol += p.sinal * x.volume; med += p.sinal * (x.medido || 0); est += p.sinal * (x.estimado || 0);
+      vol += p.sinal * x.volume;
+      absAll += Math.abs(x.medido || 0) + Math.abs(x.estimado || 0);
+      absEst += Math.abs(x.estimado || 0);
     });
-    return { regra: r, vol, med, est, semDado: sem };
+    return { regra: r, vol, absAll, absEst, semDado: sem };
   };
+  const fin = (l, sinal) => { const T = l.vol * sinal; const d = vol_dividir(T, l.absAll, l.absEst); return { ...l, vol: T, med: d.med, est: d.est, negativo: T < -0.5 }; };
   const escopos = {};
   const pega = k => escopos[k] = escopos[k] || { k, nome: vol_nomeEscopo(k), producao: [], importado: [], exportado: [] };
   regras.forEach(r => {
-    const l = linhaDe(r);
-    if (r.tipo === 'producao') pega(r.escopo).producao.push(l);
-    else {
-      if (r.contaEm !== 'destino' && r.origem && !r.origem.startsWith('X:')) pega(r.origem).exportado.push(l);
-      if (r.contaEm !== 'origem' && r.destino && !r.destino.startsWith('X:')) pega(r.destino).importado.push(l);
-    }
+    const l0 = linhaDe(r);
+    if (r.tipo === 'producao') { pega(r.escopo).producao.push(fin(l0, 1)); return; }
+    const inv = l0.vol < -0.5;
+    const l = { ...fin(l0, inv ? -1 : 1), invertido: inv };
+    if (r.contaEm !== 'destino' && r.origem && !r.origem.startsWith('X:')) pega(r.origem)[inv ? 'importado' : 'exportado'].push({ ...l, contraparte: r.destino });
+    if (r.contaEm !== 'origem' && r.destino && !r.destino.startsWith('X:')) pega(r.destino)[inv ? 'exportado' : 'importado'].push({ ...l, contraparte: r.origem });
   });
-  const tot = ls => ls.reduce((a, l) => ({ vol: a.vol + l.vol, med: a.med + l.med, est: a.est + l.est, semDado: a.semDado + l.semDado }), { vol: 0, med: 0, est: 0, semDado: 0 });
+  const tot = ls => {
+    const t = ls.reduce((a, l) => ({ vol: a.vol + l.vol, med: a.med + l.med, est: a.est + l.est, semDado: a.semDado + l.semDado }), { vol: 0, med: 0, est: 0, semDado: 0 });
+    t.negativo = t.vol < -0.5;
+    return t;
+  };
   Object.values(escopos).forEach(e => {
     e.P = tot(e.producao); e.I = tot(e.importado); e.E = tot(e.exportado);
-    e.D = { vol: e.P.vol + e.I.vol - e.E.vol, med: e.P.med + e.I.med - e.E.med, est: e.P.est + e.I.est - e.E.est, semDado: e.P.semDado + e.I.semDado + e.E.semDado,
-      // no disponibilizado, o exportado estimado entra subtraindo: mostra quanto de estimativa está envolvido (em módulo)
-      estEnvolvido: Math.abs(e.P.est) + Math.abs(e.I.est) + Math.abs(e.E.est) };
+    const T = e.P.vol + e.I.vol - e.E.vol;
+    const d = vol_dividir(T, Math.abs(e.P.vol) + Math.abs(e.I.vol) + Math.abs(e.E.vol), Math.abs(e.P.est) + Math.abs(e.I.est) + Math.abs(e.E.est));
+    e.D = { vol: T, med: d.med, est: d.est, semDado: e.P.semDado + e.I.semDado + e.E.semDado, negativo: T < -0.5 };
   });
   return Object.values(escopos).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
 }
@@ -15058,15 +15081,15 @@ function vol_renderVolumes() {
   const fonteTxt = { supervisorio: 'supervisório', campo: 'leitura de campo', vazao: 'pela vazão', virtual: 'ponto virtual' };
   const parcial = t => t && t.semDado ? '<div style="font-size:10.5px;color:var(--red);font-weight:400">parcial: ' + t.semDado + ' sem dado</div>' : '';
   // Linhas dos macros de uma regra (escondidas até clicar na regra)
-  const linhasMacros = (r, k) => (r.parcelas || []).map(p => {
+  const linhasMacros = (l, k) => (l.regra.parcelas || []).map(p => {
     const x = R.macros[p.macroId] || {};
     const al = [...(x.alertas || []), ...(x.alertasHist || []), ...(x.alertasEst || [])];
-    const sg = p.sinal < 0 ? -1 : 1;
+    const sg = (p.sinal < 0 ? -1 : 1) * (l.invertido ? -1 : 1);
     const per = x.ini && x.fim ? vol_fmtDataHora(x.ini.t) + ' → ' + vol_fmtDataHora(x.fim.t) + ' · ' + (x.horasMed / 24).toFixed(1).replace('.', ',') + ' d' : '';
     const est = x.estimado ? '<span title="' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ' (ajustado)' : '') + '">' + vol_fmtM3(sg * x.estimado) + '</span>' : '';
     return '<tr data-det="' + k + '" style="display:' + (V.abertos[k] ? '' : 'none') + ';font-size:11px;color:var(--text2);cursor:pointer;background:var(--bg)" onclick="vol_abrirAjuste(\'' + escHtml(p.macroId) + '\')" title="Clique para ver/ajustar a estimativa">' +
       '<td></td><td style="padding-left:22px"><b style="color:var(--text)">' + (sg < 0 ? '− ' : '+ ') + '</b><span style="color:var(--text3)">' + escHtml(x.municipio || '') + ' —</span> ' + escHtml(x.nome || '') +
-        '<div style="color:var(--text3)">' + escHtml(fonteTxt[x.fonte] || '') + (per ? ' · ' + per : '') + (x.estimado ? ' · est.: ' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ' (ajustado)' : '') : '') + '</div>' +
+        '<div style="color:var(--text3)">' + escHtml(fonteTxt[x.fonte] || '') + (per ? ' · ' + per : '') + (x.proRata ? ' · lido ' + vol_fmtM3(x.proRata.medidoLido) + ' m³ em ' + x.proRata.diasLidos.toFixed(1).replace('.', ',') + ' d, ajustado ao mês (pró-rata)' : '') + (x.bidirecional ? ' · 2 sentidos (líquido)' : '') + (x.estimado ? ' · est.: ' + escHtml(VOL_METODOS[x.metodo] || x.metodo) + (x.ajustado ? ' (ajustado)' : '') : '') + '</div>' +
         (al.length ? '<div style="color:var(--amber)"><i class="ti ti-alert-triangle"></i> ' + al.map(escHtml).join(' · ') + '</div>' : '') + '</td>' +
       vol_celNum(x.medido != null ? sg * x.medido : null) +
       '<td style="text-align:right;white-space:nowrap;color:var(--amber)">' + (est || (x.situacao === 'sem dado' ? '' : '—')) + '</td>' +
@@ -15078,13 +15101,15 @@ function vol_renderVolumes() {
     linhas.forEach((l, i) => {
       const r = l.regra;
       const k = vol_hash(ek + '|' + rotulo + '|' + r._id);
-      const lado = r.tipo === 'transferencia' ? (rotulo === 'E' ? 'para ' + vol_nomeEscopo(r.destino, true) : 'de ' + vol_nomeEscopo(r.origem, true)) + ' — ' : '';
+      const lado = r.tipo === 'transferencia' ? (rotulo === 'E' ? 'para ' : 'de ') + vol_nomeEscopo(l.contraparte, true) + ' — ' : '';
+      const marca = (l.invertido ? '<div style="font-size:10.5px;color:var(--amber)"><i class="ti ti-arrows-exchange"></i> fluxo invertido no mês (líquido no sentido contrário da regra)</div>' : '') +
+        (l.negativo ? '<div style="font-size:10.5px;color:var(--red)"><i class="ti ti-alert-triangle"></i> total negativo — conferir regra ou leituras</div>' : '');
       h += '<tr style="cursor:pointer" onclick="vol_toggleDet(\'' + k + '\')"><td style="font-weight:600;color:' + cor + '">' + (i === 0 ? titulo : '') + '</td>' +
-        '<td style="font-size:12px"><i id="vol-ic-' + k + '" class="ti ti-chevron-' + (V.abertos[k] ? 'down' : 'right') + '" style="color:var(--text3)"></i> ' + escHtml(lado + r.nome) + parcial(l) + '</td>' +
-        vol_celNum(l.med) + vol_celNum(Math.round(l.est) ? l.est : null, ';color:var(--amber)') + vol_celNum(l.vol, ';font-weight:600') + '</tr>' + linhasMacros(r, k);
+        '<td style="font-size:12px"><i id="vol-ic-' + k + '" class="ti ti-chevron-' + (V.abertos[k] ? 'down' : 'right') + '" style="color:var(--text3)"></i> ' + escHtml(lado + r.nome) + parcial(l) + marca + '</td>' +
+        vol_celNum(l.med) + vol_celNum(Math.round(l.est) ? l.est : null, ';color:var(--amber)') + vol_celNum(l.vol, ';font-weight:600' + (l.negativo ? ';color:var(--red)' : '')) + '</tr>' + linhasMacros(l, k);
     });
     h += '<tr style="border-top:1px solid var(--border)"><td></td><td style="font-size:11.5px;font-weight:700;color:' + cor + '">Total ' + titulo.toLowerCase() + parcial(total) + '</td>' +
-      vol_celNum(total.med, ';font-weight:700') + vol_celNum(Math.round(total.est) ? total.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(total.vol, ';font-weight:800') + '</tr>';
+      vol_celNum(total.med, ';font-weight:700') + vol_celNum(Math.round(total.est) ? total.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(total.vol, ';font-weight:800' + (total.negativo ? ';color:var(--red)' : '')) + '</tr>';
     return h;
   };
   const escopos = R.escopos.filter(e => !V.escopo || e.k === V.escopo);
@@ -15101,7 +15126,7 @@ function vol_renderVolumes() {
       grupo('Importado', e.importado, e.I, 'var(--green)', 'I', e.k) +
       grupo('Exportado', e.exportado, e.E, 'var(--red)', 'E', e.k) +
       '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado' + parcial(e.D) + '</td>' +
-        vol_celNum(e.D.med, ';font-weight:700') + vol_celNum(Math.round(e.D.est) ? e.D.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(e.D.vol, ';font-weight:800') + '</tr>' +
+        vol_celNum(e.D.med, ';font-weight:700') + vol_celNum(Math.round(e.D.est) ? e.D.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(e.D.vol, ';font-weight:800' + (e.D.negativo ? ';color:var(--red)' : '')) + '</tr>' +
       '</tbody></table></div>').join('');
 }
 function vol_exportarXLSX() {
@@ -15111,7 +15136,8 @@ function vol_exportarXLSX() {
   const res = [['Mês', 'Situação', 'Sistema / Município', 'Grandeza', 'Regra', 'Origem', 'Destino', 'Volume (m³)', 'Medido (m³)', 'Estimado (m³)', 'Macros sem dado']];
   const n = v => Math.round(v);
   R.escopos.forEach(e => {
-    const add = (g, ls) => ls.forEach(x => res.push([vol_fmtMes(R.mes), st, e.nome, g, x.regra.nome, x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.origem) : '', x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.regra.destino) : '', n(x.vol), n(x.med), n(x.est), x.semDado || '']));
+    const add = (g, ls) => ls.forEach(x => res.push([vol_fmtMes(R.mes), st, e.nome, g, x.regra.nome + (x.invertido ? ' (fluxo invertido no mês)' : ''),
+      x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.invertido ? x.regra.destino : x.regra.origem) : '', x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.invertido ? x.regra.origem : x.regra.destino) : '', n(x.vol), n(x.med), n(x.est), x.semDado || '']));
     add('Produzido', e.producao); add('Importado', e.importado); add('Exportado', e.exportado);
     [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, t]) => res.push([vol_fmtMes(R.mes), st, e.nome, g, '', '', '', n(t.vol), n(t.med), n(t.est), t.semDado || '']));
   });

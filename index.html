@@ -526,6 +526,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
           <select id="vol-regras-escopo" onchange="vol_estado().filtroRegras=this.value;vol_renderRegras()" style="font-size:12px;padding:5px"></select>
           <span style="flex:1"></span>
           <span id="vol-regras-botoes">
+            <button class="btn sm" onclick="vol_novaRegra('captacao')" title="Água bruta (poços, captações, entrada de ETA)"><i class="ti ti-plus"></i> Captação</button>
             <button class="btn sm" onclick="vol_novaRegra('producao')"><i class="ti ti-plus"></i> Produção</button>
             <button class="btn sm" onclick="vol_novaRegra('transferencia')"><i class="ti ti-plus"></i> Transferência</button>
           </span>
@@ -14298,7 +14299,7 @@ function vol_renderRegras() {
   if (M.erroRegras) { el.innerHTML = '<p style="font-size:12px;color:var(--red)">' + escHtml(M.erroRegras) + '</p>'; return; }
   const f = M.vol.filtroRegras || '';
   const lista = M.regras.filter(r => !f || r.escopo === f || r.origem === f || r.destino === f)
-    .sort((a, b) => (a.tipo === b.tipo ? 0 : a.tipo === 'producao' ? -1 : 1) ||
+    .sort((a, b) => ({ captacao: 0, producao: 1, transferencia: 2 }[a.tipo] - { captacao: 0, producao: 1, transferencia: 2 }[b.tipo]) ||
       textoBusca(vol_nomeEscopo(a.escopo || a.origem)).localeCompare(textoBusca(vol_nomeEscopo(b.escopo || b.origem))) ||
       textoBusca(a.nome).localeCompare(textoBusca(b.nome)) || String(a.vigIni).localeCompare(String(b.vigIni)));
   if (!lista.length) {
@@ -14306,19 +14307,19 @@ function vol_renderRegras() {
     return;
   }
   const hoje = vol_mesAnteriorAoAtual();
-  el.innerHTML = '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Tipo</th><th>Nome</th><th>De quem / origem → destino</th><th>Parcelas</th><th>Vigência</th><th></th></tr></thead><tbody>' +
+  el.innerHTML = unid_renderTabela() + '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Tipo</th><th>Nome</th><th>De quem / origem → destino</th><th>Parcelas</th><th>Vigência</th><th></th></tr></thead><tbody>' +
     lista.map(r => {
       const ativa = !r.vigFim || r.vigFim >= hoje;
       const parc = (r.parcelas || []).map(p => {
         const m = M.macros.find(x => x._id === p.macroId);
         return '<span class="badge ' + (p.sinal < 0 ? 'alta' : 'purple') + '" style="margin:1px;white-space:nowrap">' + (p.sinal < 0 ? '− ' : '+ ') + escHtml(m ? m.nome : '(macro não encontrado)') + '</span>';
       }).join(' ');
-      const quem = r.tipo === 'producao'
+      const quem = r.tipo !== 'transferencia'
         ? escHtml(vol_nomeEscopo(r.escopo))
         : escHtml(vol_nomeEscopo(r.origem, true)) + ' → ' + escHtml(vol_nomeEscopo(r.destino, true)) +
           (r.contaEm === 'origem' ? ' <span style="font-size:10.5px;color:var(--amber)">(só exportado da origem)</span>' : r.contaEm === 'destino' ? ' <span style="font-size:10.5px;color:var(--amber)">(só importado do destino)</span>' : '');
-      return '<tr' + (ativa ? '' : ' style="opacity:.55"') + '><td style="white-space:nowrap">' + (r.tipo === 'producao' ? '<i class="ti ti-droplet"></i> Produção' : '<i class="ti ti-arrows-exchange"></i> Transferência') + '</td>' +
-        '<td><b>' + escHtml(r.nome || '') + '</b>' + (r.obs ? '<div style="font-size:10.5px;color:var(--text3)">' + escHtml(r.obs) + '</div>' : '') + '</td>' +
+      return '<tr' + (ativa ? '' : ' style="opacity:.55"') + '><td style="white-space:nowrap">' + (r.tipo === 'producao' ? '<i class="ti ti-droplet"></i> Produção' : r.tipo === 'captacao' ? '<i class="ti ti-droplet-half"></i> Captação' : '<i class="ti ti-arrows-exchange"></i> Transferência') + '</td>' +
+        '<td><b>' + escHtml(r.nome || '') + '</b>' + (r.unidadeId ? '<div style="font-size:10.5px;color:var(--blue)"><i class="ti ti-building-factory-2"></i> ' + escHtml((unid_porId(r.unidadeId) || { nome: '(unidade excluída)' }).nome) + '</div>' : '') + (r.obs ? '<div style="font-size:10.5px;color:var(--text3)">' + escHtml(r.obs) + '</div>' : '') + '</td>' +
         '<td>' + quem + '</td><td style="max-width:420px">' + parc + '</td>' +
         '<td style="white-space:nowrap;font-size:11.5px">' + (r.vigIni ? 'de ' + vol_fmtMes(r.vigIni) : 'desde sempre') + '<br>' + (r.vigFim ? 'até ' + vol_fmtMes(r.vigFim) : 'sem fim') + '</td>' +
         '<td>' + (macro_podeImportar() ? '<button class="btn sm" onclick="vol_abrirRegra(\'' + escHtml(r._id) + '\')" title="Editar"><i class="ti ti-pencil"></i></button> ' +
@@ -14351,8 +14352,10 @@ function vol_abrirRegra(id, novaVersao) {
 function vol_renderModalRegra() {
   const R = S._volRegra, M = macro_estado();
   if (!R) return;
-  const prod = R.tipo === 'producao';
-  document.getElementById('vol-regra-titulo').innerHTML = (prod ? '<i class="ti ti-droplet"></i> Regra de produção' : '<i class="ti ti-arrows-exchange"></i> Transferência') +
+  const prod = R.tipo === 'producao' || R.tipo === 'captacao';
+  const capt = R.tipo === 'captacao';
+  if (prod && !R.unidadeId && !R._unidManual) { R.unidadeId = unid_sugerir(R.nome); R._unidSugerida = !!R.unidadeId; }
+  document.getElementById('vol-regra-titulo').innerHTML = (capt ? '<i class="ti ti-droplet-half"></i> Regra de captação (água bruta)' : prod ? '<i class="ti ti-droplet"></i> Regra de produção' : '<i class="ti ti-arrows-exchange"></i> Transferência') +
     (S._volRegraVersaoDe ? ' — nova versão' : R._id ? '' : ' — nova');
   const busca = textoBusca(R._buscaMacro || '');
   if (R._filtroMun === undefined) R._filtroMun = macro_filtroDeEscopo(R.escopo) || macro_filtroDeEscopo(R.origem) || macro_filtroDeEscopo(R.destino) || '';
@@ -14365,8 +14368,12 @@ function vol_renderModalRegra() {
     return '<div class="field"><label>' + rotulo + '</label><select id="vol-regra-' + campo + '" onchange="vol_mudarEscopo(\'' + campo + '\',this.value)">' + vol_opcoesEscopo(v, externo) + '</select></div>';
   };
   document.getElementById('vol-regra-corpo').innerHTML =
-    '<div class="field"><label>Nome</label><input type="text" id="vol-regra-nome" value="' + escHtml(R.nome || '') + '" placeholder="' + (prod ? 'ex.: ETA São Defende' : 'ex.: Adutora para Içara') + '" oninput="S._volRegra.nome=this.value"></div>' +
-    (prod ? campoEscopo('escopo', 'Produzido de (sistema ou município)', false)
+    '<div class="field"><label>Nome</label><input type="text" id="vol-regra-nome" value="' + escHtml(R.nome || '') + '" placeholder="' + (capt ? 'ex.: ETA São Defende (Bruta)' : prod ? 'ex.: ETA São Defende' : 'ex.: Adutora para Içara') + '" oninput="S._volRegra.nome=this.value"' +
+      (prod ? ' onchange="if(!S._volRegra._unidManual){S._volRegra.unidadeId=unid_sugerir(this.value);S._volRegra._unidSugerida=!!S._volRegra.unidadeId;vol_renderModalRegra()}"' : '') + '></div>' +
+    (prod ? campoEscopo('escopo', capt ? 'Captado por (sistema ou município)' : 'Produzido de (sistema ou município)', false) +
+      '<div class="field"><label>Unidade de produção <span style="font-weight:400;color:var(--text3)">(liga captação e produção do mesmo local para o comparativo)</span>' + (R._unidSugerida && R.unidadeId ? ' <span class="badge media">sugerida pelo nome</span>' : '') + '</label>' +
+        '<select onchange="vol_mudarUnidade(this.value)"><option value="">— nenhuma —</option>' + unid_lista().slice().sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome))).map(u => '<option value="' + escHtml(u.id) + '"' + (u.id === R.unidadeId ? ' selected' : '') + '>' + escHtml(u.nome + ' (' + u.tipo + ')') + '</option>').join('') +
+        '<option value="__nova">+ Nova unidade…</option></select></div>'
       : '<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="flex:1;min-width:180px">' + campoEscopo('origem', 'Origem (exporta)', true) + '</div><div style="flex:1;min-width:180px">' + campoEscopo('destino', 'Destino (importa)', true) + '</div></div>' +
         '<div class="field"><label>Entra como</label><select id="vol-regra-contaEm" onchange="S._volRegra.contaEm=this.value">' +
         '<option value="ambos">Exportado da origem E importado do destino (mesma medição)</option>' +
@@ -14390,6 +14397,14 @@ function vol_renderModalRegra() {
   const fm = document.getElementById('vol-regra-filtroMun'); if (fm) fm.value = R._filtroMun || '';
   document.getElementById('btn-vol-regra-excluir').style.display = R._id ? '' : 'none';
 }
+async function vol_mudarUnidade(v) {
+  const R = S._volRegra;
+  if (!R) return;
+  R._unidManual = true; R._unidSugerida = false;
+  if (v === '__nova') { const id = await unid_nova(R.nome); R.unidadeId = id || R.unidadeId || ''; }
+  else R.unidadeId = v;
+  vol_renderModalRegra();
+}
 function vol_mudarEscopo(campo, v) {
   if (v === '__X') {
     const n = (prompt('Nome do município/sistema fora do app (ex.: SAMAE Araranguá):') || '').trim();
@@ -14407,7 +14422,7 @@ async function vol_salvarRegra() {
   const parcelas = R.parcelas.filter(p => p.macroId).map(p => ({ macroId: p.macroId, sinal: p.sinal < 0 ? -1 : 1 }));
   const erros = [];
   if (!String(R.nome || '').trim()) erros.push('Dê um nome à regra.');
-  if (R.tipo === 'producao' && !R.escopo) erros.push('Escolha de qual sistema ou município é a produção.');
+  if ((R.tipo === 'producao' || R.tipo === 'captacao') && !R.escopo) erros.push('Escolha o sistema ou município.');
   if (R.tipo === 'transferencia') {
     if (!R.origem || !R.destino) erros.push('Escolha a origem e o destino.');
     if (R.origem && R.origem === R.destino) erros.push('Origem e destino iguais.');
@@ -14424,7 +14439,7 @@ async function vol_salvarRegra() {
   const setor = setorAtual();
   const agora = Date.now();
   const id = R._id || (setor + '_' + agora.toString(36) + Math.random().toString(36).slice(2, 6));
-  const dados = { setor, tipo: R.tipo, nome: R.nome.trim(), escopo: R.tipo === 'producao' ? R.escopo : '',
+  const dados = { setor, tipo: R.tipo, nome: R.nome.trim(), escopo: R.tipo !== 'transferencia' ? R.escopo : '', unidadeId: R.tipo !== 'transferencia' ? (R.unidadeId || '') : '',
     origem: R.tipo === 'transferencia' ? R.origem : '', destino: R.tipo === 'transferencia' ? R.destino : '',
     contaEm: R.tipo === 'transferencia' ? (R.contaEm || 'ambos') : '', parcelas, vigIni: R.vigIni || '', vigFim: R.vigFim || '',
     obs: (R.obs || '').trim(), atualizadoEm: agora, atualizadoPor: S.user?.email || '' };
@@ -14829,9 +14844,10 @@ function vol_montarEscopos(regras, macros) {
   };
   const fin = (l, sinal) => { const T = l.vol * sinal; const d = vol_dividir(T, l.absAll, l.absEst); return { ...l, vol: T, med: d.med, est: d.est, negativo: T < -0.5 }; };
   const escopos = {};
-  const pega = k => escopos[k] = escopos[k] || { k, nome: vol_nomeEscopo(k), producao: [], importado: [], exportado: [] };
+  const pega = k => escopos[k] = escopos[k] || { k, nome: vol_nomeEscopo(k), captacao: [], producao: [], importado: [], exportado: [] };
   regras.forEach(r => {
     const l0 = linhaDe(r);
+    if (r.tipo === 'captacao') { pega(r.escopo).captacao.push(fin(l0, 1)); return; }
     if (r.tipo === 'producao') { pega(r.escopo).producao.push(fin(l0, 1)); return; }
     const inv = l0.vol < -0.5;
     const l = { ...fin(l0, inv ? -1 : 1), invertido: inv };
@@ -14844,7 +14860,7 @@ function vol_montarEscopos(regras, macros) {
     return t;
   };
   Object.values(escopos).forEach(e => {
-    e.P = tot(e.producao); e.I = tot(e.importado); e.E = tot(e.exportado);
+    e.C = tot(e.captacao); e.P = tot(e.producao); e.I = tot(e.importado); e.E = tot(e.exportado);
     const T = e.P.vol + e.I.vol - e.E.vol;
     const d = vol_dividir(T, Math.abs(e.P.vol) + Math.abs(e.I.vol) + Math.abs(e.E.vol), Math.abs(e.P.est) + Math.abs(e.I.est) + Math.abs(e.E.est));
     e.D = { vol: T, med: d.med, est: d.est, semDado: e.P.semDado + e.I.semDado + e.E.semDado, negativo: T < -0.5 };
@@ -14852,7 +14868,7 @@ function vol_montarEscopos(regras, macros) {
   return Object.values(escopos).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
 }
 function vol_resultadoDeDoc(d) {
-  return { mes: d.mes, regras: d.regras || [], macros: d.macros || {}, escopos: vol_montarEscopos(d.regras || [], d.macros || {}) };
+  return { mes: d.mes, regras: d.regras || [], macros: d.macros || {}, escopos: vol_montarEscopos(d.regras || [], d.macros || {}), unidades: vol_comparativoUnidades(d.regras || [], d.macros || {}, d.unidades || unid_lista()) };
 }
 function vol_limpo(x) { return JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'number' && !isFinite(v)) ? null : v)); }
 
@@ -14885,7 +14901,7 @@ async function vol_calcular() {
   const mes = V.mes || vol_mesAnteriorAoAtual();
   V.mes = mes;
   if (V.doc && V.doc.status === 'fechado' && V.docMes === mes) { toast('Mês fechado — reabra para recalcular.'); return; }
-  const regras = M.regras.filter(r => vol_regraVigente(r, mes)).map(r => ({ _id: r._id, tipo: r.tipo, nome: r.nome, escopo: r.escopo || '', origem: r.origem || '', destino: r.destino || '', contaEm: r.contaEm || '', parcelas: r.parcelas || [], vigIni: r.vigIni || '', vigFim: r.vigFim || '' }));
+  const regras = M.regras.filter(r => vol_regraVigente(r, mes)).map(r => ({ _id: r._id, tipo: r.tipo, nome: r.nome, escopo: r.escopo || '', unidadeId: r.unidadeId || '', origem: r.origem || '', destino: r.destino || '', contaEm: r.contaEm || '', parcelas: r.parcelas || [], vigIni: r.vigIni || '', vigFim: r.vigFim || '' }));
   V.calculando = true; vol_renderVolumes();
   try {
     let hist = {};
@@ -14903,7 +14919,7 @@ async function vol_calcular() {
       macros[id] = r;
     }
     const agora = Date.now();
-    const doc = vol_limpo({ setor: setorAtual(), tipo: 'fechamento', mes, status: 'previa', regras, macros, ajustes,
+    const doc = vol_limpo({ setor: setorAtual(), tipo: 'fechamento', mes, status: 'previa', regras, macros, ajustes, unidades: unid_lista(),
       assinatura: vol_assinatura(mes), calculadoEm: agora, calculadoPor: S.user?.email || '', calculadoNome: S.user?.nome || '',
       fechadoEm: null, fechadoPor: '', reabertoEm: (V.doc && V.doc.reabertoEm) || null, reabertoPor: (V.doc && V.doc.reabertoPor) || '' });
     V.doc = doc; V.docMes = mes;
@@ -15122,12 +15138,13 @@ function vol_renderVolumes() {
       '<div style="font-weight:700;font-size:13.5px;margin-bottom:6px">' + escHtml(e.nome) + '</div>' +
       '<table class="data-table" style="margin:0"><colgroup><col style="width:110px"><col><col style="width:125px"><col style="width:125px"><col style="width:135px"></colgroup>' +
       '<thead><tr><th></th><th></th><th style="text-align:right">Macromedido (m³)</th><th style="text-align:right">Estimado (m³)</th><th style="text-align:right">Total (m³)</th></tr></thead><tbody>' +
+      (e.captacao.length ? grupo('Captado', e.captacao, e.C, '#0d9488', 'C', e.k) + '<tr><td></td><td colspan="4" style="font-size:10.5px;color:var(--text3);padding-top:0">o captado (água bruta) não entra no disponibilizado</td></tr>' : '') +
       grupo('Produzido', e.producao, e.P, 'var(--blue)', 'P', e.k) +
       grupo('Importado', e.importado, e.I, 'var(--green)', 'I', e.k) +
       grupo('Exportado', e.exportado, e.E, 'var(--red)', 'E', e.k) +
       '<tr style="background:var(--bg2)"><td style="font-weight:700">Disponibilizado</td><td style="font-size:11px;color:var(--text3)">Produzido + Importado − Exportado' + parcial(e.D) + '</td>' +
         vol_celNum(e.D.med, ';font-weight:700') + vol_celNum(Math.round(e.D.est) ? e.D.est : null, ';font-weight:700;color:var(--amber)') + vol_celNum(e.D.vol, ';font-weight:800' + (e.D.negativo ? ';color:var(--red)' : '')) + '</tr>' +
-      '</tbody></table></div>').join('');
+      '</tbody></table></div>').join('') + vol_renderComparativo(R);
 }
 function vol_exportarXLSX() {
   const V = vol_estado(), R = V.resultado;
@@ -15138,7 +15155,8 @@ function vol_exportarXLSX() {
   R.escopos.forEach(e => {
     const add = (g, ls) => ls.forEach(x => res.push([vol_fmtMes(R.mes), st, e.nome, g, x.regra.nome + (x.invertido ? ' (fluxo invertido no mês)' : ''),
       x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.invertido ? x.regra.destino : x.regra.origem) : '', x.regra.tipo === 'transferencia' ? vol_nomeEscopo(x.invertido ? x.regra.origem : x.regra.destino) : '', n(x.vol), n(x.med), n(x.est), x.semDado || '']));
-    add('Produzido', e.producao); add('Importado', e.importado); add('Exportado', e.exportado);
+    add('Captado (bruta)', e.captacao || []); add('Produzido', e.producao); add('Importado', e.importado); add('Exportado', e.exportado);
+    if ((e.captacao || []).length) res.push([vol_fmtMes(R.mes), st, e.nome, 'Total captado', '', '', '', n(e.C.vol), n(e.C.med), n(e.C.est), e.C.semDado || '']);
     [['Total produzido', e.P], ['Total importado', e.I], ['Total exportado', e.E], ['Disponibilizado', e.D]].forEach(([g, t]) => res.push([vol_fmtMes(R.mes), st, e.nome, g, '', '', '', n(t.vol), n(t.med), n(t.est), t.semDado || '']));
   });
   const mac = [['Mês', 'Município', 'Macro', 'Sistema', 'Fonte', 'Início', 'Leitura início', 'Como (início)', 'Fim', 'Leitura fim', 'Como (fim)', 'Dias medidos', 'Medido (m³)', 'Estimado (m³)', 'Método', 'Justificativa', 'Volume (m³)', 'Situação', 'Mesmo mês ano anterior (m³)', 'Alertas']];
@@ -15149,6 +15167,8 @@ function vol_exportarXLSX() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(res), 'Volumes');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mac), 'Macros');
+  if ((R.unidades || []).length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Mês', 'Unidade', 'Tipo', 'Captado (m³)', 'Produzido (m³)', 'Diferença (m³)', '% do captado', 'Faixa mín. (%)', 'Faixa máx. (%)', 'Situação'],
+    ...R.unidades.map(u => [vol_fmtMes(R.mes), u.nome, u.tipo, u.C != null ? n(u.C) : '', u.P != null ? n(u.P) : '', u.dif != null ? n(u.dif) : '', u.pct != null ? Math.round(u.pct * 10) / 10 : '', u.faixa[0], u.faixa[1], u.alerta || 'ok'])]), 'Captado x Produzido');
   XLSX.writeFile(wb, 'GeoFon_Volumes_' + setorAtual() + '_' + R.mes + '.xlsx');
 }
 
@@ -15738,6 +15758,107 @@ function lanc_handleArquivo(input) {
     } catch (e) { alert('Não foi possível ler a planilha: ' + e.message); }
   };
   fr.readAsArrayBuffer(f);
+}
+
+// ---------- Unidades de produção (ETA, poço…): ligam a regra de CAPTAÇÃO (água bruta) à de PRODUÇÃO
+// do mesmo local, para o comparativo Captado × Produzido (volume de processo ou erro entre medidores).
+// Guardadas em macroConfig/{SETOR}.unidades = [{ id, nome, tipo: 'ETA'|'Poço'|'Outro', faixaMin, faixaMax }].
+const UNID_FAIXA_PADRAO = { ETA: [0, 8], 'Poço': [0, 2], Outro: [0, 8] };
+function unid_lista() { return (macro_estado().config.unidades || []); }
+function unid_porId(id, lista) { return (lista || unid_lista()).find(u => u.id === id) || null; }
+function unid_faixa(u) {
+  const d = UNID_FAIXA_PADRAO[(u && u.tipo) || 'Outro'] || UNID_FAIXA_PADRAO.Outro;
+  return [u && u.faixaMin != null && u.faixaMin !== '' ? +u.faixaMin : d[0], u && u.faixaMax != null && u.faixaMax !== '' ? +u.faixaMax : d[1]];
+}
+function unid_nucleo(n) {
+  return textoBusca(n).replace(/\([^)]*\)/g, ' ').replace(/\b(agua|bruta|tratada|captacao|captado|producao|produzido|entrada|saida|de|da|do)\b/g, ' ').replace(/[^a-z0-9]+/g, '');
+}
+// Sugere a unidade pelo nome da regra ("ETA São Defende (Bruta)" → unidade "ETA São Defende")
+function unid_sugerir(nome) {
+  const k = unid_nucleo(nome);
+  if (!k) return '';
+  const u = unid_lista().find(x => { const n = unid_nucleo(x.nome); return n && (k === n || k.includes(n) || n.includes(k)); });
+  return u ? u.id : '';
+}
+async function unid_salvarLista(lista) {
+  const M = macro_estado();
+  await window.FB.setDoc(window.FB.doc(window.FB.db, 'macroConfig', setorAtual()), { setor: setorAtual(), unidades: lista, atualizadoEm: Date.now() }, { merge: true });
+  M.config.unidades = lista;
+}
+async function unid_nova(nomeSugerido) {
+  const nome = (prompt('Nome da unidade de produção (ex.: ETA São Defende, Poço 01 – Mundo Novo):', String(nomeSugerido || '').replace(/\s*\((bruta|tratada)\)\s*/i, ' ').trim()) || '').trim();
+  if (!nome) return '';
+  const t = textoBusca(prompt('Tipo da unidade: ETA, Poço ou Outro', /po[cç]o/i.test(nome) ? 'Poço' : 'ETA') || '');
+  const tipo = t.startsWith('p') ? 'Poço' : t.startsWith('e') ? 'ETA' : 'Outro';
+  const u = { id: 'U' + Date.now().toString(36).toUpperCase(), nome, tipo, faixaMin: null, faixaMax: null };
+  try { await unid_salvarLista([...unid_lista(), u]); return u.id; }
+  catch (e) { alert('Erro ao salvar a unidade: ' + (e.code || e.message)); return ''; }
+}
+async function unid_editar(id, campo, valor) {
+  const lista = unid_lista().map(u => u.id !== id ? u : { ...u, [campo]: campo === 'nome' || campo === 'tipo' ? valor : (String(valor).trim() === '' ? null : macro_num(valor)) });
+  try { await unid_salvarLista(lista); toast('Unidade atualizada.'); } catch (e) { alert('Erro ao salvar: ' + (e.code || e.message)); }
+  vol_renderRegras();
+}
+function unid_renderTabela() {
+  const M = macro_estado();
+  const lista = [...unid_lista()].sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+  if (!lista.length) return '';
+  const usos = {};
+  M.regras.forEach(r => { if (r.unidadeId) (usos[r.unidadeId] = usos[r.unidadeId] || new Set()).add(r.tipo); });
+  const pode = macro_podeImportar();
+  return '<details style="margin:4px 0 10px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Unidades de produção (' + lista.length + ') — faixa esperada de perda no processo (Captado × Produzido)</summary>' +
+    '<table class="data-table" style="margin-top:6px"><thead><tr><th>Unidade</th><th>Tipo</th><th>Faixa mín. (%)</th><th>Faixa máx. (%)</th><th>Regras</th></tr></thead><tbody>' +
+    lista.map(u => {
+      const fx = unid_faixa(u), us = usos[u.id] || new Set();
+      return '<tr><td><input type="text" value="' + escHtml(u.nome) + '"' + (pode ? '' : ' disabled') + ' onchange="unid_editar(\'' + u.id + '\',\'nome\',this.value)" style="font-size:12px;width:220px"></td>' +
+        '<td><select' + (pode ? '' : ' disabled') + ' onchange="unid_editar(\'' + u.id + '\',\'tipo\',this.value)" style="font-size:12px">' + ['ETA', 'Poço', 'Outro'].map(t => '<option' + (t === u.tipo ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></td>' +
+        '<td><input type="number" step="0.1" value="' + (u.faixaMin ?? '') + '" placeholder="' + fx[0] + ' (padrão)"' + (pode ? '' : ' disabled') + ' onchange="unid_editar(\'' + u.id + '\',\'faixaMin\',this.value)" style="font-size:12px;width:100px"></td>' +
+        '<td><input type="number" step="0.1" value="' + (u.faixaMax ?? '') + '" placeholder="' + fx[1] + ' (padrão)"' + (pode ? '' : ' disabled') + ' onchange="unid_editar(\'' + u.id + '\',\'faixaMax\',this.value)" style="font-size:12px;width:100px"></td>' +
+        '<td style="font-size:11.5px">' + (us.has('captacao') ? 'captação ' : '<span style="color:var(--amber)">sem captação </span>') + '· ' + (us.has('producao') ? 'produção' : '<span style="color:var(--amber)">sem produção</span>') + '</td></tr>';
+    }).join('') + '</tbody></table></details>';
+}
+// Comparativo Captado × Produzido por unidade (a partir das regras do mês e dos volumes por macro)
+function vol_comparativoUnidades(regras, macros, unidades) {
+  const por = {};
+  regras.forEach(r => {
+    if (!r.unidadeId || (r.tipo !== 'producao' && r.tipo !== 'captacao')) return;
+    let vol = 0, absAll = 0, absEst = 0, sem = 0;
+    (r.parcelas || []).forEach(p => {
+      const x = macros[p.macroId];
+      if (!x || x.volume == null) { sem++; return; }
+      vol += p.sinal * x.volume; absAll += Math.abs(x.medido || 0) + Math.abs(x.estimado || 0); absEst += Math.abs(x.estimado || 0);
+    });
+    const d = vol_dividir(vol, absAll, absEst);
+    const u = por[r.unidadeId] = por[r.unidadeId] || { id: r.unidadeId, C: null, P: null, estC: 0, estP: 0, semDado: 0, escopos: new Set() };
+    const k = r.tipo === 'captacao' ? 'C' : 'P';
+    u[k] = (u[k] || 0) + vol; u['est' + k] += d.est; u.semDado += sem; u.escopos.add(r.escopo);
+  });
+  return Object.values(por).map(u => {
+    const ud = unid_porId(u.id, unidades) || { nome: '(unidade excluída)', tipo: 'Outro' };
+    const fx = unid_faixa(ud);
+    const dif = u.C != null && u.P != null ? u.C - u.P : null;
+    const pct = dif != null && u.C ? dif / u.C * 100 : null;
+    let alerta = '';
+    if (u.C == null) alerta = 'sem regra de captação';
+    else if (u.P == null) alerta = 'sem regra de produção';
+    else if (dif < 0) alerta = 'produziu mais do que captou — conferir os medidores';
+    else if (pct != null && (pct < fx[0] || pct > fx[1])) alerta = 'fora da faixa esperada (' + String(fx[0]).replace('.', ',') + '–' + String(fx[1]).replace('.', ',') + '%)';
+    return { id: u.id, nome: ud.nome, tipo: ud.tipo, C: u.C, P: u.P, estC: u.estC, estP: u.estP, dif, pct, faixa: fx, semDado: u.semDado, alerta, escopos: [...u.escopos] };
+  }).sort((a, b) => textoBusca(a.nome).localeCompare(textoBusca(b.nome)));
+}
+function vol_renderComparativo(R) {
+  const lista = R.unidades || [];
+  if (!lista.length) return '';
+  return '<div style="border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px">' +
+    '<div style="font-weight:700;font-size:13.5px;margin-bottom:6px">Captado × Produzido por unidade</div>' +
+    '<table class="data-table" style="margin:0"><thead><tr><th>Unidade</th><th style="text-align:right">Captado (m³)</th><th style="text-align:right">Produzido (m³)</th><th style="text-align:right">Diferença (m³)</th><th style="text-align:right">% do captado</th><th>Faixa</th><th>Situação</th></tr></thead><tbody>' +
+    lista.map(u => '<tr><td><b>' + escHtml(u.nome) + '</b> <span style="color:var(--text3);font-size:11px">' + escHtml(u.tipo || '') + '</span>' +
+      ((u.estC || u.estP) ? '<div style="font-size:10.5px;color:var(--amber)">envolve volume estimado</div>' : '') + (u.semDado ? '<div style="font-size:10.5px;color:var(--red)">parcial: ' + u.semDado + ' sem dado</div>' : '') + '</td>' +
+      vol_celNum(u.C) + vol_celNum(u.P) + vol_celNum(u.dif, u.dif != null && u.dif < 0 ? ';color:var(--red);font-weight:600' : ';font-weight:600') +
+      '<td style="text-align:right">' + (u.pct != null ? u.pct.toFixed(1).replace('.', ',') + '%' : '—') + '</td>' +
+      '<td style="font-size:11.5px;white-space:nowrap">' + String(u.faixa[0]).replace('.', ',') + '–' + String(u.faixa[1]).replace('.', ',') + '%</td>' +
+      '<td style="font-size:11.5px;color:' + (u.alerta ? (u.dif != null && u.dif < 0 ? 'var(--red)' : 'var(--amber)') : 'var(--green)') + '">' + (u.alerta ? '<i class="ti ti-alert-triangle"></i> ' + escHtml(u.alerta) : 'ok') + '</td></tr>').join('') +
+    '</tbody></table><p style="font-size:11px;color:var(--text3);margin-top:4px">Diferença positiva = volume usado no processo (lavagem de filtros, descargas) ou erro de medição; negativa = conferir os medidores. O captado não entra no disponibilizado.</p></div>';
 }
 
 // ================================================================

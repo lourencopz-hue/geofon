@@ -10034,7 +10034,7 @@ const SUBTIPO_OUTRA_DXF = { 'A-X':'Cruzeta','A-XR':'Cruzeta de redução','A-L':
 // importantes, aparecem a partir do zoom 15); curva/tê/outras = pontinhos discretos, só de perto.
 const CONEXAO_INFO = {
   registro: { rotulo: 'Registro', plural: 'Registros', cor: '#e03131', raio: 0, zoomMin: 15 },
-  cap:      { rotulo: 'Cap',      plural: 'Caps',      cor: '#f76707', raio: 4, zoomMin: 15 },
+  cap:      { rotulo: 'Cap',      plural: 'Caps',      cor: '#f76707', raio: 0, zoomMin: 15 },
   curva:    { rotulo: 'Curva',    plural: 'Curvas',    cor: '#1c7ed6', raio: 2.6, zoomMin: 17 },
   te:       { rotulo: 'Tê',       plural: 'Tês',       cor: '#7048e8', raio: 2.6, zoomMin: 17 },
   outra:    { rotulo: 'Peça',     plural: 'Outras peças', cor: '#868e96', raio: 2.2, zoomMin: 17 }
@@ -10135,22 +10135,59 @@ function svgXConexao(cor, tam) {
     '<path d="M' + a + ' ' + a + 'L' + b + ' ' + b + 'M' + b + ' ' + a + 'L' + a + ' ' + b + '" stroke="' + cor + '" stroke-width="2.4" stroke-linecap="round"/></svg>';
 }
 // Símbolo da peça: X para registro, ponto colorido para as demais.
-function simboloConexao(tipo, latlng, pane) {
+// Registros com seta no CAD (blocos A-GD e A-GDA): a seta aponta para um lado do tubo, e
+// esse lado sai da rotação do bloco.
+const BLOCOS_REGISTRO_SETA = new Set(['A-GD', 'A-GDA']);
+function registroComSeta(p) { return !!(p && BLOCOS_REGISTRO_SETA.has(String(p.bloco || '').toUpperCase())); }
+// Rotação do bloco no CAD (graus, anti-horário a partir do leste) → rotação na tela
+// (SVG gira no sentido horário). Assim o X fica sempre "×" em relação ao tubo, e o
+// quadrado do cap e a seta do registro acompanham a direção da rede.
+function rotacaoTelaConexao(p) {
+  const r = Number(p && p.rotacao);
+  return isFinite(r) ? -r : 0;
+}
+function svgRegistro(cor, tam, rotTela, seta) {
+  const h = tam / 2, a = 4.5;
+  const x = 'M' + (-a) + ' ' + (-a) + 'L' + a + ' ' + a + 'M' + a + ' ' + (-a) + 'L' + (-a) + ' ' + a;
+  const tri = 'M9 -4.2L16 0L9 4.2Z';
+  return '<svg width="' + tam + '" height="' + tam + '" viewBox="' + (-h) + ' ' + (-h) + ' ' + tam + ' ' + tam + '" style="overflow:visible">' +
+    '<g transform="rotate(' + rotTela + ')">' +
+    '<path d="' + x + '" stroke="#fff" stroke-width="4.6" stroke-linecap="round"/>' +
+    (seta ? '<path d="M4 0L10 0" stroke="#fff" stroke-width="4.2" stroke-linecap="round"/><path d="' + tri + '" fill="' + cor + '" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/><path d="M4 0L10 0" stroke="' + cor + '" stroke-width="2.2" stroke-linecap="round"/>' : '') +
+    '<path d="' + x + '" stroke="' + cor + '" stroke-width="2.4" stroke-linecap="round"/></g></svg>';
+}
+// Mantida para quem chama sem rotação (legenda antiga etc.)
+function svgXConexao(cor, tam) { return svgRegistro(cor, tam, 0, false); }
+function svgCap(cor, tam, rotTela) {
+  const h = tam / 2, l = 4.2;
+  return '<svg width="' + tam + '" height="' + tam + '" viewBox="' + (-h) + ' ' + (-h) + ' ' + tam + ' ' + tam + '" style="overflow:visible">' +
+    '<rect x="' + (-l) + '" y="' + (-l) + '" width="' + (2 * l) + '" height="' + (2 * l) + '" fill="' + cor + '" stroke="#fff" stroke-width="1.4" transform="rotate(' + rotTela + ')"/></svg>';
+}
+// Símbolo da peça: X para registro (com seta nos A-GD/A-GDA), quadrado para cap, ponto para as demais.
+function simboloConexao(tipo, latlng, pane, props) {
   const info = CONEXAO_INFO[tipo] || CONEXAO_INFO.outra;
+  const rot = rotacaoTelaConexao(props);
   if (tipo === 'registro') {
+    const seta = registroComSeta(props);
+    const tam = seta ? 36 : 16;
     return L.marker(latlng, { pane: pane || 'paneConexoes', keyboard: false,
-      icon: L.divIcon({ className: 'gf-conx-x', html: svgXConexao(info.cor, 14), iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -6] }) });
+      icon: L.divIcon({ className: 'gf-conx-x', html: svgRegistro(info.cor, tam, rot, seta), iconSize: [tam, tam], iconAnchor: [tam / 2, tam / 2], popupAnchor: [0, -6] }) });
+  }
+  if (tipo === 'cap') {
+    return L.marker(latlng, { pane: pane || 'paneConexoes', keyboard: false,
+      icon: L.divIcon({ className: 'gf-conx-x', html: svgCap(info.cor, 14, rot), iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -6] }) });
   }
   return L.circleMarker(latlng, { pane: pane || 'paneConexoes', radius: info.raio, color: '#fff', weight: 1.2, fillColor: info.cor, fillOpacity: 1 });
 }
 function iconeLegendaConexao(tipo) {
   const info = CONEXAO_INFO[tipo];
-  if (tipo === 'registro') return svgXConexao(info.cor, 12);
+  if (tipo === 'registro') return svgRegistro(info.cor, 14, 0, false);
+  if (tipo === 'cap') return svgCap(info.cor, 12, 0);
   const d = Math.max(6, Math.round(info.raio * 2 + 2));
   return '<span style="display:inline-block;width:' + d + 'px;height:' + d + 'px;border-radius:50%;background:' + info.cor + ';border:1px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.15)"></span>';
 }
 function popupConexao(p, rodape) {
-  const tipo = p.tipo || (CONEXAO_INFO[p._conexao] || {}).rotulo || 'Peça';
+  const tipo = (p.tipo || (CONEXAO_INFO[p._conexao] || {}).rotulo || 'Peça') + (p._conexao === 'registro' && registroComSeta(p) ? ' (com seta)' : '');
   return '<b>' + escHtml(tipo) + (p.DN ? ' DN ' + escHtml(p.DN) : '') + '</b>' +
     (p.codigo ? '<br><small>Código: ' + escHtml(p.codigo) + '</small>' : '') +
     (p.material && !/^registros?$/i.test(p.material) ? '<br><small>Material: ' + escHtml(p.material) + '</small>' : '') +
@@ -10165,7 +10202,7 @@ function montarGrupoConexoes(conexoes, mapa, rodape) {
     const p = ft.properties;
     const tipo = CONEXAO_INFO[p._conexao] ? p._conexao : 'outra';
     const [lng, lat] = ft.geometry.coordinates;
-    const mk = simboloConexao(tipo, [lat, lng]);
+    const mk = simboloConexao(tipo, [lat, lng], null, p);
     mk.bindPopup(popupConexao(p, rodape));
     (grupos[tipo] = grupos[tipo] || L.layerGroup()).addLayer(mk);
   });
@@ -10277,7 +10314,7 @@ function atualizarPreviaDXF() {
     const fts = geojson.features.filter(ft => !ehFeatureConexao(ft) || ['registro', 'cap'].includes(ft.properties._conexao));
     d.lg = L.geoJSON({ type: 'FeatureCollection', features: fts }, {
       style: ft => ({ color: resolverCorFeature(ft, 'redes', null) || '#0F6E56', weight: 2.5, opacity: 0.95 }),
-      pointToLayer: (ft, ll) => simboloConexao(ft.properties._conexao, ll, 'markerPane'),
+      pointToLayer: (ft, ll) => simboloConexao(ft.properties._conexao, ll, 'markerPane', ft.properties),
       onEachFeature: (ft, layer) => {
         const p = ft.properties;
         if (ehFeatureConexao(ft)) { layer.bindPopup(popupConexao(p)); return; }
@@ -10690,7 +10727,7 @@ async function abrirPopupRede(cidadeId) {
   if (!features.length) { document.getElementById('ver-rede-resumo').innerHTML = '<span style="color:var(--red)">Não consegui carregar a geometria desta rede.</span>'; return; }
   const lg = L.geoJSON({ type: 'FeatureCollection', features }, {
     style: ft => ({ color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color, weight: 2.5, opacity: 0.95 }),
-    pointToLayer: (ft, ll) => ehFeatureConexao(ft) ? simboloConexao(ft.properties._conexao, ll, 'markerPane')
+    pointToLayer: (ft, ll) => ehFeatureConexao(ft) ? simboloConexao(ft.properties._conexao, ll, 'markerPane', ft.properties)
       : L.circleMarker(ll, { radius: 4, color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color }),
     filter: ft => !ehFeatureConexao(ft) || ['registro', 'cap'].includes(ft.properties._conexao),
     onEachFeature: (ft, layer) => {

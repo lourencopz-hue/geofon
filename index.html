@@ -354,6 +354,9 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
   <div class="tab hidden" onclick="switchTab('macromedicao','tabs-pc')" data-tab="macromedicao" title="Macromedição — em teste (visível só para o DIPEO até liberar)">
     <i class="ti ti-gauge"></i>Macromedição
   </div>
+  <div class="tab hidden" onclick="switchTab('setorizacao','tabs-pc')" data-tab="setorizacao" title="Setorização por grafo — protótipo em teste (visível só para o DIPEO)">
+    <i class="ti ti-topology-ring-3"></i>Setorização
+  </div>
   <div class="tab" onclick="switchTab('usuarios','tabs-pc')" data-tab="usuarios">
     <i class="ti ti-users"></i>Usuários
   </div>
@@ -424,6 +427,23 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 </div>
 
 <!-- PC: USUÁRIOS -->
+<!-- PC: SETORIZAÇÃO POR GRAFO (protótipo — visível só para o DIPEO até liberar) -->
+<div class="panel" id="setorizacao" style="display:none">
+  <div style="display:flex;width:100%;height:100%;overflow:hidden">
+    <div style="width:350px;flex-shrink:0;overflow-y:auto;padding:12px;border-right:1px solid var(--border);background:var(--bg)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:2px"><i class="ti ti-topology-ring-3"></i> Setorização <span style="font-size:10px;font-weight:600;color:var(--amber);border:1px solid var(--amber);border-radius:8px;padding:1px 6px;vertical-align:middle">protótipo · só você vê</span></div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Áreas calculadas pela rede: a busca sai das origens e para nos registros fechados.</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <select id="setor-cidade" style="flex:1;padding:7px 10px;font-size:12.5px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)"><option value="">Município com rede...</option></select>
+        <button class="btn sm primary" onclick="setor_montar()"><i class="ti ti-player-play"></i> Montar</button>
+      </div>
+      <div id="setor-resumo" class="card" style="padding:8px 12px;margin-bottom:10px"></div>
+      <div id="setor-corpo"></div>
+    </div>
+    <div id="setor-map" style="flex:1;min-height:300px"></div>
+  </div>
+</div>
+
 <!-- PC: MACROMEDIÇÃO (Fase 1 — cadastro de macros e sistemas; visível só para o DIPEO até liberar) -->
 <div class="panel" id="macromedicao" style="display:none">
   <div class="config-layout">
@@ -2577,6 +2597,7 @@ function aplicarPermissoesUI() {
   verificarBotaoMigracaoSetores();
   editorDMC_aplicarEscopoUI(); // (Fase 4) escopo do Supervisor no Editor de DMC
   macro_aplicarVisibilidade(); // aba Macromedição (só DIPEO ou setor com o recurso 'macromedicao')
+  setor_aplicarVisibilidade(); // aba Setorização (protótipo — só DIPEO)
 }
 
 // Pré-seleciona a cidade/equipe do técnico no formulário de registro, travando a troca
@@ -10147,7 +10168,7 @@ function svgXConexao(cor, tam) {
     '<path d="M' + a + ' ' + a + 'L' + b + ' ' + b + 'M' + b + ' ' + a + 'L' + a + ' ' + b + '" stroke="' + cor + '" stroke-width="2.4" stroke-linecap="round"/></svg>';
 }
 // Símbolo da peça: X para registro, ponto colorido para as demais.
-// Registros com seta no CAD (blocos A-GD e A-GDA): a seta aponta para um lado do tubo, e
+// Registros de DESCARGA — no CAD têm seta (blocos A-GD e A-GDA): a seta aponta para um lado do tubo, e
 // esse lado sai da rotação do bloco.
 const BLOCOS_REGISTRO_SETA = new Set(['A-GD', 'A-GDA']);
 function registroComSeta(p) { return !!(p && BLOCOS_REGISTRO_SETA.has(String(p.bloco || '').toUpperCase())); }
@@ -10199,7 +10220,8 @@ function iconeLegendaConexao(tipo) {
   return '<span style="display:inline-block;width:' + d + 'px;height:' + d + 'px;border-radius:50%;background:' + info.cor + ';border:1px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.15)"></span>';
 }
 function popupConexao(p, rodape) {
-  const tipo = (p.tipo || (CONEXAO_INFO[p._conexao] || {}).rotulo || 'Peça') + (p._conexao === 'registro' && registroComSeta(p) ? ' (com seta)' : '');
+  // Registro com seta no CAD (A-GD/A-GDA) = registro de descarga (definido pelo Lourenço, 2026-11-27)
+  const tipo = p._conexao === 'registro' && registroComSeta(p) ? 'Registro de descarga' : (p.tipo || (CONEXAO_INFO[p._conexao] || {}).rotulo || 'Peça');
   return '<b>' + escHtml(tipo) + (p.DN ? ' DN ' + escHtml(p.DN) : '') + '</b>' +
     (p.codigo ? '<br><small>Código: ' + escHtml(p.codigo) + '</small>' : '') +
     (p.material && !/^registros?$/i.test(p.material) ? '<br><small>Material: ' + escHtml(p.material) + '</small>' : '') +
@@ -16271,6 +16293,662 @@ function vol_renderComparativo(R) {
 }
 
 // ================================================================
+// SETORIZAÇÃO POR GRAFO — núcleo (sem tela). Protótipo, Fase 1.
+// Definições em claude/setorizacao-grafo-prototipo.md (documento do projeto).
+// No CAD o tubo para antes da peça (1–2 m), então a ligação é feita PELA PEÇA:
+//   ponta–ponta ≤ R0, ponta–peça ≤ R1, peça–peça ≤ R2.
+// Peças que abrem/fecham (registro, descarga, macromedidor, VRP) NÃO juntam os dois lados:
+// viram um nó próprio ligado aos grupos de cada lado. Fechado = o nó sai da busca.
+// Grupo = conjunto de tubos e peças fixas ligados entre si sem passar por peça operável.
+// ================================================================
+const SETOR_TOL_PADRAO = { r0: 0.5, r1: 3.5, r2: 5, rOrigem: 300 };
+
+function setor_tipoOperavel(p) {
+  const c = p._conexao, t = String(p.tipo || '') + ' ' + String(p.codigo || '');
+  if (c === 'registro') return registroComSeta(p) ? 'descarga' : 'registro';
+  if (/macromedidor|^macro/i.test(t)) return 'macro';
+  if (/\bVRP\b|redutora de press/i.test(t)) return 'vrp';
+  return null;
+}
+
+function setor_montarGrafo(features, tol) {
+  tol = Object.assign({}, SETOR_TOL_PADRAO, tol || {});
+  const tubosFt = [], pecasFt = [];
+  features.forEach(ft => {
+    if (!ft || !ft.geometry) return;
+    if (ehFeatureConexao(ft)) pecasFt.push(ft);
+    else if (ft.geometry.type === 'LineString') tubosFt.push({ ft, coords: ft.geometry.coordinates });
+    else if (ft.geometry.type === 'MultiLineString') ft.geometry.coordinates.forEach(c => tubosFt.push({ ft, coords: c }));
+  });
+  // Projeção local em metros (equiretangular, suficiente para um município)
+  let sLat = 0, n = 0;
+  tubosFt.forEach(t => { if (t.coords.length) { sLat += t.coords[0][1]; n++; } });
+  const lat0 = n ? sLat / n : -27.5;
+  const ky = 110540, kx = 111320 * Math.cos(lat0 * Math.PI / 180);
+  const proj = (c) => [c[0] * kx, c[1] * ky];
+
+  const tubos = [], pontas = [], pecas = [];
+  tubosFt.forEach(t => {
+    const cs = t.coords.filter(c => Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]));
+    if (cs.length < 2) return;
+    let comp = 0;
+    for (let i = 1; i < cs.length; i++) { const a = proj(cs[i - 1]), b = proj(cs[i]); comp += Math.hypot(b[0] - a[0], b[1] - a[1]); }
+    const id = tubos.length;
+    const p = t.ft.properties || {};
+    const ia = pontas.length;
+    pontas.push({ id: ia, tubo: id, xy: proj(cs[0]), ll: [cs[0][1], cs[0][0]], liga: 0 });
+    pontas.push({ id: ia + 1, tubo: id, xy: proj(cs[cs.length - 1]), ll: [cs[cs.length - 1][1], cs[cs.length - 1][0]], liga: 0 });
+    tubos.push({ id, coords: cs, dn: p._diametroMm ? Number(p._diametroMm) : null, comp, a: ia, b: ia + 1, props: p });
+  });
+  pecasFt.forEach(ft => {
+    const p = ft.properties, c = ft.geometry.coordinates;
+    if (!isFinite(c[0]) || !isFinite(c[1])) return;
+    const op = setor_tipoOperavel(p);
+    pecas.push({ id: pecas.length, xy: proj(c), ll: [c[1], c[0]], props: p, tipo: p._conexao, operavel: op, liga: 0 });
+  });
+
+  // Grade espacial para achar vizinhos rápido (redes grandes, 80 mil trechos)
+  const cel = Math.max(tol.r1, tol.r2, 1);
+  const grade = new Map();
+  const chave = (x, y) => Math.floor(x / cel) + ',' + Math.floor(y / cel);
+  const por = (kind, obj) => { const k = chave(obj.xy[0], obj.xy[1]); if (!grade.has(k)) grade.set(k, []); grade.get(k).push([kind, obj]); };
+  pontas.forEach(o => por('e', o)); pecas.forEach(o => por('p', o));
+  function vizinhos(xy, r) {
+    const out = [], cx = Math.floor(xy[0] / cel), cy = Math.floor(xy[1] / cel), d = Math.ceil(r / cel);
+    for (let i = cx - d; i <= cx + d; i++) for (let j = cy - d; j <= cy + d; j++) {
+      const l = grade.get(i + ',' + j); if (!l) continue;
+      l.forEach(it => { const dd = Math.hypot(it[1].xy[0] - xy[0], it[1].xy[1] - xy[1]); if (dd <= r) out.push([it[0], it[1], dd]); });
+    }
+    return out;
+  }
+  // Uma peça operável no meio do caminho impede a ligação direta (senão o registro
+  // ficaria "pulado": tê de um lado e luva do outro a 4 m se juntariam).
+  function bloqueado(a, b) {
+    const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy;
+    if (!L2) return false;
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    return vizinhos(mid, Math.sqrt(L2) / 2 + 0.5).some(([k, o]) => {
+      if (k !== 'p' || !o.operavel || o.xy === a || o.xy === b) return false;
+      const u = ((o.xy[0] - a[0]) * vx + (o.xy[1] - a[1]) * vy) / L2;
+      if (u <= 0.08 || u >= 0.92) return false;
+      return Math.hypot(a[0] + u * vx - o.xy[0], a[1] + u * vy - o.xy[1]) < 1.5;
+    });
+  }
+
+  // União-busca: pontas (0..E-1) e peças fixas (E + idPeça)
+  const E = pontas.length, pai = new Int32Array(E + pecas.length);
+  for (let i = 0; i < pai.length; i++) pai[i] = i;
+  const raiz = (x) => { while (pai[x] !== x) { pai[x] = pai[pai[x]]; x = pai[x]; } return x; };
+  const unir = (a, b) => { const ra = raiz(a), rb = raiz(b); if (ra !== rb) pai[ra] = rb; };
+  tubos.forEach(t => unir(t.a, t.b));
+  pontas.forEach(e => {
+    vizinhos(e.xy, Math.max(tol.r0, tol.r1)).forEach(([k, o, d]) => {
+      if (k === 'e') { if (o.id > e.id && o.tubo !== e.tubo && d <= tol.r0) { unir(e.id, o.id); e.liga++; o.liga++; } }
+      else if (!o.operavel && d <= tol.r1 && !bloqueado(e.xy, o.xy)) { unir(e.id, E + o.id); e.liga++; o.liga++; }
+    });
+  });
+  pecas.forEach(p => {
+    if (p.operavel) return;
+    vizinhos(p.xy, tol.r2).forEach(([k, o]) => {
+      if (k === 'p' && !o.operavel && o.id > p.id && !bloqueado(p.xy, o.xy)) { unir(E + p.id, E + o.id); p.liga++; o.liga++; }
+    });
+  });
+  // Peças operáveis: ligam-se às pontas e peças fixas próximas, de cada lado.
+  const valvulas = [];
+  pecas.forEach(p => {
+    if (!p.operavel) return;
+    const lados = new Set(), vizV = [], lig = [];
+    vizinhos(p.xy, Math.max(tol.r1, tol.r2)).forEach(([k, o, d]) => {
+      if (k === 'e' && d <= tol.r1 && !bloqueado(p.xy, o.xy)) { lados.add(raiz(o.id)); o.liga++; p.liga++; lig.push(o.xy); }
+      else if (k === 'p' && o !== p && d <= tol.r2 && !bloqueado(p.xy, o.xy)) {
+        if (o.operavel) { vizV.push(o.id); lig.push(o.xy); } else { lados.add(raiz(E + o.id)); o.liga++; p.liga++; lig.push(o.xy); }
+      }
+    });
+    // Registro que só achou um lado: o tubo do outro lado às vezes para um pouco mais longe
+    // (registro encostado num tê). Segunda busca, mais larga, só por pontas de outro grupo.
+    if (p.operavel !== 'descarga' && lados.size === 1 && !vizV.length) {
+      const r1 = [...lados][0];
+      const cand = vizinhos(p.xy, tol.r1 * 2).filter(([k, o]) => k === 'e' && raiz(o.id) !== r1 && !bloqueado(p.xy, o.xy)).sort((a, b) => a[2] - b[2]);
+      if (cand.length) { lados.add(raiz(cand[0][1].id)); cand[0][1].liga++; p.liga++; p.ladoLargo = true; lig.push(cand[0][1].xy); }
+    }
+    p.lados = [...lados]; p.vizV = vizV;
+    // Ligada dos dois lados = há ligações em sentidos opostos (produto escalar negativo)
+    const vet = lig.map(q => [q[0] - p.xy[0], q[1] - p.xy[1]]);
+    p.doisLados = vet.some((a, i) => vet.some((b, j) => j > i && a[0] * b[0] + a[1] * b[1] < 0));
+    p.nLig = lig.length;
+    valvulas.push(p);
+  });
+  // Grupos: índice compacto por raiz
+  const grupoDe = new Map(); let nG = 0;
+  const gid = (r) => { if (!grupoDe.has(r)) grupoDe.set(r, nG++); return grupoDe.get(r); };
+  tubos.forEach(t => { t.g = gid(raiz(t.a)); });
+  pecas.forEach(p => { if (!p.operavel) p.g = gid(raiz(E + p.id)); });
+  valvulas.forEach(v => { v.gs = v.lados.map(gid); });
+  const kmGrupo = new Float64Array(nG);
+  tubos.forEach(t => { kmGrupo[t.g] += t.comp; });
+  // Adjacência grupo → válvulas
+  const valvDoGrupo = Array.from({ length: nG }, () => []);
+  valvulas.forEach(v => v.gs.forEach(g => valvDoGrupo[g].push(v.id)));
+
+  return { tol, kx, ky, lat0, proj, tubos, pontas, pecas, valvulas, nG, kmGrupo, valvDoGrupo, vizinhos };
+}
+
+// Estado padrão: tudo aberto, menos a descarga.
+function setor_estadoPadrao(v) { return v.operavel === 'descarga' ? 'F' : 'A'; }
+
+// Ponto clicado no mapa → grupo da ponta de tubo mais próxima (até rOrigem m).
+function setor_grupoMaisProximo(G, lat, lng) {
+  const xy = G.proj([lng, lat]);
+  let best = null;
+  for (let r = 20; r <= G.tol.rOrigem * 2 && !best; r *= 2) {
+    G.vizinhos(xy, Math.min(r, G.tol.rOrigem)).forEach(([k, o, d]) => {
+      if (k === 'e' && (!best || d < best.d)) best = { d, g: G.tubos[o.tubo].g, ll: o.ll };
+    });
+    if (r >= G.tol.rOrigem) break;
+  }
+  if (best) return best;
+  // fallback (grade não cobre distância grande): busca linear
+  G.pontas.forEach(o => { const d = Math.hypot(o.xy[0] - xy[0], o.xy[1] - xy[1]); if (d <= G.tol.rOrigem && (!best || d < best.d)) best = { d, g: G.tubos[o.tubo].g, ll: o.ll }; });
+  return best;
+}
+
+// Componentes (setores) com o estado atual das válvulas. estado: { idPeça: 'A'|'F' }.
+// origens: [{ id, nome, g }]. Busca em profundidade (pilha) pelos grupos, atravessando
+// só válvulas abertas.
+function setor_calcular(G, estado, origens) {
+  const aberta = (v) => (estado[v.id] || setor_estadoPadrao(v)) === 'A';
+  const compG = new Int32Array(G.nG).fill(-1);
+  const comps = [];
+  // Origens primeiro, para os setores abastecidos ficarem no começo da lista
+  const ordem = [...new Set(origens.map(o => o.g).filter(g => g != null && g >= 0))];
+  for (let g = 0; g < G.nG; g++) ordem.push(g);
+  ordem.forEach(g0 => {
+    if (compG[g0] !== -1) return;
+    const c = { id: comps.length, grupos: [], km: 0, valvInternas: new Set(), valvFronteira: new Set(), origens: [] };
+    const pilha = [g0]; compG[g0] = c.id;
+    while (pilha.length) {
+      const g = pilha.pop();
+      c.grupos.push(g); c.km += G.kmGrupo[g];
+      G.valvDoGrupo[g].forEach(vid => {
+        const v = G.pecas[vid];
+        if (!aberta(v)) { c.valvFronteira.add(vid); return; }
+        c.valvInternas.add(vid);
+        v.gs.forEach(g2 => { if (compG[g2] === -1) { compG[g2] = c.id; pilha.push(g2); } });
+        (v.vizV || []).forEach(vid2 => {
+          const v2 = G.pecas[vid2];
+          if (!aberta(v2)) { c.valvFronteira.add(vid2); return; }
+          c.valvInternas.add(vid2);
+          v2.gs.forEach(g2 => { if (compG[g2] === -1) { compG[g2] = c.id; pilha.push(g2); } });
+        });
+      });
+    }
+    comps.push(c);
+  });
+  origens.forEach(o => { if (o.g != null && o.g >= 0) comps[compG[o.g]].origens.push(o); });
+  // Válvula aberta que ficou só na fronteira de um lado também conta como interna
+  comps.forEach(c => c.valvInternas.forEach(v => c.valvFronteira.delete(v)));
+  return { compG, comps };
+}
+
+// Inconsistências do cadastro (independe do estado das válvulas)
+function setor_inconsistencias(G) {
+  const pontasSoltas = G.pontas.filter(e => e.liga === 0 && G.tubos[e.tubo].comp > 0.05);
+  const valvUmLado = G.valvulas.filter(v => v.operavel !== 'descarga' && v.nLig > 0 && !v.doisLados);
+  const valvSemTubo = G.valvulas.filter(v => v.nLig === 0);
+  const pecasSoltas = G.pecas.filter(p => !p.operavel && p.liga === 0);
+  return { pontasSoltas, valvUmLado, valvSemTubo, pecasSoltas };
+}
+
+// ---------- Tela (aba "Setorização", só para a conta do Lourenço enquanto estiver em teste)
+const SETOR_LS_PREFIXO = 'geofon_setor_';
+const SETOR_CORES = ['#1c7ed6', '#2f9e44', '#7048e8', '#0c8599', '#e8590c', '#c2255c', '#5c940d', '#1864ab', '#9c36b5', '#d9480f'];
+const SETOR_COR_SEM_AGUA = '#e03131';
+const SETOR_TIPOS_ORIGEM = { res_dist: 'Reservatório de distribuição', res_jus: 'Reservatório de jusante', eta: 'ETA', entrada: 'Entrada de outro sistema' };
+const SETOR_ROTULO_OP = { registro: 'Registro', descarga: 'Descarga', macro: 'Macromedidor', vrp: 'VRP' };
+// Origens já informadas pelo Lourenço (2026-11-27) — usadas só se a cidade ainda não tem nada salvo
+const SETOR_ORIGENS_CONHECIDAS = {
+  maracaja: [{ nome: 'Reservatório Maracajá', tipo: 'res_dist', lat: -28.848892, lng: -49.451164 },
+             { nome: 'Entrada vinda de Criciúma', tipo: 'entrada', lat: -28.826711, lng: -49.407884 }]
+};
+let mapSetor = null;
+
+function setorVisivel() { return S.user?.email === EMAIL_DIPEO; }
+function setor_aplicarVisibilidade() {
+  const tab = document.querySelector('[data-tab="setorizacao"]');
+  if (tab) tab.classList.toggle('hidden', !setorVisivel());
+}
+function setor_st() {
+  if (!S._setor) S._setor = { cidadeId: '', G: null, R: null, origens: [], estado: {}, tol: Object.assign({}, SETOR_TOL_PADRAO),
+    sel: null, modo: '', camadas: null, contorno: null, inconsVis: false };
+  return S._setor;
+}
+function setor_chaveValv(v) { return v.ll[0].toFixed(6) + ',' + v.ll[1].toFixed(6); }
+function setor_salvarLocal() {
+  const st = setor_st(); if (!st.cidadeId) return;
+  try { localStorage.setItem(SETOR_LS_PREFIXO + st.cidadeId, JSON.stringify({ origens: st.origens.map(o => ({ nome: o.nome, tipo: o.tipo, lat: o.lat, lng: o.lng })), estado: st.estado, tol: st.tol })); } catch(e) {}
+}
+function setor_lerLocal(cidadeId) {
+  try { return JSON.parse(localStorage.getItem(SETOR_LS_PREFIXO + cidadeId) || 'null'); } catch(e) { return null; }
+}
+
+function setor_abrirAba() {
+  if (!setorVisivel()) return;
+  const sel = document.getElementById('setor-cidade');
+  const comRede = [...new Set((S.leafletLayers.redes || []).filter(i => !i.removida && i.cidade).map(i => i.cidade))];
+  const cids = S.cidades.filter(c => comRede.includes(c.id)).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const atual = sel.value || setor_st().cidadeId;
+  sel.innerHTML = '<option value="">Município com rede...</option>' + cids.map(c => '<option value="' + c.id + '"' + (c.id === atual ? ' selected' : '') + '>' + escHtml(c.nome) + '</option>').join('');
+  if (!mapSetor) {
+    mapSetor = L.map('setor-map', { zoomControl: true, preferCanvas: true }).setView(S.pos ? [S.pos.lat, S.pos.lng] : [-28.7, -49.4], S.pos ? 13 : 9);
+    addBaseLayerControl(mapSetor);
+    mapSetor.createPane('paneSetorArea').style.zIndex = 380;
+    mapSetor.createPane('paneSetorRede').style.zIndex = 410;
+    mapSetor.createPane('paneSetorValv').style.zIndex = 620;
+    mapSetor.on('click', setor_cliqueMapa);
+  }
+  setTimeout(() => mapSetor.invalidateSize(), 100);
+  setor_render();
+}
+
+async function setor_montar() {
+  const st = setor_st();
+  const cidadeId = document.getElementById('setor-cidade').value;
+  if (!cidadeId) { toast('Escolha o município'); return; }
+  const itens = (S.leafletLayers.redes || []).filter(i => i.cidade === cidadeId && !i.removida);
+  if (!itens.length) { toast('Este município não tem rede cadastrada'); return; }
+  const info = document.getElementById('setor-resumo');
+  info.innerHTML = '<span style="color:var(--text3)">Carregando a rede...</span>';
+  for (const it of itens) { try { await garantirGeometriaCarregada(it); } catch(e) {} }
+  const features = itens.flatMap(it => (it._geojson && it._geojson.features) || []);
+  if (!features.length) { info.innerHTML = '<span style="color:var(--red)">Não consegui carregar a geometria desta rede.</span>'; return; }
+  if (st.cidadeId !== cidadeId) {
+    const salvo = setor_lerLocal(cidadeId);
+    st.cidadeId = cidadeId;
+    st.estado = (salvo && salvo.estado) || {};
+    st.tol = Object.assign({}, SETOR_TOL_PADRAO, (salvo && salvo.tol) || {});
+    const nome = textoBusca((S.cidades.find(c => c.id === cidadeId) || {}).nome || '');
+    st.origens = ((salvo && salvo.origens) || SETOR_ORIGENS_CONHECIDAS[nome] || []).map(o => Object.assign({}, o));
+    st.sel = null;
+  }
+  const t0 = performance.now();
+  st.G = setor_montarGrafo(features, st.tol);
+  st.msGrafo = Math.round(performance.now() - t0);
+  st.temConexoes = st.G.pecas.length > 0;
+  setor_desenharRede();
+  setor_recalcular(true);
+  setor_salvarLocal();
+}
+
+function setor_ligarOrigens() {
+  const st = setor_st();
+  st.origens.forEach((o, i) => {
+    o.id = i;
+    const r = setor_grupoMaisProximo(st.G, o.lat, o.lng);
+    o.g = r ? r.g : -1; o.dist = r ? r.d : null; o.llLig = r ? r.ll : null;
+  });
+}
+
+function setor_recalcular(enquadrar) {
+  const st = setor_st(); if (!st.G) return;
+  setor_ligarOrigens();
+  const est = {};
+  st.G.valvulas.forEach(v => { const e = st.estado[setor_chaveValv(v)]; if (e) est[v.id] = e; });
+  const t0 = performance.now();
+  st.R = setor_calcular(st.G, est, st.origens);
+  st.msCalc = Math.round(performance.now() - t0);
+  // Setores com origem primeiro e maiores antes; ganham cor
+  let k = 0;
+  st.R.comps.forEach(c => { c.cor = c.origens.length ? SETOR_CORES[k++ % SETOR_CORES.length] : SETOR_COR_SEM_AGUA; });
+  if (st.sel != null && !st.R.comps[st.sel]) st.sel = null;
+  setor_pintar();
+  if (enquadrar && st.camadas && st.camadas.rede.getLayers().length) {
+    try { mapSetor.fitBounds(st.camadas.rede.getBounds(), { padding: [20, 20] }); } catch(e) {}
+  }
+  setor_render();
+}
+
+function setor_estadoValv(v) {
+  const st = setor_st();
+  return st.estado[setor_chaveValv(v)] || setor_estadoPadrao(v);
+}
+
+function setor_desenharRede() {
+  const st = setor_st();
+  if (st.camadas) Object.values(st.camadas).forEach(l => { try { mapSetor.removeLayer(l); } catch(e) {} });
+  setor_limparContorno();
+  const renderer = L.canvas({ padding: 0.5, tolerance: 6 });
+  const rede = L.featureGroup().addTo(mapSetor);
+  st.linhas = st.G.tubos.map(t => {
+    const pl = L.polyline(t.coords.map(c => [c[1], c[0]]), { pane: 'paneSetorRede', renderer, weight: larguraLinhaPorDN(t.dn), opacity: 0.95, color: '#999' });
+    pl.on('click', (ev) => { L.DomEvent.stopPropagation(ev); setor_selecionarTubo(t, ev.latlng); });
+    rede.addLayer(pl);
+    return pl;
+  });
+  const valv = L.layerGroup().addTo(mapSetor);
+  st.marcValv = {};
+  st.G.valvulas.forEach(v => {
+    const mk = L.marker(v.ll, { pane: 'paneSetorValv', keyboard: false, icon: setor_iconeValv(v) });
+    mk.on('click', (ev) => { L.DomEvent.stopPropagation(ev); setor_popupValv(v); });
+    valv.addLayer(mk);
+    st.marcValv[v.id] = mk;
+  });
+  const origens = L.layerGroup().addTo(mapSetor);
+  const incons = L.layerGroup();
+  st.camadas = { rede, valv, origens, incons };
+  if (st.inconsVis) incons.addTo(mapSetor);
+  setor_desenharInconsistencias();
+}
+
+function setor_iconeValv(v) {
+  const aberta = setor_estadoValv(v) === 'A';
+  const cor = aberta ? '#2f9e44' : '#e03131';
+  const seta = v.operavel === 'descarga';
+  const tam = seta ? 34 : 20;
+  let html = svgRegistro(cor, tam, rotacaoTelaConexao(v.props), seta);
+  if (v.operavel === 'macro' || v.operavel === 'vrp') {
+    html = '<div style="width:18px;height:18px;border-radius:4px;background:' + cor + ';border:2px solid #fff;color:#fff;font:700 9px/14px sans-serif;text-align:center;box-shadow:0 0 0 1px rgba(0,0,0,.25)">' + (v.operavel === 'vrp' ? 'V' : 'M') + '</div>';
+  }
+  return L.divIcon({ className: 'gf-conx-x', html, iconSize: [tam, tam], iconAnchor: [tam / 2, tam / 2] });
+}
+
+function setor_popupValv(v) {
+  const st = setor_st();
+  const aberta = setor_estadoValv(v) === 'A';
+  const p = v.props;
+  const c = st.R.comps[st.R.compG[v.gs[0]]];
+  const html = '<b>' + SETOR_ROTULO_OP[v.operavel] + (p.DN ? ' DN ' + escHtml(p.DN) : '') + '</b>' +
+    (p.codigo ? '<br><small>' + escHtml(p.codigo) + '</small>' : '') +
+    '<br><small>' + v.ll[0].toFixed(6) + ', ' + v.ll[1].toFixed(6) + '</small>' +
+    '<br>Situação (simulação): <b style="color:' + (aberta ? 'var(--green)' : 'var(--red)') + '">' + (aberta ? 'aberto' : 'fechado') + '</b>' +
+    (setor_estadoPadrao(v) === 'F' ? '<br><small style="color:var(--text3)">Descarga: fechada no padrão</small>' : '') +
+    (!v.doisLados && v.operavel !== 'descarga' ? '<br><small style="color:var(--amber)">Ligado só de um lado da rede — conferir o cadastro</small>' : '') +
+    '<div style="margin-top:6px"><button class="btn sm ' + (aberta ? 'danger' : 'primary') + '" onclick="setor_alternarValv(' + v.id + ')">' + (aberta ? '<i class="ti ti-lock"></i> Fechar' : '<i class="ti ti-lock-open"></i> Abrir') + '</button></div>';
+  L.popup({ offset: [0, -6] }).setLatLng(v.ll).setContent(html).openOn(mapSetor);
+  if (c) { st.sel = c.id; setor_pintar(); setor_render(); }
+}
+
+function setor_alternarValv(vid) {
+  const st = setor_st();
+  const v = st.G.pecas[vid];
+  const k = setor_chaveValv(v);
+  const novo = setor_estadoValv(v) === 'A' ? 'F' : 'A';
+  if (novo === setor_estadoPadrao(v)) delete st.estado[k]; else st.estado[k] = novo;
+  mapSetor.closePopup();
+  setor_salvarLocal();
+  setor_recalcular(false);
+  // Mantém selecionado o setor do lado de onde o usuário estava
+  const g = v.gs[0];
+  if (g != null) st.sel = st.R.compG[g];
+  setor_pintar(); setor_render();
+}
+
+function setor_voltarPadrao() {
+  const st = setor_st();
+  if (!Object.keys(st.estado).length) return;
+  if (!confirm('Voltar todos os registros ao padrão (abertos, descargas fechadas)?')) return;
+  st.estado = {};
+  setor_salvarLocal();
+  setor_recalcular(false);
+}
+
+function setor_pintar() {
+  const st = setor_st(); if (!st.G || !st.R) return;
+  st.G.tubos.forEach((t, i) => {
+    const c = st.R.comps[st.R.compG[t.g]];
+    const sel = st.sel != null && c.id === st.sel;
+    st.linhas[i].setStyle({ color: c.cor, weight: larguraLinhaPorDN(t.dn) + (sel ? 3 : 0), opacity: st.sel == null || sel ? 0.95 : 0.35, dashArray: c.origens.length ? null : '6 5' });
+  });
+  st.G.valvulas.forEach(v => { const mk = st.marcValv[v.id]; if (mk) mk.setIcon(setor_iconeValv(v)); });
+  const lo = st.camadas.origens; lo.clearLayers();
+  st.origens.forEach(o => {
+    const cor = o.g >= 0 ? (st.R.comps[st.R.compG[o.g]] || {}).cor || '#1c7ed6' : '#868e96';
+    lo.addLayer(L.marker([o.lat, o.lng], { pane: 'paneSetorValv', icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+      html: '<div style="width:26px;height:26px;border-radius:50%;background:' + cor + ';border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);color:#fff;display:flex;align-items:center;justify-content:center"><i class="ti ti-' + (o.tipo === 'eta' ? 'building-factory-2' : o.tipo === 'entrada' ? 'arrow-big-right-lines' : 'droplet') + '" style="font-size:14px"></i></div>' }) })
+      .bindTooltip(escHtml(o.nome) + (o.dist != null ? ' — ligada à rede a ' + Math.round(o.dist) + ' m' : ' — longe da rede'), { direction: 'top' }));
+    if (o.llLig) lo.addLayer(L.polyline([[o.lat, o.lng], o.llLig], { pane: 'paneSetorRede', color: cor, weight: 2, dashArray: '3 4' }));
+  });
+}
+
+function setor_selecionarTubo(t) {
+  const st = setor_st();
+  if (st.modo === 'origem') return; // no modo de marcar origem o clique vai para o mapa
+  st.sel = st.R.compG[t.g];
+  setor_limparContorno();
+  setor_pintar(); setor_render();
+}
+function setor_selecionarSetor(cid) {
+  const st = setor_st();
+  st.sel = st.sel === cid ? null : cid;
+  setor_limparContorno();
+  setor_pintar(); setor_render();
+  if (st.sel != null) {
+    const b = L.latLngBounds([]);
+    st.G.tubos.forEach((t, i) => { if (st.R.compG[t.g] === cid) b.extend(st.linhas[i].getBounds()); });
+    if (b.isValid()) mapSetor.fitBounds(b, { padding: [30, 30], maxZoom: 17 });
+  }
+}
+
+function setor_cliqueMapa(ev) {
+  const st = setor_st();
+  if (st.modo !== 'origem' || !st.G) { if (st.sel != null && st.modo !== 'origem') { st.sel = null; setor_limparContorno(); setor_pintar(); setor_render(); } return; }
+  st.origens.push({ nome: 'Origem ' + (st.origens.length + 1), tipo: 'res_dist', lat: +ev.latlng.lat.toFixed(6), lng: +ev.latlng.lng.toFixed(6) });
+  st.modo = '';
+  document.getElementById('setor-map').style.cursor = '';
+  setor_salvarLocal();
+  setor_recalcular(false);
+}
+function setor_modoOrigem() {
+  const st = setor_st();
+  if (!st.G) { toast('Monte a rede primeiro'); return; }
+  st.modo = st.modo === 'origem' ? '' : 'origem';
+  document.getElementById('setor-map').style.cursor = st.modo ? 'crosshair' : '';
+  if (st.modo) toast('Clique no mapa onde fica a origem (reservatório, ETA ou entrada)');
+  setor_render();
+}
+function setor_editarOrigem(i, campo, valor) {
+  const st = setor_st(); const o = st.origens[i]; if (!o) return;
+  o[campo] = valor;
+  setor_salvarLocal();
+  if (campo === 'tipo') setor_pintar();
+  setor_render();
+}
+function setor_removerOrigem(i) {
+  const st = setor_st();
+  if (!confirm('Remover a origem "' + st.origens[i].nome + '"?')) return;
+  st.origens.splice(i, 1);
+  setor_salvarLocal();
+  setor_recalcular(false);
+}
+function setor_irPara(lat, lng, z) { mapSetor.setView([lat, lng], z || 18); }
+
+function setor_aplicarTol() {
+  const st = setor_st();
+  ['r0', 'r1', 'r2'].forEach(k => { const v = parseFloat(String(document.getElementById('setor-tol-' + k).value).replace(',', '.')); if (isFinite(v) && v >= 0 && v <= 30) st.tol[k] = v; });
+  setor_salvarLocal();
+  setor_montar();
+}
+
+function setor_desenharInconsistencias() {
+  const st = setor_st(); if (!st.G) return;
+  const lg = st.camadas.incons; lg.clearLayers();
+  const I = st.incons = setor_inconsistencias(st.G);
+  const ponto = (ll, cor, txt) => lg.addLayer(L.circleMarker(ll, { pane: 'paneSetorValv', radius: 8, color: cor, weight: 3, fillOpacity: 0 }).bindTooltip(txt));
+  I.pontasSoltas.forEach(e => ponto(e.ll, '#f08c00', 'Ponta solta (tubo DN ' + (st.G.tubos[e.tubo].dn || '?') + ' sem peça nem outro tubo perto)'));
+  I.pecasSoltas.forEach(p => ponto(p.ll, '#ae3ec9', 'Peça sem tubo perto: ' + escHtml(p.props.tipo || p.tipo)));
+  I.valvUmLado.forEach(v => ponto(v.ll, '#e03131', SETOR_ROTULO_OP[v.operavel] + ' ligado só de um lado'));
+  I.valvSemTubo.forEach(v => ponto(v.ll, '#e03131', SETOR_ROTULO_OP[v.operavel] + ' sem tubo perto'));
+}
+function setor_alternarIncons() {
+  const st = setor_st(); st.inconsVis = !st.inconsVis;
+  if (st.camadas) { if (st.inconsVis) st.camadas.incons.addTo(mapSetor); else mapSetor.removeLayer(st.camadas.incons); }
+  setor_render();
+}
+
+// Contorno do setor selecionado: buffer das linhas (fiel ao traçado) ou concave hull (rápido)
+function setor_limparContorno() {
+  const st = setor_st();
+  if (st.contorno) { try { mapSetor.removeLayer(st.contorno); } catch(e) {} st.contorno = null; }
+  st.contornoInfo = '';
+}
+function setor_contorno(metodo) {
+  const st = setor_st(); if (st.sel == null || typeof turf === 'undefined') return;
+  setor_limparContorno();
+  const linhas = st.G.tubos.filter(t => st.R.compG[t.g] === st.sel).map(t => t.coords);
+  if (!linhas.length) return;
+  const t0 = performance.now();
+  let geo = null;
+  try {
+    if (metodo === 'buffer') {
+      const larg = parseFloat(document.getElementById('setor-buffer-m').value) || 30;
+      geo = turf.buffer(turf.multiLineString(linhas), larg, { units: 'meters', steps: 4 });
+    } else {
+      const pts = turf.featureCollection(linhas.flat().map(c => turf.point(c)));
+      const arestaKm = (parseFloat(document.getElementById('setor-concave-m').value) || 300) / 1000;
+      geo = turf.concave(pts, { maxEdge: arestaKm, units: 'kilometers' });
+      if (!geo) { toast('Concave hull não fechou com essa aresta máxima — aumente o valor'); return; }
+    }
+  } catch(e) { console.error(e); toast('Erro ao calcular o contorno'); return; }
+  const ms = Math.round(performance.now() - t0);
+  const cor = st.R.comps[st.sel].cor;
+  st.contorno = L.geoJSON(geo, { pane: 'paneSetorArea', style: { color: '#343a40', weight: 2.2, fillColor: cor, fillOpacity: 0.22, dashArray: metodo === 'buffer' ? null : '6 4' }, interactive: false }).addTo(mapSetor);
+  let areaHa = 0; try { areaHa = turf.area(geo) / 10000; } catch(e) {}
+  st.contornoInfo = (metodo === 'buffer' ? 'Buffer' : 'Concave hull') + ': ' + areaHa.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha, ' + ms + ' ms';
+  st.contornoGeo = geo;
+  setor_render();
+}
+function setor_baixarContornoKML() {
+  const st = setor_st(); if (!st.contornoGeo) return;
+  const kml = tokml(st.contornoGeo.type === 'FeatureCollection' ? st.contornoGeo : turf.featureCollection([st.contornoGeo]));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' }));
+  a.download = 'setor_' + (st.sel + 1) + '.kml'; a.click();
+}
+
+function setor_baixarRegistrosCSV() {
+  const st = setor_st(); if (st.sel == null) return;
+  const c = st.R.comps[st.sel];
+  const linhas = [['situacao', 'tipo', 'DN', 'codigo', 'lat', 'lng']];
+  [...c.valvFronteira].map(id => st.G.pecas[id]).forEach(v => linhas.push(['fronteira (fechado)', SETOR_ROTULO_OP[v.operavel], v.props.DN || '', v.props.codigo || '', v.ll[0].toFixed(6), v.ll[1].toFixed(6)]));
+  [...c.valvInternas].map(id => st.G.pecas[id]).forEach(v => linhas.push(['dentro (aberto)', SETOR_ROTULO_OP[v.operavel], v.props.DN || '', v.props.codigo || '', v.ll[0].toFixed(6), v.ll[1].toFixed(6)]));
+  const csv = '﻿' + linhas.map(l => l.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'registros_setor_' + (st.sel + 1) + '.csv'; a.click();
+}
+
+function setor_listaValvHTML(ids, vazio) {
+  const st = setor_st();
+  if (!ids.length) return '<div style="font-size:11.5px;color:var(--text3)">' + vazio + '</div>';
+  return '<table class="data-table" style="width:100%;font-size:11.5px"><tbody>' + ids.map(id => {
+    const v = st.G.pecas[id], ab = setor_estadoValv(v) === 'A';
+    return '<tr><td><i class="ti ti-' + (ab ? 'lock-open' : 'lock') + '" style="color:' + (ab ? 'var(--green)' : 'var(--red)') + '"></i> ' + SETOR_ROTULO_OP[v.operavel] + (v.props.DN ? ' DN ' + escHtml(v.props.DN) : '') +
+      '<br><small style="color:var(--text3)">' + v.ll[0].toFixed(6) + ', ' + v.ll[1].toFixed(6) + '</small></td>' +
+      '<td style="text-align:right;white-space:nowrap"><button class="btn sm" title="Ver no mapa" onclick="setor_irPara(' + v.ll[0] + ',' + v.ll[1] + ')"><i class="ti ti-focus-2"></i></button> ' +
+      '<button class="btn sm" title="' + (ab ? 'Fechar' : 'Abrir') + '" onclick="setor_alternarValv(' + v.id + ')"><i class="ti ti-' + (ab ? 'lock' : 'lock-open') + '"></i></button></td></tr>';
+  }).join('') + '</tbody></table>';
+}
+
+function setor_render() {
+  const st = setor_st();
+  const el = document.getElementById('setor-corpo'); if (!el) return;
+  const btnOrig = document.getElementById('setor-btn-origem');
+  if (btnOrig) btnOrig.classList.toggle('primary', st.modo === 'origem');
+  if (!st.G) {
+    document.getElementById('setor-resumo').innerHTML = '<span style="color:var(--text3)">Escolha um município e clique em Montar.</span>';
+    el.innerHTML = ''; return;
+  }
+  const G = st.G, R = st.R;
+  const totKm = G.tubos.reduce((s, t) => s + t.comp, 0);
+  const comAgua = R.comps.filter(c => c.origens.length).reduce((s, c) => s + c.km, 0);
+  const fechados = G.valvulas.filter(v => setor_estadoValv(v) === 'F' && v.operavel !== 'descarga').length;
+  const descAbertas = G.valvulas.filter(v => v.operavel === 'descarga' && setor_estadoValv(v) === 'A').length;
+  const contaOp = {}; G.valvulas.forEach(v => { contaOp[v.operavel] = (contaOp[v.operavel] || 0) + 1; });
+  document.getElementById('setor-resumo').innerHTML =
+    '<div style="font-size:12px;line-height:1.6">' + G.tubos.length.toLocaleString('pt-BR') + ' trechos · ' + formatarExtensao(totKm) + ' · ' + G.pecas.length.toLocaleString('pt-BR') + ' peças<br>' +
+    Object.entries(contaOp).map(([k, n]) => n + ' ' + SETOR_ROTULO_OP[k].toLowerCase() + (n > 1 ? (k === 'vrp' ? 's' : 's') : '')).join(' · ') + '<br>' +
+    '<b style="color:var(--green)">Com água: ' + formatarExtensao(comAgua) + '</b> · <b style="color:var(--red)">Sem origem: ' + formatarExtensao(totKm - comAgua) + '</b>' +
+    '<br><small style="color:var(--text3)">Grafo ' + st.msGrafo + ' ms · cálculo ' + st.msCalc + ' ms</small>' +
+    (!st.temConexoes ? '<div style="color:var(--red);margin-top:4px">Esta rede não tem peças (registros, tês...). Suba a rede pelo DXF para usar a setorização.</div>' : '') + '</div>';
+
+  // Origens
+  let h = '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:12.5px"><i class="ti ti-droplet"></i> Origens</b>' +
+    '<button class="btn sm' + (st.modo === 'origem' ? ' primary' : '') + '" onclick="setor_modoOrigem()"><i class="ti ti-map-pin-plus"></i> ' + (st.modo === 'origem' ? 'Clique no mapa...' : 'Marcar no mapa') + '</button></div>';
+  if (!st.origens.length) h += '<div style="font-size:11.5px;color:var(--amber)">Nenhuma origem. Marque o reservatório, a ETA ou a entrada de outro sistema.</div>';
+  st.origens.forEach((o, i) => {
+    h += '<div style="border-top:1px solid var(--border);padding:6px 0;font-size:11.5px">' +
+      '<div style="display:flex;gap:4px"><input value="' + escHtml(o.nome) + '" onchange="setor_editarOrigem(' + i + ',\'nome\',this.value)" style="flex:1;padding:3px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">' +
+      '<button class="btn sm" title="Ver no mapa" onclick="setor_irPara(' + o.lat + ',' + o.lng + ',17)"><i class="ti ti-focus-2"></i></button><button class="btn sm" title="Remover" onclick="setor_removerOrigem(' + i + ')"><i class="ti ti-trash"></i></button></div>' +
+      '<select onchange="setor_editarOrigem(' + i + ',\'tipo\',this.value)" style="margin-top:4px;width:100%;padding:3px 6px;font-size:11.5px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">' +
+      Object.entries(SETOR_TIPOS_ORIGEM).map(([k, n]) => '<option value="' + k + '"' + (o.tipo === k ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>' +
+      '<div style="color:' + (o.g >= 0 ? 'var(--text3)' : 'var(--red)') + ';margin-top:2px">' + (o.g >= 0 ? 'Ligada à rede a ' + Math.round(o.dist) + ' m' : 'Sem tubo a menos de ' + G.tol.rOrigem + ' m — mova a origem') + '</div></div>';
+  });
+  h += '</div>';
+
+  // Setor selecionado
+  if (st.sel != null && R.comps[st.sel]) {
+    const c = R.comps[st.sel];
+    const porDN = {};
+    G.tubos.forEach(t => { if (R.compG[t.g] === c.id) { const k = t.dn || '—'; porDN[k] = (porDN[k] || 0) + t.comp; } });
+    const fronteira = [...c.valvFronteira], internas = [...c.valvInternas];
+    const descargas = internas.concat(fronteira).filter(id => G.pecas[id].operavel === 'descarga');
+    h += '<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:4px solid ' + c.cor + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:12.5px">Setor ' + (c.id + 1) + '</b><button class="btn sm" onclick="setor_selecionarSetor(' + c.id + ')" title="Tirar seleção"><i class="ti ti-x"></i></button></div>' +
+      '<div style="font-size:12px;margin:4px 0">' + (c.origens.length ? '<span style="color:var(--green)"><i class="ti ti-droplet"></i> ' + c.origens.map(o => escHtml(o.nome)).join(' + ') + '</span>' : '<b style="color:var(--red)"><i class="ti ti-droplet-off"></i> Sem abastecimento</b>') +
+      (c.origens.length > 1 ? '<br><small style="color:var(--amber)">Setor alimentado por mais de uma origem</small>' : '') + '</div>' +
+      '<div style="font-size:13px"><b>' + formatarExtensao(c.km) + '</b> de rede</div>' +
+      '<div style="font-size:11px;color:var(--text2);margin:2px 0 6px">' + Object.entries(porDN).sort((a, b) => (parseFloat(a[0]) || 1e9) - (parseFloat(b[0]) || 1e9)).map(([dn, m]) => 'DN ' + dn + ': ' + formatarExtensao(m)).join(' · ') + '</div>' +
+      '<b style="font-size:11.5px">Registros fechados na fronteira (' + fronteira.length + ')</b>' + setor_listaValvHTML(fronteira, 'Nenhum — o setor é limitado só pelo fim da rede.') +
+      '<details style="margin-top:6px"><summary style="font-size:11.5px;cursor:pointer">Registros abertos dentro do setor (' + internas.length + ')</summary>' + setor_listaValvHTML(internas, 'Nenhum.') + '</details>' +
+      (descargas.length ? '<div style="font-size:11.5px;margin-top:6px"><i class="ti ti-arrow-big-down-lines"></i> Descargas no setor: ' + descargas.length + '</div>' : '') +
+      '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="setor_baixarRegistrosCSV()"><i class="ti ti-file-spreadsheet"></i> Registros (CSV)</button></div>' +
+      '<div style="margin-top:8px;font-size:11.5px"><b>Contorno da área</b><div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:4px">' +
+      '<button class="btn sm" onclick="setor_contorno(\'buffer\')">Buffer</button><input id="setor-buffer-m" value="30" style="width:44px;padding:2px 4px;font-size:11.5px"> m ' +
+      '<button class="btn sm" onclick="setor_contorno(\'concave\')">Concave</button><input id="setor-concave-m" value="300" style="width:50px;padding:2px 4px;font-size:11.5px"> m</div>' +
+      (st.contornoInfo ? '<div style="color:var(--text2);margin-top:3px">' + st.contornoInfo + ' <button class="btn sm" onclick="setor_baixarContornoKML()"><i class="ti ti-download"></i> KML</button> <button class="btn sm" onclick="setor_limparContorno();setor_render()"><i class="ti ti-eraser"></i></button></div>' : '') +
+      '</div></div>';
+  } else {
+    h += '<div style="font-size:11.5px;color:var(--text3);margin-bottom:10px"><i class="ti ti-hand-click"></i> Clique num trecho da rede para ver o setor dele. Clique num registro para abrir ou fechar.</div>';
+  }
+
+  // Lista de setores
+  const comps = R.comps.filter(c => c.km > 0.5).slice().sort((a, b) => (b.origens.length > 0) - (a.origens.length > 0) || b.km - a.km);
+  h += '<div class="card" style="padding:10px 12px;margin-bottom:10px"><b style="font-size:12.5px"><i class="ti ti-chart-dots-3"></i> Setores (' + comps.length + ')</b>' +
+    '<div style="max-height:220px;overflow-y:auto;margin-top:4px">' + comps.map(c =>
+      '<div onclick="setor_selecionarSetor(' + c.id + ')" style="display:flex;gap:6px;align-items:center;padding:4px 2px;cursor:pointer;font-size:11.5px;border-radius:4px;' + (c.id === st.sel ? 'background:var(--bg2)' : '') + '">' +
+      '<span style="width:14px;height:5px;border-radius:2px;background:' + c.cor + ';flex-shrink:0' + (c.origens.length ? '' : ';background:repeating-linear-gradient(90deg,' + c.cor + ' 0 4px,transparent 4px 7px)') + '"></span>' +
+      '<span style="flex:1">Setor ' + (c.id + 1) + ' — ' + (c.origens.length ? escHtml(c.origens.map(o => o.nome).join(' + ')) : '<span style="color:var(--red)">sem origem</span>') + '</span><b>' + formatarExtensao(c.km) + '</b></div>').join('') + '</div></div>';
+
+  // Simulação
+  h += '<div class="card" style="padding:10px 12px;margin-bottom:10px"><b style="font-size:12.5px"><i class="ti ti-adjustments"></i> Simulação</b>' +
+    '<div style="font-size:11.5px;margin-top:4px">' + fechados + ' registro(s) fechado(s)' + (descAbertas ? ' · ' + descAbertas + ' descarga(s) aberta(s)' : '') + ' além do padrão.</div>' +
+    '<div style="font-size:10.5px;color:var(--text3)">Fica guardado só neste computador. Não muda nada no campo.</div>' +
+    (Object.keys(st.estado).length ? '<button class="btn sm" style="margin-top:4px" onclick="setor_voltarPadrao()"><i class="ti ti-restore"></i> Voltar ao padrão</button>' : '') + '</div>';
+
+  // Inconsistências
+  const I = st.incons || { pontasSoltas: [], pecasSoltas: [], valvUmLado: [], valvSemTubo: [] };
+  const nI = I.pontasSoltas.length + I.pecasSoltas.length + I.valvUmLado.length + I.valvSemTubo.length;
+  h += '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:12.5px"><i class="ti ti-alert-triangle"></i> Conferir cadastro (' + nI + ')</b>' +
+    '<button class="btn sm' + (st.inconsVis ? ' primary' : '') + '" onclick="setor_alternarIncons()">' + (st.inconsVis ? 'Ocultar' : 'Mostrar') + ' no mapa</button></div>' +
+    '<div style="font-size:11.5px;margin-top:4px;line-height:1.6">' +
+    '<span style="color:#f08c00">●</span> Pontas soltas: ' + I.pontasSoltas.length + ' <span style="color:var(--text3)">(tubo sem peça nem outro tubo perto; inclui as pontas das origens)</span><br>' +
+    '<span style="color:#ae3ec9">●</span> Peças sem tubo perto: ' + I.pecasSoltas.length + '<br>' +
+    '<span style="color:#e03131">●</span> Registros ligados de um lado só: ' + (I.valvUmLado.length + I.valvSemTubo.length) + '</div>' +
+    (I.pontasSoltas.length ? '<details style="margin-top:4px"><summary style="font-size:11.5px;cursor:pointer">Lista das pontas soltas</summary><div style="max-height:160px;overflow-y:auto">' +
+      I.pontasSoltas.map(e => '<div style="font-size:11px;display:flex;justify-content:space-between;align-items:center;padding:2px 0">DN ' + (G.tubos[e.tubo].dn || '?') + ' · ' + e.ll[0].toFixed(6) + ', ' + e.ll[1].toFixed(6) + ' <button class="btn sm" onclick="setor_irPara(' + e.ll[0] + ',' + e.ll[1] + ')"><i class="ti ti-focus-2"></i></button></div>').join('') + '</div></details>' : '') +
+    '</div>';
+
+  // Tolerâncias
+  h += '<details class="card" style="padding:10px 12px"><summary style="font-size:12.5px;font-weight:600;cursor:pointer"><i class="ti ti-ruler-measure"></i> Tolerâncias de ligação</summary>' +
+    '<div style="font-size:11.5px;margin-top:6px;display:grid;grid-template-columns:1fr 60px;gap:4px;align-items:center">' +
+    '<span>Ponta com ponta (m)</span><input id="setor-tol-r0" value="' + st.tol.r0 + '" style="padding:2px 4px">' +
+    '<span>Ponta com peça (m)</span><input id="setor-tol-r1" value="' + st.tol.r1 + '" style="padding:2px 4px">' +
+    '<span>Peça com peça (m)</span><input id="setor-tol-r2" value="' + st.tol.r2 + '" style="padding:2px 4px"></div>' +
+    '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">No CAD o tubo para 1–2 m antes da peça. Com ponta–peça 3,5 m e peça–peça 5 m, Maracajá fecha certo.</div>' +
+    '<button class="btn sm" style="margin-top:6px" onclick="setor_aplicarTol()"><i class="ti ti-refresh"></i> Remontar</button></details>';
+  el.innerHTML = h;
+}
+
+// ================================================================
 // TABS & MODE
 // ================================================================
 function switchTab(tabId, tabsId) {
@@ -16286,6 +16964,7 @@ function switchTab(tabId, tabsId) {
   if(tabId==='manage') renderManage();
   if(tabId==='usuarios') renderUsuariosPanel();
   if(tabId==='macromedicao') macro_abrirAba();
+  if(tabId==='setorizacao') setor_abrirAba();
   if(tabId==='campanhas-pc') { renderProgEquipesCheckboxes(); renderCampanhasProgramadasDesktop(); }
   if(tabId==='register') { voltarParaListaRegistro(); }
 }

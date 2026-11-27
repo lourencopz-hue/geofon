@@ -2125,24 +2125,31 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <span style="font-weight:600;font-size:14px;flex:1">Gerenciar camadas DMC</span>
     <button onclick="closeDMCPanel()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px;padding:2px"><i class="ti ti-x"></i></button>
   </div>
-  <!-- Filtro por regional e cidade -->
-  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
-    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="dmc-regional-filter"></div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap" id="dmc-city-filter"></div>
-  </div>
-  <!-- Upload -->
-  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
-    <button class="btn sm primary" style="width:100%;justify-content:center" onclick="document.getElementById('up-dmc-panel').click()">
-      <i class="ti ti-upload"></i> Carregar KML / GeoJSON
+  <!-- Corpo rolável único: filtros, upload e lista rolam juntos, assim a lista nunca fica
+       espremida/escondida pelos filtros em tela pequena (celular). Cabeçalho e rodapé ficam fixos. -->
+  <div style="flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain">
+    <!-- Filtro por regional e cidade (recolhível) -->
+    <button type="button" id="dmc-filtros-toggle" onclick="alternarFiltrosPainel('dmc')" style="display:flex;align-items:center;gap:6px;width:100%;padding:9px 14px;background:var(--bg2);border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;text-align:left">
+      <i class="ti ti-filter" style="font-size:14px"></i><span style="flex:1">Filtros</span><i class="ti ti-chevron-up" id="dmc-filtros-chevron" style="font-size:14px"></i>
     </button>
-    <input type="file" id="up-dmc-panel" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'dmc')">
-    <div style="font-size:10px;color:var(--text3);margin-top:5px;text-align:center">O arquivo ficará disponível para todos os usuários</div>
-  </div>
-  <!-- Lista de camadas -->
-  <div style="flex:1;overflow-y:auto;padding:10px 14px" id="dmc-panel-list">
-    <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.</p>
+    <div id="dmc-filtros-corpo" style="padding:10px 14px;border-bottom:1px solid var(--border)">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="dmc-regional-filter"></div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="dmc-city-filter"></div>
+    </div>
+    <!-- Upload -->
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+      <button class="btn sm primary" style="width:100%;justify-content:center" onclick="document.getElementById('up-dmc-panel').click()">
+        <i class="ti ti-upload"></i> Carregar KML / GeoJSON
+      </button>
+      <input type="file" id="up-dmc-panel" accept=".kml,.geojson,.json" style="display:none" onchange="handleLayerUpload(this,'dmc')">
+      <div style="font-size:10px;color:var(--text3);margin-top:5px;text-align:center">O arquivo ficará disponível para todos os usuários</div>
+    </div>
+    <!-- Lista de camadas -->
+    <div style="padding:10px 14px" id="dmc-panel-list">
+      <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada DMC carregada.</p>
+    </div>
   </div>
   <!-- Controles globais -->
   <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0">
@@ -2159,30 +2166,39 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <span style="font-weight:600;font-size:14px;flex:1">Gerenciar Redes</span>
     <button onclick="closeRedesPanel()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px;padding:2px"><i class="ti ti-x"></i></button>
   </div>
-  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
-    <button class="btn sm success" style="width:100%;justify-content:center" onclick="document.getElementById('up-redes-panel').click()">
-      <i class="ti ti-upload"></i> Carregar rede (KML, GeoJSON ou DXF)
-    </button>
-    <input type="file" id="up-redes-panel" accept=".kml,.geojson,.json,.dxf" style="display:none" onchange="handleLayerUpload(this,'redes')">
-  </div>
-  <!-- Filtro por regional e cidade (mesmo padrão do painel DMC) -->
-  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
-    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-regional-filter"></div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-city-filter"></div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Buscar município</div>
-    <div style="position:relative">
-      <i class="ti ti-search" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px"></i>
-      <input type="search" id="redes-busca" placeholder="Digite o nome do município..." autocomplete="off"
-        oninput="S.redesBusca=this.value;renderRedesPanel()"
-        style="width:100%;box-sizing:border-box;padding:8px 10px 8px 30px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+  <!-- Corpo rolável único: upload, filtros e lista rolam juntos, assim a lista de redes nunca
+       fica espremida/escondida pelos filtros em tela pequena (celular). Cabeçalho e rodapé ficam fixos. -->
+  <div style="flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain">
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+      <button class="btn sm success" style="width:100%;justify-content:center" onclick="document.getElementById('up-redes-panel').click()">
+        <i class="ti ti-upload"></i> Carregar rede (KML, GeoJSON ou DXF)
+      </button>
+      <input type="file" id="up-redes-panel" accept=".kml,.geojson,.json,.dxf" style="display:none" onchange="handleLayerUpload(this,'redes')">
     </div>
-  </div>
-  <!-- Peças da rede (conexões vindas do DXF): liga/desliga por tipo, vale neste aparelho -->
-  <div style="padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0" id="redes-conexoes-filtro"></div>
-  <div style="flex:1;overflow-y:auto;padding:10px 14px" id="redes-panel-list">
-    <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.</p>
+    <!-- Filtro por regional e cidade (mesmo padrão do painel DMC; recolhível) -->
+    <button type="button" id="redes-filtros-toggle" onclick="alternarFiltrosPainel('redes')" style="display:flex;align-items:center;gap:6px;width:100%;padding:9px 14px;background:var(--bg2);border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;text-align:left">
+      <i class="ti ti-filter" style="font-size:14px"></i><span style="flex:1">Filtros</span><i class="ti ti-chevron-up" id="redes-filtros-chevron" style="font-size:14px"></i>
+    </button>
+    <div id="redes-filtros-corpo">
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por regional</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-regional-filter"></div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Filtrar por cidade</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="redes-city-filter"></div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Buscar município</div>
+        <div style="position:relative">
+          <i class="ti ti-search" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px"></i>
+          <input type="search" id="redes-busca" placeholder="Digite o nome do município..." autocomplete="off"
+            oninput="S.redesBusca=this.value;renderRedesPanel()"
+            style="width:100%;box-sizing:border-box;padding:8px 10px 8px 30px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
+        </div>
+      </div>
+      <!-- Peças da rede (conexões vindas do DXF): liga/desliga por tipo, vale neste aparelho -->
+      <div style="padding:8px 14px;border-bottom:1px solid var(--border)" id="redes-conexoes-filtro"></div>
+    </div>
+    <div style="padding:10px 14px" id="redes-panel-list">
+      <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.</p>
+    </div>
   </div>
   <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0">
     <button class="btn sm" style="flex:1;justify-content:center" onclick="toggleAllRedes(true)"><i class="ti ti-eye"></i>Mostrar todas</button>
@@ -9529,10 +9545,28 @@ function invalidateSizeDosMapas() {
   }, 50);
 }
 
+// Filtros dos painéis DMC/Redes: recolhíveis para dar espaço à lista no celular.
+// O estado (recolhido ou não) fica salvo por aparelho.
+function aplicarFiltrosPainel(qual) {
+  let recolhido = false;
+  try { recolhido = localStorage.getItem('geofon_painel_filtros_' + qual) === '1'; } catch (e) {}
+  const corpo = document.getElementById(qual + '-filtros-corpo');
+  const seta = document.getElementById(qual + '-filtros-chevron');
+  if (corpo) corpo.style.display = recolhido ? 'none' : '';
+  if (seta) seta.className = 'ti ' + (recolhido ? 'ti-chevron-down' : 'ti-chevron-up');
+}
+function alternarFiltrosPainel(qual) {
+  let recolhido = false;
+  try { recolhido = localStorage.getItem('geofon_painel_filtros_' + qual) === '1'; } catch (e) {}
+  try { localStorage.setItem('geofon_painel_filtros_' + qual, recolhido ? '0' : '1'); } catch (e) {}
+  aplicarFiltrosPainel(qual);
+}
+
 function openDMCPanel() {
   renderDMCPanelRegionalFilter();
   renderDMCPanelCityFilter();
   renderDMCPanel();
+  aplicarFiltrosPainel('dmc');
   document.getElementById('dmc-panel-overlay').style.display='block';
   document.getElementById('dmc-panel').style.display='flex';
 }
@@ -9544,6 +9578,7 @@ function openRedesPanel() {
   renderRedesPanelRegionalFilter();
   renderRedesPanelCityFilter();
   renderRedesPanel();
+  aplicarFiltrosPainel('redes');
   document.getElementById('redes-panel-overlay').style.display='block';
   document.getElementById('redes-panel').style.display='flex';
 }
@@ -16338,7 +16373,7 @@ function setor_montarGrafo(features, tol) {
     const ia = pontas.length;
     pontas.push({ id: ia, tubo: id, xy: proj(cs[0]), ll: [cs[0][1], cs[0][0]], liga: 0 });
     pontas.push({ id: ia + 1, tubo: id, xy: proj(cs[cs.length - 1]), ll: [cs[cs.length - 1][1], cs[cs.length - 1][0]], liga: 0 });
-    tubos.push({ id, coords: cs, dn: p._diametroMm ? Number(p._diametroMm) : null, comp, a: ia, b: ia + 1, props: p });
+    tubos.push({ id, coords: cs, dn: p._diametroMm ? Number(p._diametroMm) : null, comp, a: ia, b: ia + 1, props: p, ft: t.ft });
   });
   pecasFt.forEach(ft => {
     const p = ft.properties, c = ft.geometry.coordinates;
@@ -16502,7 +16537,9 @@ function setor_inconsistencias(G) {
 // ---------- Tela (aba "Setorização", só para a conta do Lourenço enquanto estiver em teste)
 const SETOR_LS_PREFIXO = 'geofon_setor_';
 const SETOR_CORES = ['#1c7ed6', '#2f9e44', '#7048e8', '#0c8599', '#e8590c', '#c2255c', '#5c940d', '#1864ab', '#9c36b5', '#d9480f'];
-const SETOR_COR_SEM_AGUA = '#e03131';
+const SETOR_COR_SEM_AGUA = '#e03131';   // polígono da área que ficou sem água por fechamento
+const SETOR_COR_TUBO_SEM_AGUA = '#868e96'; // tubo sem água (cinza pontilhado — não confunde com DN vermelho)
+const SETOR_COR_SEM_CADASTRO = '#ced4da'; // sem origem mesmo com tudo no padrão (erro de cadastro / origem não marcada)
 const SETOR_TIPOS_ORIGEM = { res_dist: 'Reservatório de distribuição', res_jus: 'Reservatório de jusante', eta: 'ETA', entrada: 'Entrada de outro sistema' };
 const SETOR_ROTULO_OP = { registro: 'Registro', descarga: 'Descarga', macro: 'Macromedidor', vrp: 'VRP' };
 // Origens já informadas pelo Lourenço (2026-11-27) — usadas só se a cidade ainda não tem nada salvo
@@ -16595,12 +16632,22 @@ function setor_recalcular(enquadrar) {
   st.G.valvulas.forEach(v => { const e = st.estado[setor_chaveValv(v)]; if (e) est[v.id] = e; });
   const t0 = performance.now();
   st.R = setor_calcular(st.G, est, st.origens);
+  // Mesmo cálculo com todos os registros no padrão: o que tinha água ali e agora não tem
+  // ficou sem água POR CAUSA dos fechamentos; o que já não tinha é falta de origem/cadastro.
+  const base = Object.keys(est).length ? setor_calcular(st.G, {}, st.origens) : st.R;
   st.msCalc = Math.round(performance.now() - t0);
+  st.R.comps.forEach(c => {
+    if (c.origens.length) { c.situacao = 'agua'; return; }
+    const kmAntes = c.grupos.reduce((s, g) => s + (base.comps[base.compG[g]].origens.length ? st.G.kmGrupo[g] : 0), 0);
+    c.situacao = kmAntes > 0 ? 'fechamento' : 'cadastro';
+    c.kmPerdido = kmAntes;
+  });
   // Setores com origem primeiro e maiores antes; ganham cor
   let k = 0;
-  st.R.comps.forEach(c => { c.cor = c.origens.length ? SETOR_CORES[k++ % SETOR_CORES.length] : SETOR_COR_SEM_AGUA; });
+  st.R.comps.forEach(c => { c.cor = c.situacao === 'agua' ? SETOR_CORES[k++ % SETOR_CORES.length] : c.situacao === 'fechamento' ? SETOR_COR_SEM_AGUA : SETOR_COR_SEM_CADASTRO; });
   if (st.sel != null && !st.R.comps[st.sel]) st.sel = null;
   setor_pintar();
+  setor_desenharAreasSemAgua();
   if (enquadrar && st.camadas && st.camadas.rede.getLayers().length) {
     try { mapSetor.fitBounds(st.camadas.rede.getBounds(), { padding: [20, 20] }); } catch(e) {}
   }
@@ -16634,7 +16681,8 @@ function setor_desenharRede() {
   });
   const origens = L.layerGroup().addTo(mapSetor);
   const incons = L.layerGroup();
-  st.camadas = { rede, valv, origens, incons };
+  const semAgua = L.featureGroup().addTo(mapSetor);
+  st.camadas = { rede, valv, origens, incons, semAgua };
   if (st.inconsVis) incons.addTo(mapSetor);
   setor_desenharInconsistencias();
 }
@@ -16696,7 +16744,11 @@ function setor_pintar() {
   st.G.tubos.forEach((t, i) => {
     const c = st.R.comps[st.R.compG[t.g]];
     const sel = st.sel != null && c.id === st.sel;
-    st.linhas[i].setStyle({ color: c.cor, weight: larguraLinhaPorDN(t.dn) + (sel ? 3 : 0), opacity: st.sel == null || sel ? 0.95 : 0.35, dashArray: c.origens.length ? null : '6 5' });
+    const corAgua = resolverCorFeature(t.ft || { properties: t.props }, 'redes', null) || LAYER_STYLE.redes.color;
+    const estilo = c.situacao === 'agua' ? { color: corAgua, dashArray: S.coresPorDiametro[String(t.dn)] || t.props._corKml ? null : LAYER_STYLE.redes.dashArray }
+      : c.situacao === 'fechamento' ? { color: SETOR_COR_TUBO_SEM_AGUA, dashArray: '2 6' }
+      : { color: SETOR_COR_SEM_CADASTRO, dashArray: '2 6' };
+    st.linhas[i].setStyle(Object.assign(estilo, { weight: larguraLinhaPorDN(t.dn) + (sel ? 3 : 0), opacity: st.sel == null || sel ? 0.95 : 0.35, lineCap: 'round' }));
   });
   st.G.valvulas.forEach(v => { const mk = st.marcValv[v.id]; if (mk) mk.setIcon(setor_iconeValv(v)); });
   const lo = st.camadas.origens; lo.clearLayers();
@@ -16707,6 +16759,49 @@ function setor_pintar() {
       .bindTooltip(escHtml(o.nome) + (o.dist != null ? ' — ligada à rede a ' + Math.round(o.dist) + ' m' : ' — longe da rede'), { direction: 'top' }));
     if (o.llLig) lo.addLayer(L.polyline([[o.lat, o.lng], o.llLig], { pane: 'paneSetorRede', color: cor, weight: 2, dashArray: '3 4' }));
   });
+}
+
+// Polígono de cada região que ficou sem água por causa dos registros fechados (buffer das
+// linhas dela). Recalculado a cada abre/fecha.
+function setor_desenharAreasSemAgua() {
+  const st = setor_st(); if (!st.camadas || !st.R) return;
+  const lg = st.camadas.semAgua; lg.clearLayers();
+  st.areasSemAgua = [];
+  if (typeof turf === 'undefined') return;
+  const larg = st.largAreaSemAgua || 30;
+  st.R.comps.filter(c => c.situacao === 'fechamento' && c.km > 0).forEach(c => {
+    const linhas = st.G.tubos.filter(t => st.R.compG[t.g] === c.id).map(t => t.coords);
+    if (!linhas.length) return;
+    let geo = null;
+    try { geo = turf.buffer(turf.multiLineString(linhas), larg, { units: 'meters', steps: 4 }); } catch(e) { console.warn('setor: buffer', e); return; }
+    let ha = 0; try { ha = turf.area(geo) / 10000; } catch(e) {}
+    c.areaHa = ha; c.geo = geo;
+    const fechadosPeloUsuario = [...c.valvFronteira].map(id => st.G.pecas[id]).filter(v => setor_estadoValv(v) !== setor_estadoPadrao(v));
+    c.registrosCausa = fechadosPeloUsuario;
+    const camada = L.geoJSON(geo, { pane: 'paneSetorArea', style: { color: SETOR_COR_SEM_AGUA, weight: 2, dashArray: '6 4', fillColor: SETOR_COR_SEM_AGUA, fillOpacity: 0.22 } })
+      .bindTooltip('Sem água pelo fechamento: ' + formatarExtensao(c.km) + ' de rede · ' + ha.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha', { sticky: true })
+      .on('click', (ev) => { L.DomEvent.stopPropagation(ev); setor_selecionarSetor(c.id); });
+    lg.addLayer(camada);
+    st.areasSemAgua.push(c);
+  });
+}
+function setor_mudarLargAreaSemAgua(v) {
+  const st = setor_st(); const n = parseFloat(String(v).replace(',', '.'));
+  if (!(n > 0 && n <= 300)) return;
+  st.largAreaSemAgua = n; setor_desenharAreasSemAgua(); setor_render();
+}
+function setor_baixarAreasSemAguaKML() {
+  const st = setor_st(); if (!st.areasSemAgua || !st.areasSemAgua.length) return;
+  const fts = st.areasSemAgua.map((c, i) => {
+    const f = c.geo.type === 'Feature' ? JSON.parse(JSON.stringify(c.geo)) : turf.feature(c.geo);
+    f.properties = { name: 'Sem água ' + (i + 1), km_rede: +(c.km / 1000).toFixed(2), area_ha: +c.areaHa.toFixed(1),
+      registros_fechados: c.registrosCausa.map(v => SETOR_ROTULO_OP[v.operavel] + (v.props.DN ? ' DN ' + v.props.DN : '') + ' (' + v.ll[0].toFixed(6) + ', ' + v.ll[1].toFixed(6) + ')').join('; ') };
+    return f;
+  });
+  const kml = tokml(turf.featureCollection(fts), { name: 'name' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' }));
+  a.download = 'areas_sem_agua.kml'; a.click();
 }
 
 function setor_selecionarTubo(t) {
@@ -16859,19 +16954,38 @@ function setor_render() {
   }
   const G = st.G, R = st.R;
   const totKm = G.tubos.reduce((s, t) => s + t.comp, 0);
-  const comAgua = R.comps.filter(c => c.origens.length).reduce((s, c) => s + c.km, 0);
+  const comAgua = R.comps.filter(c => c.situacao === 'agua').reduce((s, c) => s + c.km, 0);
+  const kmFech = R.comps.filter(c => c.situacao === 'fechamento').reduce((s, c) => s + c.km, 0);
+  const kmCad = R.comps.filter(c => c.situacao === 'cadastro').reduce((s, c) => s + c.km, 0);
   const fechados = G.valvulas.filter(v => setor_estadoValv(v) === 'F' && v.operavel !== 'descarga').length;
   const descAbertas = G.valvulas.filter(v => v.operavel === 'descarga' && setor_estadoValv(v) === 'A').length;
   const contaOp = {}; G.valvulas.forEach(v => { contaOp[v.operavel] = (contaOp[v.operavel] || 0) + 1; });
   document.getElementById('setor-resumo').innerHTML =
     '<div style="font-size:12px;line-height:1.6">' + G.tubos.length.toLocaleString('pt-BR') + ' trechos · ' + formatarExtensao(totKm) + ' · ' + G.pecas.length.toLocaleString('pt-BR') + ' peças<br>' +
     Object.entries(contaOp).map(([k, n]) => n + ' ' + SETOR_ROTULO_OP[k].toLowerCase() + (n > 1 ? (k === 'vrp' ? 's' : 's') : '')).join(' · ') + '<br>' +
-    '<b style="color:var(--green)">Com água: ' + formatarExtensao(comAgua) + '</b> · <b style="color:var(--red)">Sem origem: ' + formatarExtensao(totKm - comAgua) + '</b>' +
+    '<b style="color:var(--green)">Com água: ' + formatarExtensao(comAgua) + '</b>' +
+    (kmFech > 0 ? ' · <b style="color:var(--red)">Sem água pelo fechamento: ' + formatarExtensao(kmFech) + '</b>' : '') +
+    '<br><span style="color:var(--text3)">Sem origem no cadastro: ' + formatarExtensao(kmCad) + '</span>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;font-size:10.5px;color:var(--text2)">' +
+      '<span><span style="display:inline-block;width:16px;height:3px;background:' + LAYER_STYLE.redes.color + ';vertical-align:middle"></span> com água (cor do DN)</span>' +
+      '<span><span style="display:inline-block;width:14px;height:10px;background:rgba(224,49,49,.25);border:1.5px dashed ' + SETOR_COR_SEM_AGUA + ';vertical-align:middle"></span> sem água pelo fechamento</span>' +
+      '<span><span style="display:inline-block;width:16px;border-top:3px dotted ' + SETOR_COR_SEM_CADASTRO + ';vertical-align:middle"></span> sem origem</span></div>' +
     '<br><small style="color:var(--text3)">Grafo ' + st.msGrafo + ' ms · cálculo ' + st.msCalc + ' ms</small>' +
     (!st.temConexoes ? '<div style="color:var(--red);margin-top:4px">Esta rede não tem peças (registros, tês...). Suba a rede pelo DXF para usar a setorização.</div>' : '') + '</div>';
 
+  // Áreas sem água pelos fechamentos
+  let h = '';
+  const areas = st.areasSemAgua || [];
+  if (areas.length) {
+    h += '<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:4px solid ' + SETOR_COR_SEM_AGUA + '"><b style="font-size:12.5px;color:var(--red)"><i class="ti ti-droplet-off"></i> Sem água pelo fechamento (' + areas.length + ')</b>' +
+      areas.map((c, i) => '<div style="border-top:1px solid var(--border);padding:6px 0;font-size:11.5px"><div style="display:flex;justify-content:space-between;align-items:center"><b>Área ' + (i + 1) + ': ' + formatarExtensao(c.km) + ' · ' + c.areaHa.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha</b>' +
+        '<button class="btn sm" title="Ver no mapa" onclick="setor_selecionarSetor(' + c.id + ')"><i class="ti ti-focus-2"></i></button></div>' +
+        (c.registrosCausa.length ? '<div style="color:var(--text2)">Fechado: ' + c.registrosCausa.map(v => SETOR_ROTULO_OP[v.operavel] + (v.props.DN ? ' DN ' + escHtml(v.props.DN) : '')).join(', ') + '</div>' : '') + '</div>').join('') +
+      '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:11.5px;flex-wrap:wrap">Faixa em volta do tubo <input value="' + (st.largAreaSemAgua || 30) + '" onchange="setor_mudarLargAreaSemAgua(this.value)" style="width:44px;padding:2px 4px;font-size:11.5px"> m' +
+      '<button class="btn sm" onclick="setor_baixarAreasSemAguaKML()"><i class="ti ti-download"></i> KML</button></div></div>';
+  }
   // Origens
-  let h = '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:12.5px"><i class="ti ti-droplet"></i> Origens</b>' +
+  h += '<div class="card" style="padding:10px 12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:12.5px"><i class="ti ti-droplet"></i> Origens</b>' +
     '<button class="btn sm' + (st.modo === 'origem' ? ' primary' : '') + '" onclick="setor_modoOrigem()"><i class="ti ti-map-pin-plus"></i> ' + (st.modo === 'origem' ? 'Clique no mapa...' : 'Marcar no mapa') + '</button></div>';
   if (!st.origens.length) h += '<div style="font-size:11.5px;color:var(--amber)">Nenhuma origem. Marque o reservatório, a ETA ou a entrada de outro sistema.</div>';
   st.origens.forEach((o, i) => {
@@ -16893,7 +17007,7 @@ function setor_render() {
     const descargas = internas.concat(fronteira).filter(id => G.pecas[id].operavel === 'descarga');
     h += '<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:4px solid ' + c.cor + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:12.5px">Setor ' + (c.id + 1) + '</b><button class="btn sm" onclick="setor_selecionarSetor(' + c.id + ')" title="Tirar seleção"><i class="ti ti-x"></i></button></div>' +
-      '<div style="font-size:12px;margin:4px 0">' + (c.origens.length ? '<span style="color:var(--green)"><i class="ti ti-droplet"></i> ' + c.origens.map(o => escHtml(o.nome)).join(' + ') + '</span>' : '<b style="color:var(--red)"><i class="ti ti-droplet-off"></i> Sem abastecimento</b>') +
+      '<div style="font-size:12px;margin:4px 0">' + (c.origens.length ? '<span style="color:var(--green)"><i class="ti ti-droplet"></i> ' + c.origens.map(o => escHtml(o.nome)).join(' + ') + '</span>' : c.situacao === 'fechamento' ? '<b style="color:var(--red)"><i class="ti ti-droplet-off"></i> Sem abastecimento pelo fechamento</b>' : '<b style="color:var(--text2)"><i class="ti ti-droplet-off"></i> Sem origem (cadastro ou origem não marcada)</b>') +
       (c.origens.length > 1 ? '<br><small style="color:var(--amber)">Setor alimentado por mais de uma origem</small>' : '') + '</div>' +
       '<div style="font-size:13px"><b>' + formatarExtensao(c.km) + '</b> de rede</div>' +
       '<div style="font-size:11px;color:var(--text2);margin:2px 0 6px">' + Object.entries(porDN).sort((a, b) => (parseFloat(a[0]) || 1e9) - (parseFloat(b[0]) || 1e9)).map(([dn, m]) => 'DN ' + dn + ': ' + formatarExtensao(m)).join(' · ') + '</div>' +
@@ -16911,12 +17025,13 @@ function setor_render() {
   }
 
   // Lista de setores
-  const comps = R.comps.filter(c => c.km > 0.5).slice().sort((a, b) => (b.origens.length > 0) - (a.origens.length > 0) || b.km - a.km);
+  const ordemSit = { agua: 0, fechamento: 1, cadastro: 2 };
+  const comps = R.comps.filter(c => c.km > 0.5).slice().sort((a, b) => ordemSit[a.situacao] - ordemSit[b.situacao] || b.km - a.km);
   h += '<div class="card" style="padding:10px 12px;margin-bottom:10px"><b style="font-size:12.5px"><i class="ti ti-chart-dots-3"></i> Setores (' + comps.length + ')</b>' +
     '<div style="max-height:220px;overflow-y:auto;margin-top:4px">' + comps.map(c =>
       '<div onclick="setor_selecionarSetor(' + c.id + ')" style="display:flex;gap:6px;align-items:center;padding:4px 2px;cursor:pointer;font-size:11.5px;border-radius:4px;' + (c.id === st.sel ? 'background:var(--bg2)' : '') + '">' +
-      '<span style="width:14px;height:5px;border-radius:2px;background:' + c.cor + ';flex-shrink:0' + (c.origens.length ? '' : ';background:repeating-linear-gradient(90deg,' + c.cor + ' 0 4px,transparent 4px 7px)') + '"></span>' +
-      '<span style="flex:1">Setor ' + (c.id + 1) + ' — ' + (c.origens.length ? escHtml(c.origens.map(o => o.nome).join(' + ')) : '<span style="color:var(--red)">sem origem</span>') + '</span><b>' + formatarExtensao(c.km) + '</b></div>').join('') + '</div></div>';
+      '<i class="ti ti-' + (c.situacao === 'agua' ? 'droplet' : 'droplet-off') + '" style="color:' + (c.situacao === 'agua' ? 'var(--blue)' : c.situacao === 'fechamento' ? 'var(--red)' : 'var(--text3)') + '"></i>' +
+      '<span style="flex:1">Setor ' + (c.id + 1) + ' — ' + (c.situacao === 'agua' ? escHtml(c.origens.map(o => o.nome).join(' + ')) : c.situacao === 'fechamento' ? '<span style="color:var(--red)">sem água pelo fechamento</span>' : '<span style="color:var(--text3)">sem origem</span>') + '</span><b>' + formatarExtensao(c.km) + '</b></div>').join('') + '</div></div>';
 
   // Simulação
   h += '<div class="card" style="padding:10px 12px;margin-bottom:10px"><b style="font-size:12.5px"><i class="ti ti-adjustments"></i> Simulação</b>' +

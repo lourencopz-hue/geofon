@@ -15982,8 +15982,24 @@ function aplicarModo(modo) {
 // ================================================================
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open'); if(id==='modal-quick'){ S._quickPosFixa=null; rascunhoApagar('quick'); } const f=S._aoFecharModal&&S._aoFecharModal[id]; if(f){delete S._aoFecharModal[id]; f();}}
+// Clique fora da janela fecha o pop-up — exceto:
+//  • quando o clique começou DENTRO da janela (ex.: selecionar texto e soltar o mouse fora);
+//  • nas janelas de cadastro da Macromedição (regras, vínculos, importações, ajustes), que só
+//    fecham por Salvar/Cancelar, para não perder o que estava sendo preenchido.
+const MODAIS_SEM_FECHAR_FORA = new Set(['modal-vol-regra', 'modal-macro-scada', 'modal-macro-importar', 'modal-macro-editar',
+  'modal-macro-sistema', 'modal-vol-ajuste', 'modal-ponto-virtual']);
+let _mousedownAlvo = null;
+document.addEventListener('mousedown', e => { _mousedownAlvo = e.target; }, true);
 document.addEventListener('click', e=>{
-  if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
+  if(!e.target.classList.contains('modal-overlay')) return;
+  if(_mousedownAlvo && _mousedownAlvo !== e.target) return;
+  if(MODAIS_SEM_FECHAR_FORA.has(e.target.id)){
+    const m = e.target.querySelector('.modal');
+    if(m && m.animate) m.animate([{transform:'translateX(0)'},{transform:'translateX(-6px)'},{transform:'translateX(6px)'},{transform:'translateX(0)'}],{duration:220});
+    toast('Para fechar, use Salvar ou Cancelar.');
+    return;
+  }
+  closeModal(e.target.id);
 });
 
 // Modal equipe: a lista de cidades já é populada por populateSelects() sempre que

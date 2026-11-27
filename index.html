@@ -16609,6 +16609,7 @@ async function setor_montar() {
   }
   const t0 = performance.now();
   st.G = setor_montarGrafo(features, st.tol);
+  st._cacheArea = null;
   st.msGrafo = Math.round(performance.now() - t0);
   st.temConexoes = st.G.pecas.length > 0;
   setor_desenharRede();
@@ -16625,7 +16626,7 @@ function setor_ligarOrigens() {
   });
 }
 
-function setor_recalcular(enquadrar) {
+function setor_recalcular(enquadrar, grupoSel) {
   const st = setor_st(); if (!st.G) return;
   setor_ligarOrigens();
   const est = {};
@@ -16645,6 +16646,7 @@ function setor_recalcular(enquadrar) {
   // Setores com origem primeiro e maiores antes; ganham cor
   let k = 0;
   st.R.comps.forEach(c => { c.cor = c.situacao === 'agua' ? SETOR_CORES[k++ % SETOR_CORES.length] : c.situacao === 'fechamento' ? SETOR_COR_SEM_AGUA : SETOR_COR_SEM_CADASTRO; });
+  if (grupoSel != null) st.sel = st.R.compG[grupoSel];
   if (st.sel != null && !st.R.comps[st.sel]) st.sel = null;
   setor_pintar();
   setor_desenharAreasSemAgua();
@@ -16675,6 +16677,7 @@ function setor_desenharRede() {
   st.marcValv = {};
   st.G.valvulas.forEach(v => {
     const mk = L.marker(v.ll, { pane: 'paneSetorValv', keyboard: false, icon: setor_iconeValv(v) });
+    mk._gfEstado = setor_estadoValv(v);
     mk.on('click', (ev) => { L.DomEvent.stopPropagation(ev); setor_popupValv(v); });
     valv.addLayer(mk);
     st.marcValv[v.id] = mk;
@@ -16723,11 +16726,9 @@ function setor_alternarValv(vid) {
   if (novo === setor_estadoPadrao(v)) delete st.estado[k]; else st.estado[k] = novo;
   mapSetor.closePopup();
   setor_salvarLocal();
-  setor_recalcular(false);
-  // Mantém selecionado o setor do lado de onde o usuário estava
-  const g = v.gs[0];
-  if (g != null) st.sel = st.R.compG[g];
-  setor_pintar(); setor_render();
+  // Mantém selecionado o setor do lado de onde o usuário estava (definido dentro do
+  // recálculo, antes de pintar — assim o mapa é pintado uma vez só)
+  setor_recalcular(false, v.gs[0]);
 }
 
 function setor_voltarPadrao() {
@@ -16750,7 +16751,7 @@ function setor_pintar() {
       : { color: SETOR_COR_SEM_CADASTRO, dashArray: '2 6' };
     st.linhas[i].setStyle(Object.assign(estilo, { weight: larguraLinhaPorDN(t.dn) + (sel ? 3 : 0), opacity: st.sel == null || sel ? 0.95 : 0.35, lineCap: 'round' }));
   });
-  st.G.valvulas.forEach(v => { const mk = st.marcValv[v.id]; if (mk) mk.setIcon(setor_iconeValv(v)); });
+  st.G.valvulas.forEach(v => { const mk = st.marcValv[v.id]; const e = setor_estadoValv(v); if (mk && mk._gfEstado !== e) { mk.setIcon(setor_iconeValv(v)); mk._gfEstado = e; } });
   const lo = st.camadas.origens; lo.clearLayers();
   st.origens.forEach(o => {
     const cor = o.g >= 0 ? (st.R.comps[st.R.compG[o.g]] || {}).cor || '#1c7ed6' : '#868e96';
@@ -16765,25 +16766,46 @@ function setor_pintar() {
 // linhas dela). Recalculado a cada abre/fecha.
 function setor_desenharAreasSemAgua() {
   const st = setor_st(); if (!st.camadas || !st.R) return;
+  // As linhas já foram pintadas; o polígono (buffer) é a parte cara — calcula logo em
+  // seguida, fora do clique, para a tela responder na hora. Um pedido novo cancela o anterior.
   const lg = st.camadas.semAgua; lg.clearLayers();
   st.areasSemAgua = [];
   if (typeof turf === 'undefined') return;
-  const larg = st.largAreaSemAgua || 30;
-  st.R.comps.filter(c => c.situacao === 'fechamento' && c.km > 0).forEach(c => {
-    const linhas = st.G.tubos.filter(t => st.R.compG[t.g] === c.id).map(t => t.coords);
-    if (!linhas.length) return;
-    let geo = null;
-    try { geo = turf.buffer(turf.multiLineString(linhas), larg, { units: 'meters', steps: 4 }); } catch(e) { console.warn('setor: buffer', e); return; }
-    let ha = 0; try { ha = turf.area(geo) / 10000; } catch(e) {}
-    c.areaHa = ha; c.geo = geo;
-    const fechadosPeloUsuario = [...c.valvFronteira].map(id => st.G.pecas[id]).filter(v => setor_estadoValv(v) !== setor_estadoPadrao(v));
-    c.registrosCausa = fechadosPeloUsuario;
-    const camada = L.geoJSON(geo, { pane: 'paneSetorArea', style: { color: SETOR_COR_SEM_AGUA, weight: 2, dashArray: '6 4', fillColor: SETOR_COR_SEM_AGUA, fillOpacity: 0.22 } })
-      .bindTooltip('Sem água pelo fechamento: ' + formatarExtensao(c.km) + ' de rede · ' + ha.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha', { sticky: true })
-      .on('click', (ev) => { L.DomEvent.stopPropagation(ev); setor_selecionarSetor(c.id); });
-    lg.addLayer(camada);
-    st.areasSemAgua.push(c);
-  });
+  const vez = (st._vezArea = (st._vezArea || 0) + 1);
+  const comps = st.R.comps.filter(c => c.situacao === 'fechamento' && c.km > 0);
+  comps.forEach(c => { c.registrosCausa = [...c.valvFronteira].map(id => st.G.pecas[id]).filter(v => setor_estadoValv(v) !== setor_estadoPadrao(v)); });
+  st.areasSemAgua = comps;
+  if (!comps.length) return;
+  comps.forEach(c => { c.areaHa = c.areaHa || 0; });
+  setTimeout(() => {
+    if (vez !== st._vezArea || !st.camadas) return;
+    const larg = st.largAreaSemAgua || 30;
+    if (!st._cacheArea) st._cacheArea = new Map();
+    comps.forEach(c => {
+      const chave = larg + '|' + c.grupos.slice().sort((a, b) => a - b).join(',');
+      let r = st._cacheArea.get(chave);
+      if (!r) {
+        const linhas = st.G.tubos.filter(t => st.R.compG[t.g] === c.id).map(t => t.coords);
+        if (!linhas.length) return;
+        try {
+          // Simplifica (~2 m) antes do buffer: mesma forma, bem menos vértices
+          let ml = turf.multiLineString(linhas);
+          try { ml = turf.simplify(ml, { tolerance: 0.00002, highQuality: false }); } catch(e) {}
+          const geo = turf.buffer(ml, larg, { units: 'meters', steps: 3 });
+          let ha = 0; try { ha = turf.area(geo) / 10000; } catch(e) {}
+          r = { geo, ha };
+          if (st._cacheArea.size > 50) st._cacheArea.clear();
+          st._cacheArea.set(chave, r);
+        } catch(e) { console.warn('setor: buffer', e); return; }
+      }
+      c.geo = r.geo; c.areaHa = r.ha;
+      const camada = L.geoJSON(r.geo, { pane: 'paneSetorArea', style: { color: SETOR_COR_SEM_AGUA, weight: 2, dashArray: '6 4', fillColor: SETOR_COR_SEM_AGUA, fillOpacity: 0.22 } })
+        .bindTooltip('Sem água pelo fechamento: ' + formatarExtensao(c.km) + ' de rede · ' + r.ha.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha', { sticky: true })
+        .on('click', (ev) => { L.DomEvent.stopPropagation(ev); setor_selecionarSetor(c.id); });
+      lg.addLayer(camada);
+    });
+    setor_render();
+  }, 30);
 }
 function setor_mudarLargAreaSemAgua(v) {
   const st = setor_st(); const n = parseFloat(String(v).replace(',', '.'));
@@ -16792,7 +16814,7 @@ function setor_mudarLargAreaSemAgua(v) {
 }
 function setor_baixarAreasSemAguaKML() {
   const st = setor_st(); if (!st.areasSemAgua || !st.areasSemAgua.length) return;
-  const fts = st.areasSemAgua.map((c, i) => {
+  const fts = st.areasSemAgua.filter(c => c.geo).map((c, i) => {
     const f = c.geo.type === 'Feature' ? JSON.parse(JSON.stringify(c.geo)) : turf.feature(c.geo);
     f.properties = { name: 'Sem água ' + (i + 1), km_rede: +(c.km / 1000).toFixed(2), area_ha: +c.areaHa.toFixed(1),
       registros_fechados: c.registrosCausa.map(v => SETOR_ROTULO_OP[v.operavel] + (v.props.DN ? ' DN ' + v.props.DN : '') + ' (' + v.ll[0].toFixed(6) + ', ' + v.ll[1].toFixed(6) + ')').join('; ') };
@@ -16978,7 +17000,7 @@ function setor_render() {
   const areas = st.areasSemAgua || [];
   if (areas.length) {
     h += '<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:4px solid ' + SETOR_COR_SEM_AGUA + '"><b style="font-size:12.5px;color:var(--red)"><i class="ti ti-droplet-off"></i> Sem água pelo fechamento (' + areas.length + ')</b>' +
-      areas.map((c, i) => '<div style="border-top:1px solid var(--border);padding:6px 0;font-size:11.5px"><div style="display:flex;justify-content:space-between;align-items:center"><b>Área ' + (i + 1) + ': ' + formatarExtensao(c.km) + ' · ' + c.areaHa.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha</b>' +
+      areas.map((c, i) => '<div style="border-top:1px solid var(--border);padding:6px 0;font-size:11.5px"><div style="display:flex;justify-content:space-between;align-items:center"><b>Área ' + (i + 1) + ': ' + formatarExtensao(c.km) + ' · ' + (c.geo ? c.areaHa.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ha' : 'calculando a área…') + '</b>' +
         '<button class="btn sm" title="Ver no mapa" onclick="setor_selecionarSetor(' + c.id + ')"><i class="ti ti-focus-2"></i></button></div>' +
         (c.registrosCausa.length ? '<div style="color:var(--text2)">Fechado: ' + c.registrosCausa.map(v => SETOR_ROTULO_OP[v.operavel] + (v.props.DN ? ' DN ' + escHtml(v.props.DN) : '')).join(', ') + '</div>' : '') + '</div>').join('') +
       '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:11.5px;flex-wrap:wrap">Faixa em volta do tubo <input value="' + (st.largAreaSemAgua || 30) + '" onchange="setor_mudarLargAreaSemAgua(this.value)" style="width:44px;padding:2px 4px;font-size:11.5px"> m' +

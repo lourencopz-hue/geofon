@@ -254,6 +254,10 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 #user-avatar{width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;overflow:hidden}
 #user-avatar img{width:100%;height:100%;object-fit:cover}
 
+/* Conexões da rede (registros, caps...) — símbolo em X sem a caixa branca padrão do Leaflet */
+.gf-conx-x{background:none!important;border:none!important}
+.gf-conx-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:4px 8px;border:1px solid var(--border);border-radius:14px;cursor:pointer;user-select:none;background:var(--bg)}
+.gf-conx-chip.off{opacity:.45}
 </style>
 </head>
 <body>
@@ -2037,7 +2041,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
     <div id="dxf-aviso" style="font-size:12px;padding:8px 10px;border-radius:var(--radius);margin-bottom:8px"></div>
     <div id="dxf-resumo" style="font-size:12px;margin-bottom:12px"></div>
     <button class="btn primary btn-block" id="dxf-btn-importar" onclick="confirmarImportacaoDXF()">
-      <i class="ti ti-check"></i> Importar rede
+      <i class="ti ti-check"></i> Importar rede e conexões
     </button>
   </div>
 </div>
@@ -2155,6 +2159,8 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
         style="width:100%;box-sizing:border-box;padding:8px 10px 8px 30px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)">
     </div>
   </div>
+  <!-- Peças da rede (conexões vindas do DXF): liga/desliga por tipo, vale neste aparelho -->
+  <div style="padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0" id="redes-conexoes-filtro"></div>
   <div style="flex:1;overflow-y:auto;padding:10px 14px" id="redes-panel-list">
     <p style="font-size:12px;color:var(--text2);text-align:center;padding:20px">Nenhuma camada de rede carregada.</p>
   </div>
@@ -5150,6 +5156,9 @@ function criarPanesDeCamadas(mapa) {
   paneRedes.style.zIndex = 420; // sempre acima do DMC — garante que dá pra clicar na rede
   const paneCampanhas = mapa.createPane('paneCampanhas');
   paneCampanhas.style.zIndex = 430; // trajeto de campanha acima de DMC e rede
+  // Peças da rede (registros, caps, curvas, tês) por cima dos tubos, pra dar pra clicar nelas.
+  const paneConexoes = mapa.createPane('paneConexoes');
+  paneConexoes.style.zIndex = 425;
 }
 
 function initFieldMap() {
@@ -9119,7 +9128,11 @@ async function carregarGeometriaCamada(tipo, camadaId) {
           // toque. O visual não muda nadinha; só a área que responde ao toque fica maior.
           const linhasDeToque = [];
           const nomePane = tipo === 'redes' ? 'paneRedes' : 'paneDMC';
-          const grupoVisivel = L.geoJSON(geojson, {
+          // Peças da rede (pontos com _conexao, vindas do DXF) vão num grupo à parte, com
+          // símbolo próprio e filtro por tipo/zoom — os tubos seguem como sempre.
+          const conexoesRede = tipo === 'redes' ? geojson.features.filter(ehFeatureConexao) : [];
+          const geoDesenho = conexoesRede.length ? { type: 'FeatureCollection', features: geojson.features.filter(ft => !ehFeatureConexao(ft)) } : geojson;
+          const grupoVisivel = L.geoJSON(geoDesenho, {
             pane: nomePane,
             style: (ft) => {
               const cor = resolverCorFeature(ft, tipo, item);
@@ -9178,6 +9191,15 @@ async function carregarGeometriaCamada(tipo, camadaId) {
           // As linhas de toque ficam num grupo junto com a camada visível — pro resto do
           // código (mostrar/ocultar/remover) continuar tratando isso como "uma camada só",
           // sem precisar saber que por dentro são duas coisas.
+          if (conexoesRede.length) {
+            const cidV = S.cidades.find(c => c.id === item.cidade);
+            const dataV = dataCurtaCamada(item);
+            const rodape = cidV ? '<br><small style="color:#888">' + escHtml(cidV.nome) + (dataV ? ' · rede de ' + dataV : '') + '</small>' : '';
+            const grupoConx = montarGrupoConexoes(conexoesRede, paraMapa === 'field' ? mapField : mapPC, rodape);
+            const tudo = L.layerGroup([...linhasDeToque, grupoVisivel, grupoConx]);
+            tudo._gfConx = grupoConx;
+            return tudo;
+          }
           return linhasDeToque.length ? L.layerGroup([...linhasDeToque, grupoVisivel]) : grupoVisivel;
         };
 
@@ -9656,6 +9678,7 @@ function renderDMCPanel() {
 }
 
 function renderRedesPanel() {
+  renderFiltroConexoes();
   const el = document.getElementById('redes-panel-list');
   if (!el) return;
   const role = S.userDoc?.role;
@@ -9964,21 +9987,121 @@ function corLayerDXF(parsed, nomeLayer) {
     return (hex === '#ffffff' || hex === '#000000') ? null : hex;
   } catch(e) { return null; }
 }
+// ---------------- Conexões (peças) do CAD ----------------
+// No CAD da CASAN as peças são BLOCOS (INSERT) no layer CONEXOES_0, com os atributos
+// CODIGO / MATERIAL / ETAPA (ex.: CODIGO "RCPVCCCBBDN50" = registro DN 50). O leitor de
+// DXF (dxf-parser) descarta esses atributos, então eles são lidos aqui direto do texto do
+// arquivo, pela seção ENTITIES, e ligados ao bloco pelo "handle" (código 5).
+function lerAtributosBlocosDXF(texto) {
+  const porHandle = {};
+  const ini = texto.indexOf('\nENTITIES');
+  if (ini < 0) return porHandle;
+  let pos = texto.indexOf('\n', ini + 1), atual = null, emAttrib = false, tag = null, val = null, entTipo = null;
+  const fechaAttrib = () => { if (atual && emAttrib && tag) atual[tag.toUpperCase()] = (val || '').trim(); tag = null; val = null; };
+  while (pos >= 0) {
+    const f1 = texto.indexOf('\n', pos + 1); if (f1 < 0) break;
+    const f2 = texto.indexOf('\n', f1 + 1); if (f2 < 0) break;
+    const cod = texto.slice(pos + 1, f1).trim();
+    const v = texto.slice(f1 + 1, f2).replace(/\r$/, '');
+    pos = f2;
+    if (cod === '0') {
+      fechaAttrib();
+      entTipo = v.trim();
+      if (entTipo === 'ENDSEC') break;
+      if (entTipo === 'INSERT') { atual = {}; emAttrib = false; }
+      else if (entTipo === 'ATTRIB') { emAttrib = !!atual; }
+      else { atual = null; emAttrib = false; } // SEQEND ou qualquer outra entidade
+    } else if (cod === '5' && entTipo === 'INSERT' && atual) {
+      porHandle[v.trim()] = atual;
+    } else if (emAttrib) {
+      if (cod === '2') tag = v.trim();
+      else if (cod === '1') val = v;
+    }
+  }
+  return porHandle;
+}
+// Bloco do CAD → tipo de peça. ATENÇÃO: A-RD é REDUÇÃO, não registro (códigos RDPVC…/RPBJE…).
+const BLOCOS_CONEXAO_DXF = {
+  'A-GBP':'registro','A-GD':'registro','A-GBF':'registro','A-GDA':'registro','A-GF':'registro',
+  'A-K':'cap',
+  'A-C22':'curva','A-C45':'curva','A-C45B':'curva','A-C90':'curva','A-C90B':'curva','A-C90P':'curva',
+  'A-TE':'te','A-TER':'te','A-TP':'te','A-TBF':'te'
+};
+const SUBTIPO_OUTRA_DXF = { 'A-X':'Cruzeta','A-XR':'Cruzeta de redução','A-L':'Luva','A-LC':'Luva','A-LM':'Luva','A-AD':'Adaptador',
+  'A-RD':'Redução','A-RDF':'Redução','A-LTR':'Colar/tomada','A-LTRF':'Colar/tomada','A-LTRM':'Colar/tomada',
+  'A-VD':'Válvula','A-VC':'Válvula','A-HCC':'Hidrante' };
+// Como cada tipo aparece no mapa. Registro = X vermelho; cap = ponto laranja (os dois mais
+// importantes, aparecem a partir do zoom 15); curva/tê/outras = pontinhos discretos, só de perto.
+const CONEXAO_INFO = {
+  registro: { rotulo: 'Registro', plural: 'Registros', cor: '#e03131', raio: 0, zoomMin: 15 },
+  cap:      { rotulo: 'Cap',      plural: 'Caps',      cor: '#f76707', raio: 4, zoomMin: 15 },
+  curva:    { rotulo: 'Curva',    plural: 'Curvas',    cor: '#1c7ed6', raio: 2.6, zoomMin: 17 },
+  te:       { rotulo: 'Tê',       plural: 'Tês',       cor: '#7048e8', raio: 2.6, zoomMin: 17 },
+  outra:    { rotulo: 'Peça',     plural: 'Outras peças', cor: '#868e96', raio: 2.2, zoomMin: 17 }
+};
+const ORDEM_CONEXOES = ['registro', 'cap', 'curva', 'te', 'outra'];
+// Nomes que vêm no campo "tipo" de um KML de conexões (o exportado pelo app ou o gerado à parte)
+const TIPO_CONEXAO_POR_ROTULO = { 'registro':'registro', 'registros':'registro', 'cap':'cap', 'caps':'cap', 'curva':'curva', 'curvas':'curva', 'te':'te', 'tê':'te', 'tes':'te', 'tês':'te' };
+function tipoConexaoDXF(nomeBloco, layer, codigo) {
+  const b = String(nomeBloco || '').toUpperCase();
+  if (BLOCOS_CONEXAO_DXF[b]) return BLOCOS_CONEXAO_DXF[b];
+  if (/^A-RD/.test(b)) return 'outra';
+  if (/^A-/.test(b) && /^R[CO]/i.test(codigo || '')) return 'registro';
+  if (SUBTIPO_OUTRA_DXF[b]) return 'outra';
+  if (/CONEX/i.test(layer || '')) return 'outra';
+  return null; // ex.: A-TUBO (rótulo de trecho), cotas, textos
+}
+function dnDoCodigoConexao(codigo) {
+  const m = String(codigo || '').match(/DN([0-9/"]+(?:x[0-9/"]+)?)/i);
+  return m ? m[1] : null;
+}
+// Layers do CAD que têm linhas mas NÃO são tubo: o próprio desenho das peças, cotas de
+// amarração, textos e os rótulos de trecho. Antes entravam na rede como "sem diâmetro".
+const LAYERS_DXF_NAO_REDE = /CONEX|AMARRA|TEXTO|COTA|DIMENS|TRECHO/i;
+
 // DXF (já lido) → GeoJSON em lat/lng + resumo por diâmetro. O diâmetro sai do primeiro
 // número no nome do layer (T_50 → 50), mesmo critério já usado pras pastas do KML.
-function converterDXFParaGeoJSON(parsed, crs) {
+// Os blocos de peça (registros, caps, curvas, tês...) viram pontos no MESMO GeoJSON,
+// marcados com _conexao — assim rede e conexões sobem juntas, num arquivo só.
+function converterDXFParaGeoJSON(parsed, crs, atributos) {
   const features = [];
   const porDN = {};
   const ignorados = {};
-  let foraDeSC = 0;
+  const layersIgnorados = {};
+  const conexoes = {};
+  let foraDeSC = 0, totalLinhas = 0;
+  const paraLatLng = (x, y) => { const [lng, lat] = proj4(crs, 'EPSG:4326', [x, y]); return [Number(lng.toFixed(7)), Number(lat.toFixed(7))]; };
+  const foraSC = ([lng, lat]) => !(lat > -29.6 && lat < -25.8 && lng > -54 && lng < -48.3);
   (parsed.entities || []).forEach(e => {
+    const layer = e.layer || '0';
+    if (e.type === 'INSERT') {
+      const at0 = (atributos && atributos[e.handle]) || {};
+      // A-VC (válvula) não tem CODIGO, só CODIG1–4: usa o primeiro preenchido.
+      const at = { ...at0, CODIGO: at0.CODIGO || ['CODIG1','CODIG2','CODIG3','CODIG4'].map(k => at0[k]).find(v => v) || '' };
+      const tipo = tipoConexaoDXF(e.name, layer, at.CODIGO);
+      if (!tipo || !e.position || !isFinite(e.position.x) || !isFinite(e.position.y)) { ignorados[e.type] = (ignorados[e.type] || 0) + 1; return; }
+      const c = paraLatLng(e.position.x, e.position.y);
+      if (foraSC(c)) foraDeSC++;
+      const bloco = String(e.name || '');
+      const dn = dnDoCodigoConexao(at.CODIGO);
+      const props = { name: at.CODIGO || bloco, _conexao: tipo,
+        tipo: tipo === 'outra' ? (/^MACRO/i.test(at.CODIGO || '') ? 'Macromedidor' : (SUBTIPO_OUTRA_DXF[bloco.toUpperCase()] || 'Peça')) : CONEXAO_INFO[tipo].rotulo,
+        bloco, layer_cad: layer };
+      if (at.CODIGO) props.codigo = at.CODIGO;
+      if (dn) props.DN = dn;
+      if (at.MATERIAL) props.material = at.MATERIAL;
+      if (typeof e.rotation === 'number') props.rotacao = Math.round(e.rotation * 10) / 10;
+      features.push({ type:'Feature', properties: props, geometry: { type:'Point', coordinates: c } });
+      conexoes[tipo] = (conexoes[tipo] || 0) + 1;
+      return;
+    }
     const pts = pontosEntidadeDXF(e);
     if (!pts || pts.length < 2) { ignorados[e.type] = (ignorados[e.type] || 0) + 1; return; }
+    if (LAYERS_DXF_NAO_REDE.test(layer)) { layersIgnorados[layer] = (layersIgnorados[layer] || 0) + 1; return; }
     let compM = 0;
     for (let i = 1; i < pts.length; i++) compM += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
-    const coords = pts.map(p => { const [lng, lat] = proj4(crs, 'EPSG:4326', [p.x, p.y]); return [Number(lng.toFixed(7)), Number(lat.toFixed(7))]; });
-    if (coords.some(([lng, lat]) => !(lat > -29.6 && lat < -25.8 && lng > -54 && lng < -48.3))) foraDeSC++;
-    const layer = e.layer || '0';
+    const coords = pts.map(p => paraLatLng(p.x, p.y));
+    if (coords.some(foraSC)) foraDeSC++;
     const m = String(layer).match(/(\d+)/);
     const dn = m ? parseInt(m[1], 10) : null;
     const props = { name: dn ? 'DN ' + dn : layer, _folderNome: layer, layerCAD: layer, comprimento_m: Math.round(compM * 10) / 10 };
@@ -9986,11 +10109,101 @@ function converterDXFParaGeoJSON(parsed, crs) {
     const corCAD = corLayerDXF(parsed, layer);
     if (corCAD) props._corKml = corCAD;
     features.push({ type:'Feature', properties: props, geometry: { type:'LineString', coordinates: coords } });
+    totalLinhas++;
     const chave = dn ? String(dn) : layer;
     porDN[chave] = porDN[chave] || { dn, layer, n: 0, m: 0 };
     porDN[chave].n++; porDN[chave].m += compM;
   });
-  return { geojson: { type:'FeatureCollection', features }, resumo: { porDN, ignorados, foraDeSC, total: features.length } };
+  const totalConexoes = Object.values(conexoes).reduce((a, b) => a + b, 0);
+  return { geojson: { type:'FeatureCollection', features },
+    resumo: { porDN, ignorados, layersIgnorados, conexoes, totalConexoes, foraDeSC, total: totalLinhas } };
+}
+
+// ---------------- Conexões no mapa ----------------
+const LS_CONEXOES_VIS_KEY = 'geofon_conexoes_vis';
+S.conexoesVis = (() => {
+  const padrao = { registro: true, cap: true, curva: true, te: true, outra: false };
+  try { return { ...padrao, ...(JSON.parse(localStorage.getItem(LS_CONEXOES_VIS_KEY) || '{}')) }; } catch(e) { return padrao; }
+})();
+function ehFeatureConexao(ft) {
+  return !!(ft && ft.geometry && ft.geometry.type === 'Point' && ft.properties && ft.properties._conexao);
+}
+function svgXConexao(cor, tam) {
+  const a = 3, b = tam - 3;
+  return '<svg width="' + tam + '" height="' + tam + '" viewBox="0 0 ' + tam + ' ' + tam + '">' +
+    '<path d="M' + a + ' ' + a + 'L' + b + ' ' + b + 'M' + b + ' ' + a + 'L' + a + ' ' + b + '" stroke="#fff" stroke-width="4.6" stroke-linecap="round"/>' +
+    '<path d="M' + a + ' ' + a + 'L' + b + ' ' + b + 'M' + b + ' ' + a + 'L' + a + ' ' + b + '" stroke="' + cor + '" stroke-width="2.4" stroke-linecap="round"/></svg>';
+}
+// Símbolo da peça: X para registro, ponto colorido para as demais.
+function simboloConexao(tipo, latlng, pane) {
+  const info = CONEXAO_INFO[tipo] || CONEXAO_INFO.outra;
+  if (tipo === 'registro') {
+    return L.marker(latlng, { pane: pane || 'paneConexoes', keyboard: false,
+      icon: L.divIcon({ className: 'gf-conx-x', html: svgXConexao(info.cor, 14), iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -6] }) });
+  }
+  return L.circleMarker(latlng, { pane: pane || 'paneConexoes', radius: info.raio, color: '#fff', weight: 1.2, fillColor: info.cor, fillOpacity: 1 });
+}
+function iconeLegendaConexao(tipo) {
+  const info = CONEXAO_INFO[tipo];
+  if (tipo === 'registro') return svgXConexao(info.cor, 12);
+  const d = Math.max(6, Math.round(info.raio * 2 + 2));
+  return '<span style="display:inline-block;width:' + d + 'px;height:' + d + 'px;border-radius:50%;background:' + info.cor + ';border:1px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.15)"></span>';
+}
+function popupConexao(p, rodape) {
+  const tipo = p.tipo || (CONEXAO_INFO[p._conexao] || {}).rotulo || 'Peça';
+  return '<b>' + escHtml(tipo) + (p.DN ? ' DN ' + escHtml(p.DN) : '') + '</b>' +
+    (p.codigo ? '<br><small>Código: ' + escHtml(p.codigo) + '</small>' : '') +
+    (p.material && !/^registros?$/i.test(p.material) ? '<br><small>Material: ' + escHtml(p.material) + '</small>' : '') +
+    (p.bloco ? '<br><small style="color:#888">Bloco ' + escHtml(p.bloco) + (p.layer_cad && !/CONEX/i.test(p.layer_cad) ? ' · layer ' + escHtml(p.layer_cad) : '') + '</small>' : '') +
+    (rodape || '');
+}
+// Monta, para UM mapa, o grupo das peças de uma camada de rede: um sub-grupo por tipo, que
+// entra/sai do mapa conforme o filtro do painel Redes e o zoom (peça demais de longe vira borrão).
+function montarGrupoConexoes(conexoes, mapa, rodape) {
+  const grupos = {};
+  conexoes.forEach(ft => {
+    const p = ft.properties;
+    const tipo = CONEXAO_INFO[p._conexao] ? p._conexao : 'outra';
+    const [lng, lat] = ft.geometry.coordinates;
+    const mk = simboloConexao(tipo, [lat, lng]);
+    mk.bindPopup(popupConexao(p, rodape));
+    (grupos[tipo] = grupos[tipo] || L.layerGroup()).addLayer(mk);
+  });
+  const container = L.layerGroup();
+  container._gfConxGrupos = grupos;
+  container._gfMapa = mapa;
+  if (mapa && !mapa._gfConxZoom) { mapa.on('zoomend', aplicarVisibilidadeConexoes); mapa._gfConxZoom = true; }
+  aplicarVisibilidadeConexoesNoGrupo(container);
+  return container;
+}
+function aplicarVisibilidadeConexoesNoGrupo(container) {
+  if (!container || !container._gfConxGrupos) return;
+  const z = container._gfMapa ? container._gfMapa.getZoom() : 18;
+  Object.entries(container._gfConxGrupos).forEach(([tipo, g]) => {
+    const info = CONEXAO_INFO[tipo] || CONEXAO_INFO.outra;
+    const mostrar = !!S.conexoesVis[tipo] && z >= info.zoomMin;
+    if (mostrar && !container.hasLayer(g)) container.addLayer(g);
+    else if (!mostrar && container.hasLayer(g)) container.removeLayer(g);
+  });
+}
+function aplicarVisibilidadeConexoes() {
+  (S.leafletLayers.redes || []).forEach(item => {
+    [item.lgField, item.lgPC].forEach(lg => { if (lg && lg._gfConx) aplicarVisibilidadeConexoesNoGrupo(lg._gfConx); });
+  });
+}
+function alternarTipoConexao(tipo) {
+  S.conexoesVis[tipo] = !S.conexoesVis[tipo];
+  try { localStorage.setItem(LS_CONEXOES_VIS_KEY, JSON.stringify(S.conexoesVis)); } catch(e) {}
+  aplicarVisibilidadeConexoes();
+  renderFiltroConexoes();
+}
+function renderFiltroConexoes() {
+  const el = document.getElementById('redes-conexoes-filtro');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:500">Peças da rede <small style="font-weight:400;color:var(--text3)">(registro e cap a partir do zoom 15; as outras só bem de perto)</small></div>' +
+    '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
+    ORDEM_CONEXOES.map(t => '<span class="gf-conx-chip' + (S.conexoesVis[t] ? '' : ' off') + '" onclick="alternarTipoConexao(\'' + t + '\')" title="Mostrar/ocultar ' + CONEXAO_INFO[t].plural.toLowerCase() + '">' +
+      iconeLegendaConexao(t) + CONEXAO_INFO[t].plural + '</span>').join('') + '</div>';
 }
 
 S._dxf = null;
@@ -10011,11 +10224,13 @@ async function abrirImportacaoDXF(file, cidadeForcada) {
   }
   if (!parsed || !(parsed.entities || []).length) { toast('⚠️ O DXF não tem nenhum objeto desenhado'); return; }
   const crsArquivo = crsDeclaradoNoDXF(texto);
+  let atributos = {};
+  try { atributos = lerAtributosBlocosDXF(texto); } catch(e) { console.warn('Não consegui ler os atributos dos blocos do DXF:', e); }
   texto = null; // libera memória — só precisamos do resultado já lido
   let crsInicial = crsArquivo;
   if (!crsInicial) { try { crsInicial = localStorage.getItem(LS_DXF_CRS_KEY); } catch(e) {} }
   if (!NOMES_CRS_DXF[crsInicial]) crsInicial = 'EPSG:29192';
-  S._dxf = { file, parsed, crsArquivo, cidadeForcada: cidadeForcada || '', geojson: null, resumo: null, mapa: null, lg: null };
+  S._dxf = { file, parsed, atributos, crsArquivo, cidadeForcada: cidadeForcada || '', geojson: null, resumo: null, mapa: null, lg: null };
 
   document.getElementById('dxf-arquivo-nome').textContent = file.name;
   document.getElementById('dxf-crs').value = crsInicial;
@@ -10052,15 +10267,20 @@ function atualizarPreviaDXF() {
   const d = S._dxf;
   if (!d) return;
   const crs = document.getElementById('dxf-crs').value;
-  const { geojson, resumo } = converterDXFParaGeoJSON(d.parsed, crs);
+  const { geojson, resumo } = converterDXFParaGeoJSON(d.parsed, crs, d.atributos);
   d.geojson = geojson; d.resumo = resumo; d.crs = crs;
 
   if (d.mapa) {
     if (d.lg) d.mapa.removeLayer(d.lg);
-    d.lg = L.geoJSON(geojson, {
+    // Na prévia vão os tubos + registros e caps (as peças principais) — curvas e tês
+    // de longe viram um borrão; eles aparecem no mapa do app só de perto.
+    const fts = geojson.features.filter(ft => !ehFeatureConexao(ft) || ['registro', 'cap'].includes(ft.properties._conexao));
+    d.lg = L.geoJSON({ type: 'FeatureCollection', features: fts }, {
       style: ft => ({ color: resolverCorFeature(ft, 'redes', null) || '#0F6E56', weight: 2.5, opacity: 0.95 }),
+      pointToLayer: (ft, ll) => simboloConexao(ft.properties._conexao, ll, 'markerPane'),
       onEachFeature: (ft, layer) => {
         const p = ft.properties;
+        if (ehFeatureConexao(ft)) { layer.bindPopup(popupConexao(p)); return; }
         layer.bindPopup('<b>' + escHtml(p.name) + '</b><br><small>Layer: ' + escHtml(p.layerCAD) + ' · ' + Number(p.comprimento_m).toLocaleString('pt-BR') + ' m</small>');
       }
     }).addTo(d.mapa);
@@ -10076,6 +10296,8 @@ function atualizarPreviaDXF() {
   }
 
   const aviso = document.getElementById('dxf-aviso');
+  const layIgn = Object.entries(resumo.layersIgnorados || {}).map(([l, n]) => escHtml(l) + ' (' + n + ')').join(', ');
+  const txtConx = resumo.totalConexoes ? ' + ' + resumo.totalConexoes.toLocaleString('pt-BR') + ' conexões' : ' (nenhuma conexão encontrada)';
   const btn = document.getElementById('dxf-btn-importar');
   const ign = Object.entries(resumo.ignorados).map(([t, n]) => n + ' ' + t).join(', ');
   if (!resumo.total) {
@@ -10088,7 +10310,8 @@ function atualizarPreviaDXF() {
     btn.disabled = true;
   } else {
     aviso.style.background = 'var(--teal-l)'; aviso.style.color = 'var(--teal)';
-    aviso.textContent = '✓ ' + resumo.total + ' trechos convertidos de ' + NOMES_CRS_DXF[crs] + '.' + (ign ? ' Ignorados (não são linhas): ' + ign + '.' : '');
+    aviso.innerHTML = '✓ ' + resumo.total + ' trechos' + txtConx + ' convertidos de ' + NOMES_CRS_DXF[crs] + '.' +
+      (layIgn ? '<br><small>Linhas deixadas de fora (não são tubo): ' + layIgn + '.</small>' : '');
     btn.disabled = false;
   }
   const linhas = Object.values(resumo.porDN).sort((a,b) => (a.dn ?? 1e9) - (b.dn ?? 1e9) || String(a.layer).localeCompare(String(b.layer)));
@@ -10101,7 +10324,11 @@ function atualizarPreviaDXF() {
         (l.dn != null ? 'DN ' + l.dn + ' <small style="color:var(--text3)">(' + escHtml(l.layer) + ')</small>' : escHtml(l.layer) + ' <small style="color:var(--amber)">sem diâmetro</small>') +
         '</td><td style="text-align:right">' + l.n + '</td><td style="text-align:right">' + formatarExtensao(l.m) + '</td></tr>';
     }).join('') +
-    '<tr><th>Total</th><th style="text-align:right">' + resumo.total + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>';
+    '<tr><th>Total</th><th style="text-align:right">' + resumo.total + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>' +
+    (resumo.totalConexoes ? '<table class="data-table" style="width:100%;margin-top:8px"><thead><tr><th>Conexões</th><th style="text-align:right">Quantidade</th></tr></thead><tbody>' +
+      ORDEM_CONEXOES.filter(t => resumo.conexoes[t]).map(t => '<tr><td>' + iconeLegendaConexao(t) + ' ' + CONEXAO_INFO[t].plural +
+        (t === 'outra' ? ' <small style="color:var(--text3)">(luvas, reduções, cruzetas, válvulas, hidrantes...)</small>' : '') + '</td><td style="text-align:right">' + resumo.conexoes[t].toLocaleString('pt-BR') + '</td></tr>').join('') +
+      '</tbody></table>' : '');
 }
 
 async function confirmarImportacaoDXF() {
@@ -10113,7 +10340,9 @@ async function confirmarImportacaoDXF() {
   try { localStorage.setItem(LS_DXF_CRS_KEY, d.crs); } catch(e) {}
   const { geojson, file, crs } = d;
   closeModal('modal-dxf');
-  await salvarRedeComVerificacao(geojson, file.name, cidadeId, { origem: 'dxf', sistemaCoordenadas: crs });
+  const meta = { origem: 'dxf', sistemaCoordenadas: crs };
+  if (d.resumo.totalConexoes) meta.conexoes = d.resumo.conexoes; // contagem por tipo (registro, cap...)
+  await salvarRedeComVerificacao(geojson, file.name, cidadeId, meta);
 }
 
 // Pergunta o que fazer quando o município já tem rede cadastrada. Resolve com
@@ -10216,8 +10445,14 @@ function geometriaParaKml(g) {
 function gerarKMLRede(features, titulo) {
   const estilos = {};
   const pastas = {};
+  const pastasConx = {};
   features.forEach(ft => {
     if (!ft.geometry) return;
+    if (ehFeatureConexao(ft)) {
+      const t = CONEXAO_INFO[ft.properties._conexao] ? ft.properties._conexao : 'outra';
+      (pastasConx[t] = pastasConx[t] || []).push(ft);
+      return;
+    }
     const p = ft.properties || {};
     const dn = p._diametroMm ? Number(p._diametroMm) : null;
     const cor = resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color;
@@ -10241,6 +10476,22 @@ function gerarKMLRede(features, titulo) {
       if (layerOrig) dados.push(['layer', layerOrig]);
       out.push('<Placemark><name>' + escXml(dn ? 'DN ' + dn : (p.name || 'Trecho')) + '</name><styleUrl>#' + idEstilo + '</styleUrl>' +
         (dados.length ? '<ExtendedData>' + dados.map(([k, v]) => '<Data name="' + k + '"><value>' + escXml(v) + '</value></Data>').join('') + '</ExtendedData>' : '') +
+        geometriaParaKml(ft.geometry) + '</Placemark>');
+    });
+    out.push('</Folder>');
+  });
+  // Peças da rede: uma pasta por tipo, com ícone colorido e os dados do CAD.
+  const ICONE_CONX = { registro: 'shapes/cross-hairs.png', cap: 'shapes/placemark_circle.png' };
+  ORDEM_CONEXOES.filter(t => pastasConx[t]).forEach(t => {
+    const info = CONEXAO_INFO[t];
+    out.push('<Style id="conx_' + t + '"><IconStyle><color>' + hexParaCorKml(info.cor) + '</color><scale>' + (t === 'registro' || t === 'cap' ? 0.8 : 0.5) +
+      '</scale><Icon><href>http://maps.google.com/mapfiles/kml/' + (ICONE_CONX[t] || 'shapes/placemark_circle.png') + '</href></Icon></IconStyle><LabelStyle><scale>0</scale></LabelStyle></Style>');
+    out.push('<Folder><name>' + escXml('Conexões – ' + info.plural) + '</name>');
+    pastasConx[t].forEach(ft => {
+      const p = ft.properties;
+      const dados = ['tipo', 'codigo', 'DN', 'material', 'bloco', 'layer_cad', 'rotacao'].filter(k => p[k] != null && p[k] !== '');
+      out.push('<Placemark><name>' + escXml(p.codigo || p.name || info.rotulo) + '</name><styleUrl>#conx_' + t + '</styleUrl>' +
+        '<ExtendedData>' + dados.map(k => '<Data name="' + k + '"><value>' + escXml(p[k]) + '</value></Data>').join('') + '</ExtendedData>' +
         geometriaParaKml(ft.geometry) + '</Placemark>');
     });
     out.push('</Folder>');
@@ -10439,9 +10690,12 @@ async function abrirPopupRede(cidadeId) {
   if (!features.length) { document.getElementById('ver-rede-resumo').innerHTML = '<span style="color:var(--red)">Não consegui carregar a geometria desta rede.</span>'; return; }
   const lg = L.geoJSON({ type: 'FeatureCollection', features }, {
     style: ft => ({ color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color, weight: 2.5, opacity: 0.95 }),
-    pointToLayer: (ft, ll) => L.circleMarker(ll, { radius: 4, color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color }),
+    pointToLayer: (ft, ll) => ehFeatureConexao(ft) ? simboloConexao(ft.properties._conexao, ll, 'markerPane')
+      : L.circleMarker(ll, { radius: 4, color: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color }),
+    filter: ft => !ehFeatureConexao(ft) || ['registro', 'cap'].includes(ft.properties._conexao),
     onEachFeature: (ft, layer) => {
       const p = ft.properties || {};
+      if (ehFeatureConexao(ft)) { layer.bindPopup(popupConexao(p)); return; }
       const compM = p.comprimento_m != null ? Number(p.comprimento_m) : comprimentoFeatureM(ft);
       layer.bindPopup('<b>' + (p._diametroMm ? 'Rede DN ' + p._diametroMm + ' mm' : escHtml(p.name || 'Trecho')) + '</b>' +
         (compM ? '<br><small>Trecho: ' + compM.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' m</small>' : ''));
@@ -10449,9 +10703,13 @@ async function abrirPopupRede(cidadeId) {
   }).addTo(mapa);
   try { mapa.fitBounds(lg.getBounds(), { padding: [15, 15] }); } catch(e) {}
 
-  // Resumo por diâmetro
+  // Resumo por diâmetro (só tubos) + contagem das peças
   const porDN = {};
+  const conxVer = {};
+  let nTubos = 0;
   features.forEach(ft => {
+    if (ehFeatureConexao(ft)) { conxVer[ft.properties._conexao] = (conxVer[ft.properties._conexao] || 0) + 1; return; }
+    nTubos++;
     const dn = (ft.properties || {})._diametroMm;
     const k = dn ? String(dn) : '—';
     porDN[k] = porDN[k] || { dn: dn || null, n: 0, m: 0, cor: resolverCorFeature(ft, 'redes', null) || LAYER_STYLE.redes.color };
@@ -10463,7 +10721,10 @@ async function abrirPopupRede(cidadeId) {
     '<table class="data-table" style="width:100%"><thead><tr><th>Diâmetro</th><th style="text-align:right">Trechos</th><th style="text-align:right">Extensão</th></tr></thead><tbody>' +
     linhas.map(l => '<tr><td><span style="display:inline-block;width:14px;height:4px;border-radius:2px;background:' + l.cor + ';vertical-align:middle;margin-right:6px"></span>' +
       (l.dn ? 'DN ' + l.dn : 'Sem diâmetro identificado') + '</td><td style="text-align:right">' + l.n + '</td><td style="text-align:right">' + formatarExtensao(l.m) + '</td></tr>').join('') +
-    '<tr><th>Total</th><th style="text-align:right">' + features.length + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>';
+    '<tr><th>Total</th><th style="text-align:right">' + nTubos + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>' +
+    (Object.keys(conxVer).length ? '<div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;font-size:12px">' +
+      ORDEM_CONEXOES.filter(t => conxVer[t]).map(t => '<span>' + iconeLegendaConexao(t) + ' ' + CONEXAO_INFO[t].plural + ': <b>' + conxVer[t].toLocaleString('pt-BR') + '</b></span>').join('') +
+      '</div><div style="font-size:10.5px;color:var(--text3);margin-top:3px">No mini-mapa aparecem só registros e caps.</div>' : '');
 
   // Aproveita que a geometria já foi baixada e grava a extensão de quem ainda não tem.
   const semExt = itens.filter(i => i.extensaoM == null);
@@ -10583,11 +10844,18 @@ function kmlToGeoJSON(kmlText) {
     // tubulação de 50mm). Sobe pela árvore até achar a pasta mais próxima e tenta extrair
     // um número dela — isso alimenta a cor-por-diâmetro (ver configCoresPorDiametro).
     const nomePasta = nomeDaPastaAncestral(pm);
+    // Peça da rede (KML de conexões, ou o KML exportado pelo app): o "tipo" diz o que é.
+    const tipoConx = TIPO_CONEXAO_POR_ROTULO[String(props.tipo || '').trim().toLowerCase()] ||
+      (props.bloco && tipoConexaoDXF(props.bloco, props.layer_cad, props.codigo)) || null;
     if (nomePasta) {
       props._folderNome = nomePasta;
+      // Diâmetro pelo número da pasta (ex.: "T_50") — mas NÃO para peças: numa pasta como
+      // "Registros (204)" o número é a quantidade, não o DN.
       const m = nomePasta.match(/(\d+)/);
-      if (m) props._diametroMm = parseInt(m[1], 10);
+      if (m && !tipoConx && !/\(\d+\)\s*$/.test(nomePasta)) props._diametroMm = parseInt(m[1], 10);
     }
+    // DN gravado no próprio trecho (ExtendedData "DN") vale mais que o número da pasta.
+    if (!tipoConx && props.DN != null && /^\d+$/.test(String(props.DN).trim())) props._diametroMm = parseInt(props.DN, 10);
 
     // Cor: tenta primeiro um <Style> inline dentro do próprio Placemark; senão segue o
     // <styleUrl> — que pode apontar direto para um <Style> ou indiretamente via <StyleMap>.
@@ -10626,7 +10894,7 @@ function kmlToGeoJSON(kmlText) {
       const coordsEl = getFirstByTag(pointEl,'coordinates');
       if (coordsEl) {
         const p = coordsEl.textContent.trim().split(',').map(Number);
-        if (p.length>=2) features.push({type:'Feature',properties:props,geometry:{type:'Point',coordinates:[p[0],p[1]]}});
+        if (p.length>=2) features.push({type:'Feature',properties: tipoConx ? { ...props, _conexao: tipoConx } : props,geometry:{type:'Point',coordinates:[p[0],p[1]]}});
       }
     }
   });

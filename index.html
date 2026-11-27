@@ -16525,6 +16525,72 @@ function setor_calcular(G, estado, origens) {
   return { compG, comps };
 }
 
+// ---------- Fase 2: isolar trecho ----------
+// Alvo = conjunto de grupos (trecho entre registros). Isolar = nenhum caminho aberto entre
+// o alvo e qualquer origem. Os registros que encostam no alvo são candidatos; só precisa
+// fechar o que leva (sem passar pelo alvo) a uma parte da rede que ainda tem origem. Os que
+// levam só a pontas sem outra alimentação ficam abertos (essas pontas perdem água de
+// qualquer jeito). Isso dá sempre o menor km sem água possível e o menor número de
+// registros para esse km.
+function setor_isolar(G, estado, origens, gruposAlvo) {
+  const alvo = new Set(gruposAlvo);
+  const aberta = (v) => (estado[v.id] || setor_estadoPadrao(v)) === 'A';
+  const gOrig = new Set(origens.map(o => o.g).filter(g => g != null && g >= 0));
+  if ([...alvo].some(g => gOrig.has(g))) return { impossivel: 'origem', fechar: [], jaFechados: [] };
+  // Grupos que chegam numa origem sem atravessar o alvo (busca a partir das origens)
+  const alcanca = new Uint8Array(G.nG);
+  const pilha = [];
+  gOrig.forEach(g => { alcanca[g] = 1; pilha.push(g); });
+  const vistosV = new Set();
+  const atravessar = (v) => {
+    if (vistosV.has(v.id) || !aberta(v)) return;
+    vistosV.add(v.id);
+    v.gs.forEach(g2 => { if (!alvo.has(g2) && !alcanca[g2]) { alcanca[g2] = 1; pilha.push(g2); } });
+    (v.vizV || []).forEach(id2 => atravessar(G.pecas[id2]));
+  };
+  while (pilha.length) {
+    const g = pilha.pop();
+    G.valvDoGrupo[g].forEach(vid => atravessar(G.pecas[vid]));
+  }
+  // O alvo hoje tem água? (algum registro aberto dele encosta num grupo alcançado)
+  // Para cada registro que encosta no alvo: o outro lado (seguindo registros encadeados
+  // abertos) chega num grupo alcançado?
+  const fechar = [], jaFechados = [], semNecessidade = [];
+  const vizAlvo = new Set();
+  alvo.forEach(g => G.valvDoGrupo[g].forEach(vid => vizAlvo.add(vid)));
+  vizAlvo.forEach(vid => {
+    const v = G.pecas[vid];
+    if (v.gs.every(g => alvo.has(g)) && !(v.vizV || []).length) return; // registro interno do alvo
+    // o que existe do outro lado desse registro (sem contar o alvo)
+    const vis = new Set([v.id]); const fila = [v]; let liga = false;
+    while (fila.length && !liga) {
+      const x = fila.pop();
+      if (x.gs.some(g => !alvo.has(g) && alcanca[g])) liga = true;
+      (x.vizV || []).forEach(id2 => { const y = G.pecas[id2]; if (!vis.has(id2) && aberta(y)) { vis.add(id2); fila.push(y); } });
+    }
+    if (!liga) { semNecessidade.push(vid); return; }
+    if (aberta(v)) fechar.push(vid); else jaFechados.push(vid);
+  });
+  // Simula: com esses fechados, o que perde água em relação ao estado atual
+  const est2 = Object.assign({}, estado); fechar.forEach(id => { est2[id] = 'F'; });
+  const antes = setor_calcular(G, estado, origens), depois = setor_calcular(G, est2, origens);
+  const perdidos = [];
+  let km = 0;
+  for (let g = 0; g < G.nG; g++) {
+    const tinha = antes.comps[antes.compG[g]].origens.length > 0;
+    const tem = depois.comps[depois.compG[g]].origens.length > 0;
+    if (tinha && !tem) { perdidos.push(g); km += G.kmGrupo[g]; }
+  }
+  const kmAlvo = [...alvo].reduce((s, g) => s + G.kmGrupo[g], 0);
+  const alvoSemAgua = [...alvo].every(g => !antes.comps[antes.compG[g]].origens.length);
+  // Descargas na área que fica sem água (inclui o alvo)
+  const areaSet = new Set([...perdidos, ...alvo]);
+  const descargas = G.valvulas.filter(v => v.operavel === 'descarga' && v.gs.some(g => areaSet.has(g))).map(v => v.id);
+  const continuaComAgua = [...alvo].filter(g => depois.comps[depois.compG[g]].origens.length > 0);
+  return { fechar, jaFechados, semNecessidade, perdidos, km, kmAlvo, descargas, alvoSemAgua,
+           impossivel: continuaComAgua.length ? 'sem_registro' : null };
+}
+
 // Inconsistências do cadastro (independe do estado das válvulas)
 function setor_inconsistencias(G) {
   const pontasSoltas = G.pontas.filter(e => e.liga === 0 && G.tubos[e.tubo].comp > 0.05);
@@ -16610,6 +16676,7 @@ async function setor_montar() {
   const t0 = performance.now();
   st.G = setor_montarGrafo(features, st.tol);
   st._cacheArea = null;
+  st.iso = null; if (st.modo === 'isolar') st.modo = '';
   st.msGrafo = Math.round(performance.now() - t0);
   st.temConexoes = st.G.pecas.length > 0;
   setor_desenharRede();
@@ -16650,6 +16717,7 @@ function setor_recalcular(enquadrar, grupoSel) {
   if (st.sel != null && !st.R.comps[st.sel]) st.sel = null;
   setor_pintar();
   setor_desenharAreasSemAgua();
+  if (st.iso && st.iso.grupos.size) setor_isoCalcular();
   if (enquadrar && st.camadas && st.camadas.rede.getLayers().length) {
     try { mapSetor.fitBounds(st.camadas.rede.getBounds(), { padding: [20, 20] }); } catch(e) {}
   }
@@ -16665,7 +16733,10 @@ function setor_desenharRede() {
   const st = setor_st();
   if (st.camadas) Object.values(st.camadas).forEach(l => { try { mapSetor.removeLayer(l); } catch(e) {} });
   setor_limparContorno();
-  const renderer = L.canvas({ padding: 0.5, tolerance: 6 });
+  // Um canvas só para tubos e linhas das origens, no pane da rede. Outro canvas no mesmo
+  // pane (ou acima) cobre o mapa todo e engole o clique nos tubos.
+  const renderer = st.rendRede = L.canvas({ pane: 'paneSetorRede', padding: 0.5, tolerance: 6 });
+  if (!st.rendMarcas) st.rendMarcas = L.svg({ pane: 'paneSetorValv' }); // SVG deixa o clique passar fora dos desenhos
   const rede = L.featureGroup().addTo(mapSetor);
   st.linhas = st.G.tubos.map(t => {
     const pl = L.polyline(t.coords.map(c => [c[1], c[0]]), { pane: 'paneSetorRede', renderer, weight: larguraLinhaPorDN(t.dn), opacity: 0.95, color: '#999' });
@@ -16685,7 +16756,8 @@ function setor_desenharRede() {
   const origens = L.layerGroup().addTo(mapSetor);
   const incons = L.layerGroup();
   const semAgua = L.featureGroup().addTo(mapSetor);
-  st.camadas = { rede, valv, origens, incons, semAgua };
+  const isolar = L.featureGroup().addTo(mapSetor);
+  st.camadas = { rede, valv, origens, incons, semAgua, isolar };
   if (st.inconsVis) incons.addTo(mapSetor);
   setor_desenharInconsistencias();
 }
@@ -16758,7 +16830,7 @@ function setor_pintar() {
     lo.addLayer(L.marker([o.lat, o.lng], { pane: 'paneSetorValv', icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13],
       html: '<div style="width:26px;height:26px;border-radius:50%;background:' + cor + ';border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);color:#fff;display:flex;align-items:center;justify-content:center"><i class="ti ti-' + (o.tipo === 'eta' ? 'building-factory-2' : o.tipo === 'entrada' ? 'arrow-big-right-lines' : 'droplet') + '" style="font-size:14px"></i></div>' }) })
       .bindTooltip(escHtml(o.nome) + (o.dist != null ? ' — ligada à rede a ' + Math.round(o.dist) + ' m' : ' — longe da rede'), { direction: 'top' }));
-    if (o.llLig) lo.addLayer(L.polyline([[o.lat, o.lng], o.llLig], { pane: 'paneSetorRede', color: cor, weight: 2, dashArray: '3 4' }));
+    if (o.llLig) lo.addLayer(L.polyline([[o.lat, o.lng], o.llLig], { pane: 'paneSetorRede', renderer: st.rendRede, interactive: false, color: cor, weight: 2, dashArray: '3 4' }));
   });
 }
 
@@ -16826,9 +16898,117 @@ function setor_baixarAreasSemAguaKML() {
   a.download = 'areas_sem_agua.kml'; a.click();
 }
 
+// ---------- Fase 2: tela "Isolar trecho" ----------
+function setor_iso() { const st = setor_st(); if (!st.iso) st.iso = { grupos: new Set(), r: null }; return st.iso; }
+function setor_modoIsolar() {
+  const st = setor_st();
+  if (!st.G) { toast('Monte a rede primeiro'); return; }
+  st.modo = st.modo === 'isolar' ? '' : 'isolar';
+  document.getElementById('setor-map').style.cursor = '';
+  if (st.modo === 'isolar') { st.sel = null; setor_limparContorno(); setor_pintar(); toast('Clique no trecho com vazamento (pode marcar mais de um)'); }
+  setor_render();
+}
+function setor_isoAlternarGrupo(g) {
+  const iso = setor_iso();
+  if (iso.grupos.has(g)) iso.grupos.delete(g); else iso.grupos.add(g);
+  setor_isoCalcular();
+}
+function setor_isoLimpar() {
+  const iso = setor_iso(); iso.grupos.clear(); iso.r = null;
+  setor_isoDesenhar(); setor_render();
+}
+function setor_isoCalcular() {
+  const st = setor_st(), iso = setor_iso();
+  if (!st.G || !iso.grupos.size) { iso.r = null; setor_isoDesenhar(); setor_render(); return; }
+  const est = {};
+  st.G.valvulas.forEach(v => { const e = st.estado[setor_chaveValv(v)]; if (e) est[v.id] = e; });
+  iso.r = setor_isolar(st.G, est, st.origens, [...iso.grupos]);
+  setor_isoDesenhar(); setor_render();
+}
+// Destaque: amarelo = trecho escolhido; laranja = o que também fica sem água; anel vermelho = registro a fechar
+function setor_isoDesenhar() {
+  const st = setor_st(), iso = setor_iso();
+  if (!st.camadas) return;
+  if (!st.camadas.isolar) st.camadas.isolar = L.featureGroup().addTo(mapSetor);
+  const lg = st.camadas.isolar; lg.clearLayers();
+  if (!iso.grupos.size) return;
+  const perdidos = new Set(iso.r ? iso.r.perdidos : []);
+  st.G.tubos.forEach(t => {
+    const noAlvo = iso.grupos.has(t.g);
+    if (!noAlvo && !perdidos.has(t.g)) return;
+    lg.addLayer(L.polyline(t.coords.map(c => [c[1], c[0]]), { pane: 'paneSetorArea', interactive: false, lineCap: 'round',
+      color: noAlvo ? '#fab005' : '#fd7e14', weight: larguraLinhaPorDN(t.dn) + (noAlvo ? 12 : 8), opacity: noAlvo ? 0.75 : 0.45 }));
+  });
+  if (iso.r) {
+    iso.r.fechar.forEach(id => { const v = st.G.pecas[id];
+      lg.addLayer(L.circleMarker(v.ll, { pane: 'paneSetorValv', renderer: st.rendMarcas, interactive: false, radius: 15, color: '#e03131', weight: 3, fill: false, dashArray: '4 3' })); });
+    iso.r.descargas.forEach(id => { const v = st.G.pecas[id];
+      lg.addLayer(L.circleMarker(v.ll, { pane: 'paneSetorValv', renderer: st.rendMarcas, interactive: false, radius: 15, color: '#1c7ed6', weight: 2, fill: false })); });
+  }
+}
+function setor_isoAplicar() {
+  const st = setor_st(), iso = setor_iso();
+  if (!iso.r || !iso.r.fechar.length) return;
+  iso.r.fechar.forEach(id => {
+    const v = st.G.pecas[id], k = setor_chaveValv(v);
+    if (setor_estadoPadrao(v) === 'F') delete st.estado[k]; else st.estado[k] = 'F';
+  });
+  const g0 = [...iso.grupos][0];
+  iso.grupos.clear(); iso.r = null; st.modo = '';
+  setor_salvarLocal();
+  setor_isoDesenhar();
+  setor_recalcular(false, g0);
+  toast('Fechamento aplicado na simulação');
+}
+function setor_isoBaixarCSV() {
+  const st = setor_st(), iso = setor_iso(); if (!iso.r) return;
+  const linhas = [['acao', 'tipo', 'DN', 'codigo', 'lat', 'lng']];
+  const add = (acao, id) => { const v = st.G.pecas[id]; linhas.push([acao, SETOR_ROTULO_OP[v.operavel], v.props.DN || '', v.props.codigo || '', v.ll[0].toFixed(6), v.ll[1].toFixed(6)]); };
+  iso.r.fechar.forEach(id => add('fechar', id));
+  iso.r.jaFechados.forEach(id => add('ja fechado', id));
+  iso.r.descargas.forEach(id => add('descarga disponivel', id));
+  const csv = '﻿' + linhas.map(l => l.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'isolamento_registros.csv'; a.click();
+}
+function setor_isoCardHTML() {
+  const st = setor_st(), iso = setor_iso();
+  const ativo = st.modo === 'isolar';
+  let h = '<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:4px solid #fab005">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><b style="font-size:12.5px"><i class="ti ti-scissors"></i> Isolar trecho</b>' +
+    '<button class="btn sm' + (ativo ? ' primary' : '') + '" onclick="setor_modoIsolar()">' + (ativo ? '<i class="ti ti-check"></i> Concluir' : '<i class="ti ti-hand-click"></i> Escolher trecho') + '</button></div>';
+  if (!ativo && !iso.grupos.size) {
+    return h + '<div style="font-size:11px;color:var(--text3);margin-top:4px">Indica quais registros fechar para isolar um trecho (vazamento ou setorização), deixando o mínimo de rede sem água.</div></div>';
+  }
+  if (!iso.grupos.size) return h + '<div style="font-size:11.5px;color:var(--amber);margin-top:6px">Clique no trecho da rede. O app marca o trecho inteiro entre registros. Clique de novo para tirar.</div></div>';
+  const kmAlvo = [...iso.grupos].reduce((s, g) => s + st.G.kmGrupo[g], 0);
+  h += '<div style="font-size:11.5px;margin-top:6px"><span style="display:inline-block;width:14px;height:6px;background:#fab005;vertical-align:middle;border-radius:2px"></span> Trecho escolhido: <b>' + formatarExtensao(kmAlvo) + '</b> (' + iso.grupos.size + ' trecho' + (iso.grupos.size > 1 ? 's' : '') + ' entre registros)</div>';
+  const r = iso.r;
+  if (!r) return h + '</div>';
+  if (r.impossivel === 'origem') return h + '<div style="font-size:11.5px;color:var(--red);margin-top:6px">O trecho está ligado direto numa origem (reservatório, ETA ou entrada). Não há registro que o isole sem parar essa origem.</div></div>';
+  if (r.alvoSemAgua) h += '<div style="font-size:11.5px;color:var(--text2);margin-top:4px">Esse trecho já está sem água na simulação atual.</div>';
+  if (r.impossivel === 'sem_registro') h += '<div style="font-size:11.5px;color:var(--red);margin-top:4px">Não foi possível isolar só com registros: parte do trecho continua ligada a uma origem. Confira o cadastro perto dele.</div>';
+  h += '<div style="font-size:12.5px;margin-top:6px"><b style="color:var(--red)">Fechar ' + r.fechar.length + ' registro' + (r.fechar.length === 1 ? '' : 's') + '</b>' +
+       ' · fica sem água: <b>' + formatarExtensao(r.km) + '</b></div>';
+  if (r.km > kmAlvo + 50) h += '<div style="font-size:11px;color:var(--text2)"><span style="display:inline-block;width:14px;height:6px;background:#fd7e14;opacity:.6;vertical-align:middle;border-radius:2px"></span> inclui ' + formatarExtensao(r.km - kmAlvo) + ' que só recebem água por esse trecho</div>';
+  h += setor_listaValvHTML(r.fechar, 'Nenhum registro precisa ser fechado.');
+  if (r.jaFechados.length) h += '<div style="font-size:11px;color:var(--text2);margin-top:4px">Já fechados na simulação: ' + r.jaFechados.length + '</div>';
+  if (r.semNecessidade.length) h += '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + r.semNecessidade.length + ' registro(s) encostado(s) no trecho não precisam ser fechados: só levam a pontas sem outra alimentação.</div>';
+  h += '<div style="font-size:11.5px;margin-top:6px"><b><i class="ti ti-arrow-big-down-lines"></i> Descargas na área (' + r.descargas.length + ')</b></div>' +
+       setor_listaValvHTML(r.descargas, 'Nenhuma descarga cadastrada nessa área.');
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+       (r.fechar.length ? '<button class="btn sm primary" onclick="setor_isoAplicar()"><i class="ti ti-lock"></i> Aplicar na simulação</button>' : '') +
+       '<button class="btn sm" onclick="setor_isoBaixarCSV()"><i class="ti ti-file-spreadsheet"></i> CSV</button>' +
+       '<button class="btn sm" onclick="setor_isoLimpar()"><i class="ti ti-eraser"></i> Limpar</button></div>' +
+       '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">"Fechar área" com registro do fechamento em campo vem na Fase 4.</div></div>';
+  return h;
+}
+
 function setor_selecionarTubo(t) {
   const st = setor_st();
   if (st.modo === 'origem') return; // no modo de marcar origem o clique vai para o mapa
+  if (st.modo === 'isolar') { setor_isoAlternarGrupo(t.g); return; }
   st.sel = st.R.compG[t.g];
   setor_limparContorno();
   setor_pintar(); setor_render();
@@ -16847,6 +17027,7 @@ function setor_selecionarSetor(cid) {
 
 function setor_cliqueMapa(ev) {
   const st = setor_st();
+  if (st.modo === 'isolar') return;
   if (st.modo !== 'origem' || !st.G) { if (st.sel != null && st.modo !== 'origem') { st.sel = null; setor_limparContorno(); setor_pintar(); setor_render(); } return; }
   st.origens.push({ nome: 'Origem ' + (st.origens.length + 1), tipo: 'res_dist', lat: +ev.latlng.lat.toFixed(6), lng: +ev.latlng.lng.toFixed(6) });
   st.modo = '';
@@ -16889,7 +17070,7 @@ function setor_desenharInconsistencias() {
   const st = setor_st(); if (!st.G) return;
   const lg = st.camadas.incons; lg.clearLayers();
   const I = st.incons = setor_inconsistencias(st.G);
-  const ponto = (ll, cor, txt) => lg.addLayer(L.circleMarker(ll, { pane: 'paneSetorValv', radius: 8, color: cor, weight: 3, fillOpacity: 0 }).bindTooltip(txt));
+  const ponto = (ll, cor, txt) => lg.addLayer(L.circleMarker(ll, { pane: 'paneSetorValv', renderer: st.rendMarcas, radius: 8, color: cor, weight: 3, fillOpacity: 0 }).bindTooltip(txt));
   I.pontasSoltas.forEach(e => ponto(e.ll, '#f08c00', 'Ponta solta (tubo DN ' + (st.G.tubos[e.tubo].dn || '?') + ' sem peça nem outro tubo perto)'));
   I.pecasSoltas.forEach(p => ponto(p.ll, '#ae3ec9', 'Peça sem tubo perto: ' + escHtml(p.props.tipo || p.tipo)));
   I.valvUmLado.forEach(v => ponto(v.ll, '#e03131', SETOR_ROTULO_OP[v.operavel] + ' ligado só de um lado'));
@@ -16995,8 +17176,9 @@ function setor_render() {
     '<br><small style="color:var(--text3)">Grafo ' + st.msGrafo + ' ms · cálculo ' + st.msCalc + ' ms</small>' +
     (!st.temConexoes ? '<div style="color:var(--red);margin-top:4px">Esta rede não tem peças (registros, tês...). Suba a rede pelo DXF para usar a setorização.</div>' : '') + '</div>';
 
+  // Isolar trecho (Fase 2)
+  let h = setor_isoCardHTML();
   // Áreas sem água pelos fechamentos
-  let h = '';
   const areas = st.areasSemAgua || [];
   if (areas.length) {
     h += '<div class="card" style="padding:10px 12px;margin-bottom:10px;border-left:4px solid ' + SETOR_COR_SEM_AGUA + '"><b style="font-size:12.5px;color:var(--red)"><i class="ti ti-droplet-off"></i> Sem água pelo fechamento (' + areas.length + ')</b>' +

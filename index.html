@@ -10057,18 +10057,24 @@ function dnDoCodigoConexao(codigo) {
 }
 // Layers do CAD que têm linhas mas NÃO são tubo: o próprio desenho das peças, cotas de
 // amarração, textos e os rótulos de trecho. Antes entravam na rede como "sem diâmetro".
-const LAYERS_DXF_NAO_REDE = /CONEX|AMARRA|TEXTO|COTA|DIMENS|TRECHO/i;
+// Vale só como SUGESTÃO inicial: na prévia cada layer tem uma caixinha para entrar ou não.
+const LAYERS_DXF_NAO_REDE = /CONEX|AMARRA|TEXTO|TXT|COTA|DIMENS|TRECHO|CHAMAD|LEADER|ANOTA|SETA|LEGENDA|CARIMBO|MOLDURA|SELO|LOTE|QUADRA|MEIO.?FIO|EDIFIC|DEFPOINTS/i;
+// Se até esta fração dos objetos cair fora de SC, são só desenhos soltos: descarta e deixa
+// importar. Acima disso, quase certo que o sistema de coordenadas está errado — bloqueia.
+const DXF_FRACAO_MAX_FORA_SC = 0.05;
 
 // DXF (já lido) → GeoJSON em lat/lng + resumo por diâmetro. O diâmetro sai do primeiro
 // número no nome do layer (T_50 → 50), mesmo critério já usado pras pastas do KML.
 // Os blocos de peça (registros, caps, curvas, tês...) viram pontos no MESMO GeoJSON,
 // marcados com _conexao — assim rede e conexões sobem juntas, num arquivo só.
-function converterDXFParaGeoJSON(parsed, crs, atributos) {
+function converterDXFParaGeoJSON(parsed, crs, atributos, escolhaLayers) {
   const features = [];
   const porDN = {};
   const ignorados = {};
   const layersIgnorados = {};
+  const layers = {}; // todos os layers com linhas: { layer, dn, n, m, incluido, padrao }
   const conexoes = {};
+  const foraPorLayer = {};
   let foraDeSC = 0, totalLinhas = 0;
   const paraLatLng = (x, y) => { const [lng, lat] = proj4(crs, 'EPSG:4326', [x, y]); return [Number(lng.toFixed(7)), Number(lat.toFixed(7))]; };
   const foraSC = ([lng, lat]) => !(lat > -29.6 && lat < -25.8 && lng > -54 && lng < -48.3);
@@ -10081,7 +10087,7 @@ function converterDXFParaGeoJSON(parsed, crs, atributos) {
       const tipo = tipoConexaoDXF(e.name, layer, at.CODIGO);
       if (!tipo || !e.position || !isFinite(e.position.x) || !isFinite(e.position.y)) { ignorados[e.type] = (ignorados[e.type] || 0) + 1; return; }
       const c = paraLatLng(e.position.x, e.position.y);
-      if (foraSC(c)) foraDeSC++;
+      if (foraSC(c)) { foraDeSC++; foraPorLayer[layer] = (foraPorLayer[layer] || 0) + 1; return; } // peça solta fora de SC: descartada
       const bloco = String(e.name || '');
       const dn = dnDoCodigoConexao(at.CODIGO);
       const props = { name: at.CODIGO || bloco, _conexao: tipo,
@@ -10097,13 +10103,17 @@ function converterDXFParaGeoJSON(parsed, crs, atributos) {
     }
     const pts = pontosEntidadeDXF(e);
     if (!pts || pts.length < 2) { ignorados[e.type] = (ignorados[e.type] || 0) + 1; return; }
-    if (LAYERS_DXF_NAO_REDE.test(layer)) { layersIgnorados[layer] = (layersIgnorados[layer] || 0) + 1; return; }
     let compM = 0;
     for (let i = 1; i < pts.length; i++) compM += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
-    const coords = pts.map(p => paraLatLng(p.x, p.y));
-    if (coords.some(foraSC)) foraDeSC++;
     const m = String(layer).match(/(\d+)/);
     const dn = m ? parseInt(m[1], 10) : null;
+    const padrao = !LAYERS_DXF_NAO_REDE.test(layer);
+    const incluido = escolhaLayers && Object.prototype.hasOwnProperty.call(escolhaLayers, layer) ? !!escolhaLayers[layer] : padrao;
+    const infoL = layers[layer] = layers[layer] || { layer, dn, n: 0, m: 0, incluido, padrao, fora: 0 };
+    infoL.n++; infoL.m += compM;
+    if (!incluido) { layersIgnorados[layer] = (layersIgnorados[layer] || 0) + 1; return; }
+    const coords = pts.map(p => paraLatLng(p.x, p.y));
+    if (coords.some(foraSC)) { foraDeSC++; infoL.fora++; foraPorLayer[layer] = (foraPorLayer[layer] || 0) + 1; return; } // trecho solto fora de SC: descartado
     const props = { name: dn ? 'DN ' + dn : layer, _folderNome: layer, layerCAD: layer, comprimento_m: Math.round(compM * 10) / 10 };
     if (dn) props._diametroMm = dn;
     const corCAD = corLayerDXF(parsed, layer);
@@ -10115,8 +10125,10 @@ function converterDXFParaGeoJSON(parsed, crs, atributos) {
     porDN[chave].n++; porDN[chave].m += compM;
   });
   const totalConexoes = Object.values(conexoes).reduce((a, b) => a + b, 0);
+  const totalObjetos = totalLinhas + totalConexoes + foraDeSC;
+  const bloqueadoForaSC = foraDeSC > 0 && foraDeSC > DXF_FRACAO_MAX_FORA_SC * totalObjetos;
   return { geojson: { type:'FeatureCollection', features },
-    resumo: { porDN, ignorados, layersIgnorados, conexoes, totalConexoes, foraDeSC, total: totalLinhas } };
+    resumo: { porDN, ignorados, layersIgnorados, layers, conexoes, totalConexoes, foraDeSC, foraPorLayer, bloqueadoForaSC, total: totalLinhas } };
 }
 
 // ---------------- Conexões no mapa ----------------
@@ -10304,7 +10316,7 @@ function atualizarPreviaDXF() {
   const d = S._dxf;
   if (!d) return;
   const crs = document.getElementById('dxf-crs').value;
-  const { geojson, resumo } = converterDXFParaGeoJSON(d.parsed, crs, d.atributos);
+  const { geojson, resumo } = converterDXFParaGeoJSON(d.parsed, crs, d.atributos, d.escolhaLayers || {});
   d.geojson = geojson; d.resumo = resumo; d.crs = crs;
 
   if (d.mapa) {
@@ -10326,46 +10338,70 @@ function atualizarPreviaDXF() {
 
   // Sem município escolhido: sugere o mais próximo do desenho.
   const selCid = document.getElementById('dxf-cidade');
-  if (!selCid.value && !resumo.foraDeSC) {
+  if (!selCid.value && !resumo.bloqueadoForaSC && geojson.features.length) {
     const centro = centroideAproximado(geojson);
     const sug = centro ? cidadeMaisProxima(centro.lat, centro.lng) : null;
     if (sug) selCid.value = sug.id;
   }
 
   const aviso = document.getElementById('dxf-aviso');
-  const layIgn = Object.entries(resumo.layersIgnorados || {}).map(([l, n]) => escHtml(l) + ' (' + n + ')').join(', ');
   const txtConx = resumo.totalConexoes ? ' + ' + resumo.totalConexoes.toLocaleString('pt-BR') + ' conexões' : ' (nenhuma conexão encontrada)';
   const btn = document.getElementById('dxf-btn-importar');
   const ign = Object.entries(resumo.ignorados).map(([t, n]) => n + ' ' + t).join(', ');
-  if (!resumo.total) {
+  if (resumo.bloqueadoForaSC) {
+    aviso.style.background = 'var(--red-l, #fdecea)'; aviso.style.color = 'var(--red)';
+    aviso.textContent = resumo.foraDeSC.toLocaleString('pt-BR') + ' objetos caíram fora de Santa Catarina — é muita coisa para ser desenho solto: o sistema de coordenadas escolhido não deve bater com o desenho (ou o desenho não está georreferenciado).';
+    btn.disabled = true;
+  } else if (!resumo.total) {
     aviso.style.background = 'var(--red-l, #fdecea)'; aviso.style.color = 'var(--red)';
     aviso.textContent = 'Nenhuma linha de rede encontrada no DXF.' + (ign ? ' Objetos ignorados: ' + ign + '.' : '');
     btn.disabled = true;
-  } else if (resumo.foraDeSC) {
-    aviso.style.background = 'var(--red-l, #fdecea)'; aviso.style.color = 'var(--red)';
-    aviso.textContent = resumo.foraDeSC + ' de ' + resumo.total + ' trechos caíram fora de Santa Catarina — o sistema de coordenadas escolhido não bate com o desenho (ou o desenho não está georreferenciado).';
-    btn.disabled = true;
   } else {
+    const foraTxt = resumo.foraDeSC
+      ? '<br><small style="color:var(--amber)">⚠️ ' + resumo.foraDeSC.toLocaleString('pt-BR') + ' objeto(s) caíram fora de Santa Catarina (desenhos soltos, longe da cidade) e <b>serão descartados</b> ao salvar — layer: ' +
+        Object.entries(resumo.foraPorLayer).map(([l, n]) => escHtml(l) + ' (' + n + ')').join(', ') + '.</small>'
+      : '';
     aviso.style.background = 'var(--teal-l)'; aviso.style.color = 'var(--teal)';
-    aviso.innerHTML = '✓ ' + resumo.total + ' trechos' + txtConx + ' convertidos de ' + NOMES_CRS_DXF[crs] + '.' +
-      (layIgn ? '<br><small>Linhas deixadas de fora (não são tubo): ' + layIgn + '.</small>' : '');
+    aviso.innerHTML = '✓ ' + resumo.total.toLocaleString('pt-BR') + ' trechos' + txtConx + ' convertidos de ' + NOMES_CRS_DXF[crs] + '.' + foraTxt;
     btn.disabled = false;
   }
-  const linhas = Object.values(resumo.porDN).sort((a,b) => (a.dn ?? 1e9) - (b.dn ?? 1e9) || String(a.layer).localeCompare(String(b.layer)));
-  const totalM = linhas.reduce((s, l) => s + l.m, 0);
-  document.getElementById('dxf-resumo').innerHTML = !linhas.length ? '' :
-    '<table class="data-table" style="width:100%"><thead><tr><th>Diâmetro / layer</th><th style="text-align:right">Trechos</th><th style="text-align:right">Extensão</th></tr></thead><tbody>' +
-    linhas.map(l => {
+  // Uma linha por LAYER, com caixinha para entrar ou não na rede. Layers com cara de texto,
+  // chamada, cota etc. já vêm desmarcados (sugestão) — dá para marcar se for tubo de verdade.
+  const lays = Object.values(resumo.layers).sort((a, b) => (b.incluido - a.incluido) || ((a.dn ?? 1e9) - (b.dn ?? 1e9)) || String(a.layer).localeCompare(String(b.layer)));
+  const incl = lays.filter(l => l.incluido);
+  const totalM = incl.reduce((s, l) => s + l.m, 0);
+  const totalN = incl.reduce((s, l) => s + l.n - (l.fora || 0), 0);
+  document.getElementById('dxf-resumo').innerHTML = !lays.length ? '' :
+    '<div style="font-size:11px;color:var(--text2);margin-bottom:4px">Marque os layers que são tubulação. Os desmarcados não entram na rede.</div>' +
+    '<table class="data-table" style="width:100%"><thead><tr><th style="width:24px"></th><th>Layer / diâmetro</th><th style="text-align:right">Linhas</th><th style="text-align:right">Extensão</th></tr></thead><tbody>' +
+    lays.map(l => {
       const cor = (l.dn != null && S.coresPorDiametro[String(l.dn)]) || '#0F6E56';
-      return '<tr><td><span style="display:inline-block;width:14px;height:4px;border-radius:2px;background:' + cor + ';vertical-align:middle;margin-right:6px"></span>' +
-        (l.dn != null ? 'DN ' + l.dn + ' <small style="color:var(--text3)">(' + escHtml(l.layer) + ')</small>' : escHtml(l.layer) + ' <small style="color:var(--amber)">sem diâmetro</small>') +
-        '</td><td style="text-align:right">' + l.n + '</td><td style="text-align:right">' + formatarExtensao(l.m) + '</td></tr>';
+      const idx = lays.indexOf(l);
+      return '<tr style="' + (l.incluido ? '' : 'opacity:.55') + '"><td><input type="checkbox" ' + (l.incluido ? 'checked' : '') + ' onchange="alternarLayerDXF(' + idx + ', this.checked)" style="cursor:pointer"></td><td>' +
+        (l.incluido ? '<span style="display:inline-block;width:14px;height:4px;border-radius:2px;background:' + cor + ';vertical-align:middle;margin-right:6px"></span>' : '') +
+        escHtml(l.layer) + (l.dn != null && l.incluido ? ' <small style="color:var(--text3)">DN ' + l.dn + '</small>' : '') +
+        (l.incluido && l.dn == null ? ' <small style="color:var(--amber)">sem diâmetro</small>' : '') +
+        (!l.padrao ? ' <small style="color:var(--text3)">(parece texto/chamada/cota)</small>' : '') +
+        (l.fora ? ' <small style="color:var(--amber)">' + l.fora + ' fora de SC</small>' : '') +
+        '</td><td style="text-align:right">' + l.n.toLocaleString('pt-BR') + '</td><td style="text-align:right">' + formatarExtensao(l.m) + '</td></tr>';
     }).join('') +
-    '<tr><th>Total</th><th style="text-align:right">' + resumo.total + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>' +
+    '<tr><th></th><th>Total na rede</th><th style="text-align:right">' + totalN.toLocaleString('pt-BR') + '</th><th style="text-align:right">' + formatarExtensao(totalM) + '</th></tr></tbody></table>' +
     (resumo.totalConexoes ? '<table class="data-table" style="width:100%;margin-top:8px"><thead><tr><th>Conexões</th><th style="text-align:right">Quantidade</th></tr></thead><tbody>' +
       ORDEM_CONEXOES.filter(t => resumo.conexoes[t]).map(t => '<tr><td>' + iconeLegendaConexao(t) + ' ' + CONEXAO_INFO[t].plural +
         (t === 'outra' ? ' <small style="color:var(--text3)">(luvas, reduções, cruzetas, válvulas, hidrantes...)</small>' : '') + '</td><td style="text-align:right">' + resumo.conexoes[t].toLocaleString('pt-BR') + '</td></tr>').join('') +
       '</tbody></table>' : '');
+}
+
+// Caixinha de um layer na prévia do DXF (idx = posição na tabela mostrada)
+function alternarLayerDXF(idx, marcado) {
+  const d = S._dxf;
+  if (!d || !d.resumo) return;
+  const lays = Object.values(d.resumo.layers).sort((a, b) => (b.incluido - a.incluido) || ((a.dn ?? 1e9) - (b.dn ?? 1e9)) || String(a.layer).localeCompare(String(b.layer)));
+  const l = lays[idx];
+  if (!l) return;
+  d.escolhaLayers = d.escolhaLayers || {};
+  d.escolhaLayers[l.layer] = !!marcado;
+  atualizarPreviaDXF();
 }
 
 async function confirmarImportacaoDXF() {
@@ -10373,7 +10409,7 @@ async function confirmarImportacaoDXF() {
   if (!d || !d.geojson) return;
   const cidadeId = document.getElementById('dxf-cidade').value;
   if (!cidadeId) { toast('Selecione o município'); return; }
-  if (d.resumo.foraDeSC || !d.resumo.total) return;
+  if (d.resumo.bloqueadoForaSC || !d.resumo.total) return;
   try { localStorage.setItem(LS_DXF_CRS_KEY, d.crs); } catch(e) {}
   const { geojson, file, crs } = d;
   closeModal('modal-dxf');

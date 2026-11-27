@@ -1905,7 +1905,7 @@ hr.section-divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 <div class="modal-overlay" id="modal-leak-detalhes">
   <div class="modal" style="max-width:380px">
     <div class="modal-header">
-      <h3 id="leak-detalhes-id" style="font-family:monospace">—</h3>
+      <div><h3 id="leak-detalhes-id" style="font-family:monospace">—</h3><div id="leak-detalhes-as"></div></div>
       <button class="modal-close" onclick="closeModal('modal-leak-detalhes')"><i class="ti ti-x"></i></button>
     </div>
     <div id="leak-detalhes-conteudo"></div>
@@ -8130,7 +8130,7 @@ function construirItemLeakHTML(l) {
   const linhaRua = (cfgL.rua && l.rua) ? `<div class="lmeta" style="margin-top:2px">${l.rua}</div>` : '';
   // Número da AS, se já preenchido, aparece direto na linha do tipo — sem precisar
   // abrir a janela do SCI só pra conferir.
-  const asInline = l.osNumero ? ` <span style="color:var(--green);font-weight:600;font-family:'Segoe UI',Arial,sans-serif">- AS ${l.osNumero}</span>` : '';
+  const asInline = l.osNumero ? ` <span style="color:var(--green);font-weight:600;font-family:'Segoe UI',Arial,sans-serif">- AS ${l.osNumero}</span>${botaoCopiarAS(l.id)}` : '';
   return `<div class="leak-item" onclick="abrirDetalhesLeak('${l.id}')">
       ${temFoto
         ? `<img src="${l.fotosUrls[0]}" alt="" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0" loading="lazy" onerror="this.style.display='none'">`
@@ -8143,11 +8143,6 @@ function construirItemLeakHTML(l) {
         ${linhaRua}
       </div>
       ${l.pendenteComplementacao ? '<span class="badge amber">Pendente</span>' : `<span class="badge ${l.severidade}">${l.severidade}</span>`}
-      <button onclick="event.stopPropagation();copiarParecer('${l.id}')" title="Copiar o texto da AS (parecer)"
-        style="background:none;border:1px solid var(--border);border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:var(--text3);opacity:${(l.tipo||l.desc)?'1':'.45'}">
-        <i class="ti ti-copy" style="font-size:15px"></i>
-        <span style="font-size:7.5px;font-weight:700;letter-spacing:.3px">TEXTO</span>
-      </button>
       <button onclick="event.stopPropagation();toggleConsertado('${l.id}')" title="${l.consertado?'Vazamento consertado — toque para desmarcar':'Marcar como consertado'}"
         style="background:none;border:1px solid ${l.consertado?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:3px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;color:${l.consertado?'var(--green)':'var(--text3)'}">
         <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}" style="font-size:15px"></i>
@@ -8460,30 +8455,28 @@ async function toggleExecutadaDetalhes(leakId) {
   if (l) renderAcoesDetalhesLeak(l);
 }
 
+// Ícone simples de copiar o número da AS — usado ao lado do número na Lista e logo
+// abaixo do código do ponto na janela de detalhes.
+function botaoCopiarAS(leakId) {
+  return `<button onclick="event.stopPropagation();copiarNumeroAS('${leakId}')" title="Copiar número da AS"
+    style="background:none;border:none;padding:0 3px;margin-left:2px;cursor:pointer;color:var(--text3);vertical-align:middle;line-height:1"><i class="ti ti-copy" style="font-size:14px"></i></button>`;
+}
+
 function renderAcoesDetalhesLeak(l) {
+  const num = l.osNumero || [l.osDataHora, l.osMatricula].filter(Boolean).join(' ');
+  const elAS = document.getElementById('leak-detalhes-as');
+  if (elAS) {
+    elAS.innerHTML = num
+      ? `<span style="font-size:12px;font-weight:600;color:var(--green)">AS ${num}</span>${botaoCopiarAS(l.id)}`
+      : `<span style="font-size:11.5px;color:var(--text3)">Sem AS · </span><a href="#" onclick="event.preventDefault();closeModal('modal-leak-detalhes');abrirModalOS('${l.id}')" style="font-size:11.5px;color:var(--blue)">informar</a>`;
+  }
   const el = document.getElementById('leak-detalhes-acoes');
   if (!el) return;
-  const num = l.osNumero || [l.osDataHora, l.osMatricula].filter(Boolean).join(' ');
-  const linhaAS = num
-    ? `<button onclick="copiarNumeroAS('${l.id}')" title="Clique para copiar o número da AS"
-         style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--green);border-radius:var(--radius);background:var(--green-l, #EAF3DE);cursor:pointer;margin-bottom:8px;text-align:left">
-         <span><span style="font-size:10.5px;color:var(--text2);display:block">Número da AS</span>
-         <span style="font-family:monospace;font-size:13.5px;font-weight:700;color:var(--green)">${num}</span></span>
-         <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--green);font-weight:600;flex-shrink:0"><i class="ti ti-copy" style="font-size:15px"></i> Copiar</span>
-       </button>`
-    : `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:var(--radius);margin-bottom:8px">
-         <span style="font-size:11.5px;color:var(--text2)">AS ainda sem número</span>
-         <button class="btn sm" onclick="closeModal('modal-leak-detalhes');abrirModalOS('${l.id}')"><i class="ti ti-clipboard"></i> Informar AS</button>
-       </div>`;
-  el.innerHTML = `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
-      ${linhaAS}
-      <div style="display:flex;gap:8px">
-        <button class="btn sm" style="flex:1;justify-content:center" onclick="copiarParecer('${l.id}')"><i class="ti ti-copy"></i> Texto da AS</button>
-        <button class="btn sm" style="flex:1;justify-content:center" onclick="copiarLinkLocalizacao('${l.id}')"><i class="ti ti-link"></i> Link da localização</button>
-      </div>
-      <button class="btn sm btn-block" onclick="toggleExecutadaDetalhes('${l.id}')"
-        style="margin-top:8px;justify-content:center;${l.consertado?'border-color:var(--green);color:var(--green);background:var(--green-l, #EAF3DE)':''}">
-        <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}"></i> ${l.consertado?'AS executada ✓ (toque para desmarcar)':'Marcar AS como executada'}
+  el.innerHTML = `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:8px">
+      <button class="btn sm" style="flex:1;justify-content:center" onclick="copiarLinkLocalizacao('${l.id}')"><i class="ti ti-link"></i> Link da localização</button>
+      <button class="btn sm" onclick="toggleExecutadaDetalhes('${l.id}')"
+        style="flex:1;justify-content:center;${l.consertado?'border-color:var(--green);color:var(--green);background:var(--green-l)':''}">
+        <i class="ti ${l.consertado?'ti-circle-check':'ti-tool'}"></i> ${l.consertado?'AS executada ✓':'AS executada'}
       </button>
     </div>`;
 }
